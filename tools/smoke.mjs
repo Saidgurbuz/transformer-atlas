@@ -32,7 +32,7 @@ const server = http.createServer(async (req, res) => {
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
 const base = opt('file', null) ? `file://${join(ROOT, opt('file'))}` : `http://127.0.0.1:${server.address().port}/index.html`;
 
-const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist'] });
 
 async function check(view, { theme = 'light', width = 1440, height = 900, out = null, evalJs = null, full = false, wait = 900 } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height }, colorScheme: theme, deviceScaleFactor: 1 });
