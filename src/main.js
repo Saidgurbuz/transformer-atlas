@@ -1,13 +1,11 @@
-// Boot: build the shell, run the first forward pass, start routing.
+// Boot: model + first forward pass, then the full-screen Atlas.
 import { store } from './core/store.js';
-import { buildShell } from './core/shell.js';
-import { startRouter } from './core/router.js';
+import { startAtlas } from './atlas/atlas.js';
 import { PRESETS } from './presets/index.js';
 
-const shell = buildShell(document.getElementById('app'), {});
 store.init();
 if (PRESETS.length) {
   try { await store.loadPreset(PRESETS[0].id); } catch (e) { console.error('preset load failed', e); }
 }
-startRouter(shell);
+startAtlas(document.getElementById('app'));
 window.__te = { store };   // handy for the console and for smoke tests
