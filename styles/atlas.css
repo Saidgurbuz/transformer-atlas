@@ -149,3 +149,25 @@
 .k-doc h1 { font: 700 44px/1.05 var(--font-display); letter-spacing: -.02em; }
 .k-doc h2 { font: 650 26px/1.2 var(--font-display); }
 .k-doc .lede { font-size: 18px; color: var(--fg-2); max-width: 70ch; }
+
+/* shared scene parts (kit: sceneHeader, sceneCaption, tokenPicker, headPicker, checkBadge) */
+.k-header { display: grid; gap: 8px; width: 1060px; }
+.k-eyebrow { display: flex; gap: 8px; min-height: 26px; }
+.k-scene-title { font: 700 46px/1.05 var(--font-display); letter-spacing: -.02em; }
+.k-scene-sub { font-size: 19px; line-height: 1.45; color: var(--fg-2); max-width: 1060px; }
+.k-scene-sub b { color: var(--fg); }
+.k-scene-caption { font-size: 19px; line-height: 1.5; color: var(--fg-2); min-height: 58px; }
+.k-scene-caption b { color: var(--fg); }
+.k-picker-wrap { display: flex; align-items: center; gap: 6px; }
+.k-picker-label { font: 600 13px/1 var(--font-mono); color: var(--fg-3); text-transform: uppercase; letter-spacing: .08em; margin-right: 8px; }
+.k-picker { display: flex; gap: 4px; }
+.k-pick { display: grid; justify-items: center; align-content: center; gap: 2px; height: 42px; padding: 0; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--fg); cursor: pointer; transition: transform .2s, border-color .2s, background .2s; }
+.k-pick b { font: 600 1em/1 var(--font-mono); }
+.k-pick small { font: 500 9px/1 var(--font-mono); color: var(--fg-3); }
+.k-pick:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+.k-pick.sel { border-color: var(--kind, var(--accent)); background: color-mix(in srgb, var(--kind, var(--accent)) 16%, var(--surface)); transform: translateY(-2px); }
+.k-pick:disabled { opacity: .35; cursor: default; }
+.k-pick-head { width: 44px; height: 32px; font-size: 14px; }
+.k-check { display: inline-flex; align-items: center; gap: 6px; font: 600 14px/1 var(--font-mono); padding: 6px 10px; border-radius: 999px; }
+.k-check.ok { color: var(--good); background: color-mix(in srgb, var(--good) 12%, transparent); }
+.k-check.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }

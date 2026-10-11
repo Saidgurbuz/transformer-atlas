@@ -5,7 +5,11 @@ The app is one full-screen, zoomable **Atlas** of the Transformer. The root is a
 parts that zoom further (Model → Block 2 → Attention → Head 1 → Softmax). The hierarchy is in
 `src/atlas/nodes.js`. Each scene is one file in `src/atlas/scenes/<name>.js`.
 
-Read first: this file, `src/atlas/scenes/softmax.js` (the reference scene: copy its structure,
+**Read `docs/STYLE_GUIDE.md` first** (zones, type, colour, motion, composition templates,
+do/don't): every scene must follow it. Use the kit's shared parts: `sceneHeader`, `sceneCaption`,
+`tokenPicker`, `headPicker`, `checkBadge`, `ZONES`, `MOTION`.
+
+Read next: this file, `src/atlas/scenes/softmax.js` (the reference scene: copy its structure,
 quality and restraint), `src/atlas/kit.js`, `src/atlas/nodes.js`, `docs/AGENT_GUIDE.md` (store,
 trace keys, engine API, colours), `docs/MATH_GUIDE.md` (equations).
 
@@ -89,7 +93,8 @@ export default {
 `vec(values, {orientation, cell, kind, mode, range, label, tex, trace, cellOf, head, tail})` (`.update(values)`, `.highlight(idx)`) ·
 `mat(data, rows, cols, {cell, gap, kind, mode, range, rowLabels, colLabels, tex, trace, cellOf, tilt, showValues})` (`.update`, `.highlightRow(r)`, `.highlightCol`, `.highlightCells`, `.cellEl(r, c)`) — up to ~2500 cells; for bigger use `heatmap` from the UI kit with `traceKey` ·
 `op(latex, {kind, size})` · `card({title, sub, kind, node, w})` · `token(label, i, {selected, kind})` · `texLabel(latex, {size, kind})` · `caption(html)` · `chip(text, kind)` ·
-motion: `appear(els, {stagger, from})`, `pulse(el)`, `fly(stage, fromEl, toEl, {duration})`, `countTo(el, value)`, `wait(ms)` · `useStyle(id, css)`.
+motion: `appear(els, {stagger, from})`, `pulse(el)`, `fly(stage, fromEl, toEl, {duration})`, `countTo(el, value)`, `wait(ms)` · `useStyle(id, css)` ·
+shared parts: `sceneHeader(stage, {chips: [[text, kind]], title, sub}) -> {el, setSub(html)}`, `sceneCaption(stage, {x, y, w}) -> {set(html)}`, `tokenPicker(stage, ctx, {x, y, label, kind}) -> {el}`, `headPicker(stage, ctx, {x, y}) -> {el}`, `checkBadge(computed, traced, {label}) -> element`, `ZONES`, `MOTION`.
 
 ## Animated components (src/ui/*.js, import from '../../ui/index.js' or the file)
 

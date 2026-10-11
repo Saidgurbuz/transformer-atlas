@@ -353,3 +353,91 @@ export function useStyle(id, css) {
   injected.add(id);
   document.head.append(h('style', { dataset: { scene: id } }, css));
 }
+
+// ------------------------------------------------------------ shared scene parts
+// Every scene uses these so headers, captions, pickers and checks look and sit the same.
+// Zones on the 1600 x 900 canvas (see docs/STYLE_GUIDE.md):
+export const ZONES = {
+  header: { x: 110, y: 28 },               // chips, title, one context line
+  controls: { x: 110, y: 196 },            // token / head pickers (optional)
+  hero: { x: 110, y: 270, w: 1380, h: 480 },
+  side: { x: 1180, w: 340 },               // equation column when the hero leaves room
+  caption: { x: 110, y: 790, w: 1060 },
+};
+export const MOTION = { move: 600, appear: 520, stagger: 60, step: 1700, ease: 'cubic-bezier(.65,0,.35,1)', easeOut: 'cubic-bezier(.2,.7,.2,1)' };
+
+/** Eyebrow chips + title + one context line, top-left. Returns {el, setSub(html)}. */
+export function sceneHeader(stage, { chips = [], title, sub = '' } = {}) {
+  const eyebrow = h('div', { class: 'k-eyebrow' }, chips.map(([text, kind]) => chip(text, kind)));
+  const t = h('div', { class: 'k-scene-title' }, title);
+  const s = h('div', { class: 'k-scene-sub', html: sub });
+  const el = h('div', { class: 'k-header' }, eyebrow, t, s);
+  stage.add(el, { x: ZONES.header.x, y: ZONES.header.y });
+  return { el, title: t, setSub(html) { s.innerHTML = html; } };
+}
+
+/** One- or two-sentence caption in the bottom zone; text changes cross-fade. */
+export function sceneCaption(stage, { x = ZONES.caption.x, y = ZONES.caption.y, w = ZONES.caption.w } = {}) {
+  const el = h('div', { class: 'k-scene-caption', style: { width: `${w}px` } });
+  stage.add(el, { x, y });
+  let last = '';
+  return {
+    el,
+    set(html) {
+      if (html === last) return;
+      last = html;
+      if (reducedMotion()) { el.innerHTML = html; return; }
+      el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140 }).finished.then(() => {
+        el.innerHTML = html;
+        el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: MOTION.easeOut });
+      }).catch(() => { el.innerHTML = html; });
+    },
+  };
+}
+
+/** Row of small token tiles; clicking selects the token for the whole app. */
+export function tokenPicker(stage, ctx, { x = ZONES.controls.x, y = ZONES.controls.y, label = 'token', kind = 'attn', maxWidth = 1360, isDisabled = null } = {}) {
+  const row = h('div', { class: 'k-picker' });
+  const wrap = h('div', { class: 'k-picker-wrap' }, h('span', { class: 'k-picker-label' }, label), row);
+  stage.add(wrap, { x, y });
+  function render() {
+    const s = ctx.state, T = s.ids.length, sel = Math.min(s.sel.token, T - 1);
+    const w = Math.max(16, Math.min(40, (maxWidth - 70) / T - 4));
+    row.replaceChildren(...s.ids.map((_, i) => {
+      const t = h('button', { type: 'button', class: ['k-pick', i === sel && 'sel'], disabled: isDisabled?.(i), style: { width: `${w}px`, fontSize: T > 32 ? '12px' : '17px', '--kind': `var(--c-${kind})` }, title: `position ${i}` },
+        h('b', null, ctx.label(i)), T <= 48 ? h('small', null, i) : null);
+      t.addEventListener('click', () => ctx.store.select({ token: i }));
+      return t;
+    }));
+  }
+  render();
+  const off = ctx.on('select', render);
+  const off2 = ctx.on('trace', render);
+  stage.onCleanup(() => { off(); off2(); });
+  return { el: wrap, render };
+}
+
+/** Compact head chips (h0 … h{H-1}); selects the head for the whole app. */
+export function headPicker(stage, ctx, { x, y, kind = 'attn' } = {}) {
+  const row = h('div', { class: 'k-picker-wrap' });
+  stage.add(row, { x, y });
+  function render() {
+    const H = ctx.cfg.n_head, cur = ctx.state.sel.head;
+    row.replaceChildren(h('span', { class: 'k-picker-label' }, 'head'), ...Array.from({ length: H }, (_, i) => {
+      const b = h('button', { type: 'button', class: ['k-pick', 'k-pick-head', i === cur && 'sel'], style: { '--kind': `var(--c-${kind})` } }, h('b', null, `h${i}`));
+      b.addEventListener('click', () => ctx.store.select({ head: i }));
+      return b;
+    }));
+  }
+  render();
+  const off = ctx.on('select', render);
+  stage.onCleanup(off);
+  return { el: row, render };
+}
+
+/** "✓ equals the traced value" badge (or a red ✗ with the difference). */
+export function checkBadge(got, want, { label = 'equals the traced value', tol = 1e-6 } = {}) {
+  const ok = (got === want) || Math.abs(got - want) <= tol * Math.max(1, Math.abs(want));
+  return h('span', { class: ['k-check', ok ? 'ok' : 'bad'], title: `computed ${got} · traced ${want}` },
+    ok ? `✓ ${label}` : `✗ differs from the traced value by ${fmt(Math.abs(got - want), 3)}`);
+}

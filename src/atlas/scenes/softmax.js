@@ -1,7 +1,7 @@
 // Softmax for one query row of one head, in five steps on the real numbers:
 //   scores → subtract the max → exponentiate → normalise → the full pattern.
 // Reference scene for contributors: see docs/ATLAS_GUIDE.md.
-import { stage2d, token, caption, chip, mat, appear, pulse, countTo, useStyle } from '../kit.js';
+import { stage2d, sceneHeader, sceneCaption, tokenPicker, mat, appear, pulse, countTo, useStyle, MOTION } from '../kit.js';
 import { h, fmt, texHTML, num } from '../../ui/index.js';
 
 const STEPS = ['Scores', 'Subtract max', 'Exponentiate', 'Normalise', 'The pattern'];
@@ -19,7 +19,6 @@ useStyle('softmax', `
 .sm-keys { display: flex; }
 .sm-key { text-align: center; font: 600 16px/1 var(--font-mono); color: var(--fg-2); transition: opacity .3s; }
 .sm-key.dim { opacity: .3; }
-.sm-q { cursor: pointer; }
 .sm-stack { position: relative; width: 34px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
 .sm-seg { position: absolute; left: 0; right: 0; background: var(--c-attn); border-top: 1px solid color-mix(in srgb, var(--bg) 60%, transparent); transition: height .6s cubic-bezier(.65,0,.35,1), bottom .6s cubic-bezier(.65,0,.35,1); }
 .sm-eq { width: 380px; display: grid; gap: 10px; }
@@ -33,18 +32,9 @@ export default {
     const { l, h: hd } = ctx.params;
     let step = 0;
 
-    // ---------------------------------------------------------------- header
-    const eyebrow = h('div', { class: 'row', style: { gap: '10px' } }, chip(`Layer ${l}`, 'resid'), chip(`Head ${hd}`, 'attn'));
-    const title = h('div', { class: 'k-title', style: { fontSize: '46px', textAlign: 'left' } }, 'Softmax');
-    const sub = h('div', { class: 'k-caption', style: { width: '1060px' } });
-    st.add(eyebrow, { x: BX, y: 28 });
-    st.add(title, { x: BX, y: 70 });
-    st.add(sub, { x: BX, y: 128 });
-
-    // query picker
-    const picker = h('div', { class: 'row', style: { gap: '4px', flexWrap: 'nowrap' } });
-    st.add(h('div', { class: 'k-label', style: { textAlign: 'left', color: 'var(--fg-3)' } }, 'query'), { x: BX, y: 206 });
-    st.add(picker, { x: BX + 70, y: 196 });
+    // ---------------------------------------------------------------- header, picker, caption (shared kit parts)
+    const header = sceneHeader(st, { chips: [[`Layer ${l}`, 'resid'], [`Head ${hd}`, 'attn']], title: 'Softmax' });
+    const picker = tokenPicker(st, ctx, { label: 'query' });
 
     // bars
     const bars = h('div', { class: 'sm-bars', style: { width: `${BW}px`, height: `${BH}px` } });
@@ -66,8 +56,7 @@ export default {
     st.add(eq, { x: 1180, y: BY - 10 });
     const patternBox = h('div');
     st.add(patternBox, { x: 1180, y: 548 });
-    const cap = caption('', { w: 960 });
-    st.add(cap, { x: BX, y: BY + BH + 64 });
+    const cap = sceneCaption(st, { y: BY + BH + 64, w: 960 });
 
     let barEls = [], keyEls = [], stackEls = [], patternMat = null;
 
@@ -86,15 +75,6 @@ export default {
 
     function buildStatic() {
       const s = ctx.state, d = data();
-      picker.replaceChildren(...s.ids.map((_, i) => {
-        const t = token(ctx.label(i), i, { selected: i === d.q, kind: 'attn' });
-        t.classList.add('sm-q');
-        t.style.minWidth = `${Math.max(18, Math.min(40, 1300 / d.T - 4))}px`;
-        t.style.height = '44px';
-        t.style.fontSize = d.T > 32 ? '14px' : '20px';
-        t.addEventListener('click', () => ctx.store.select({ token: i }));
-        return t;
-      }));
       const colW = BW / d.T;
       bars.querySelectorAll('.sm-bar').forEach((b) => b.remove());
       barEls = d.sc.map((_, j) => {
@@ -117,7 +97,7 @@ export default {
       });
       patternMat.addEventListener('click', (e) => { const c = e.target.closest('[data-cell]'); if (c) ctx.store.select({ token: Number(c.dataset.cell.split(',')[0]) }); });
       patternBox.replaceChildren(patternMat);
-      sub.innerHTML = `Query “<b>${ctx.label(d.q)}</b>” at position ${d.q} has a score for each of the ${d.nVis} keys it may see. Softmax turns them into weights that sum to 1.`;
+      header.setSub(`Query “<b>${ctx.label(d.q)}</b>” at position ${d.q} has a score for each of the ${d.nVis} keys it may see. Softmax turns them into weights that sum to 1.`);
       paint({ animate: false });
     }
 
@@ -183,7 +163,7 @@ export default {
         `Dividing by the sum Z gives weights that add up to exactly 1. The strongest key, “${ctx.label(j)}”, gets ${(d.p[j] * 100).toFixed(1)}%.`,
         'Doing this for every query gives the head’s full attention pattern: one row per query, causal triangle included.',
       ];
-      cap.innerHTML = words[step];
+      cap.set(words[step]);
     }
 
     function argmax(a) { let b = 0; for (let i = 1; i < a.length; i++) if (a[i] > a[b]) b = i; return b; }
@@ -191,11 +171,11 @@ export default {
     function setStep(i) { step = i; paint(); }
     ctx.setSteps(STEPS, setStep);
     buildStatic();
-    appear([eyebrow, title, sub, picker, bars, keyRow, eq], { stagger: 60 });
+    appear([header.el, picker.el, bars, keyRow, eq], { stagger: MOTION.stagger });
 
     // auto-advance the first time the scene is shown, so it explains itself
     let auto = setTimeout(function next() {
-      if (step < STEPS.length - 1) { ctx.setStep(step + 1); auto = setTimeout(next, 1700); }
+      if (step < STEPS.length - 1) { ctx.setStep(step + 1); auto = setTimeout(next, MOTION.step); }
     }, 900);
     el.addEventListener('pointerdown', () => clearTimeout(auto), { once: true });
 
