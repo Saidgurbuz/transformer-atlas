@@ -1,7 +1,18 @@
 # Transformer Explorer
 
-An interactive, line-by-line tour of a decoder-only Transformer. Every tensor of a real
-forward pass is visible, and each one is tied to the exact line of PyTorch that produces it.
+A full-screen, zoomable atlas of a decoder-only Transformer running a real (tiny, trained)
+model in your browser. Start from a 3D view of the whole model, click a part to zoom into it
+(Model → Block 2 → Attention → Head 1 → Softmax), and each level shows one idea, animated on the
+real numbers. Hover anything for its equation with the live values plugged in; right-click for
+the exact line of PyTorch that computes it. Arrow keys walk the forward pass as a guided story.
+
+- **One focus per screen:** every node of the hierarchy (`src/atlas/nodes.js`) is a scene
+  (`src/atlas/scenes/*.js`) that answers one question, in steps.
+- **Verified everywhere:** the numbers come from a JS engine proven equal to the PyTorch
+  reference; every equation compiles and its live instantiation is checked against the traced
+  value (`tests/math.mjs`).
+- **v0.1** (git tag) is the earlier tensor-tower explorer; it is still available from the menu
+  as "All tensors (v0.1)".
 
 - **Ground truth:** `reference/model.py` is a readable PyTorch model (GPT-2 style by default,
   with switches for RoPE / ALiBi / sinusoidal / no positions, LayerNorm / RMSNorm, pre / post
@@ -17,6 +28,9 @@ forward pass is visible, and each one is tied to the exact line of PyTorch that 
 
 ## Run it
 
+Open `dist/transformer-explorer.html` (built by `node tools/build_single.mjs`) directly, or serve the
+repository:
+
 The app is plain ES modules with no build step. It must be served over HTTP (not `file://`):
 
 ```bash
@@ -31,6 +45,8 @@ From the cluster, forward the port (`ssh -L 8000:localhost:8000 <login-node>`) a
 ```
 reference/model.py              PyTorch ground truth with @trace markers
 reference/numpy_transformer.py  NumPy implementation with a hand-written backward pass
+src/atlas/                      the zoomable explorer: host, node hierarchy, 2.5D kit, scenes/
+src/scene/                      3D engine, tensor sheets, v0.1 tower and explorer plug-ins
 src/engine/                     JS tensor ops + autograd, model, KV-cache decoding, tokenizer
 src/core/                       store (state/events), router, shell (nav, inspector, settings),
                                 describe.js (trace-key catalogue), codemap.js (code <-> keys)
@@ -40,7 +56,10 @@ src/presets/                    trained weights (base64 float32) + manifest
 styles/main.css                 design tokens (light + dark) and shared styles
 tools/                          fixture export, preset training, code bundling, smoke tests
 tests/                          parity (JS vs PyTorch), presets, NumPy reference tests
-docs/AGENT_GUIDE.md             the contributor contract (APIs, trace keys, design rules)
+docs/ATLAS_GUIDE.md             how to write a scene (rules, contract, kit, checks)
+docs/MATH_GUIDE.md              the math catalogue (schema, notation, conventions)
+docs/AGENT_GUIDE.md             store, trace keys, engine and UI-kit reference
+docs/SCENE_GUIDE.md             3D explorer plug-ins (v0.1 tower)
 ```
 
 ## Verify
@@ -49,16 +68,18 @@ docs/AGENT_GUIDE.md             the contributor contract (APIs, trace keys, desi
 .venv/bin/python tools/export_fixtures.py     # PyTorch -> tests/fixtures/*.json
 node tests/parity.mjs                          # JS engine vs PyTorch (traces, grads, KV cache)
 node tests/presets.mjs                         # shipped weights reproduce PyTorch logits
+node tests/math.mjs                            # every equation compiles; live numbers match the trace
 .venv/bin/python tests/test_numpy_reference.py # NumPy forward + manual backward vs PyTorch
-tools/smoke.sh --all                           # every view in headless Chromium, light + dark
-tools/smoke.sh --view attention --out shot.png # one view + screenshot
+tools/smoke.sh --all                           # every atlas node in headless Chromium, light + dark
+tools/smoke.sh --view head.1.2 --out shot.png  # one node + screenshot
 ```
 
 ## Extend it
 
-**Add a view:** create `src/views/<id>.js` exporting `{id, title, mount(root, ctx)}` (copy
-`src/views/_example.js`), and add one line to `src/views/registry.js`. `docs/AGENT_GUIDE.md`
-documents `ctx`, the store, the engine and the UI kit.
+**Add a level:** add a pattern to `src/atlas/nodes.js` (title, parent, kind, blurb, trace keys)
+and write `src/atlas/scenes/<name>.js` (copy `softmax.js`; rules and API in
+`docs/ATLAS_GUIDE.md`). Mark zoom targets with `data-node` and tensors with `data-trace` /
+`data-cell`; the atlas adds hover maths, right-click code and zoom transitions.
 
 **Add or change a model feature:**
 1. Edit `reference/model.py`; put `# @trace <key>` on any new line whose result should be visible.
