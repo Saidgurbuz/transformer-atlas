@@ -10,8 +10,9 @@ import { ENTRIES as qkv } from './qkv.js';
 import { ENTRIES as norm } from './norm.js';
 import { ENTRIES as mlp } from './mlp.js';
 import { ENTRIES as head } from './head.js';
+import { ENTRIES as concepts } from './concepts.js';
 
-export const MATH = { ...embed, ...positions, ...qkv, ...attention, ...norm, ...mlp, ...head };
+export const MATH = { ...embed, ...positions, ...qkv, ...attention, ...norm, ...mlp, ...head, ...concepts };
 
 export function mathFor(key) { return MATH[parseKey(key).pattern] ?? MATH[key] ?? null; }
 
