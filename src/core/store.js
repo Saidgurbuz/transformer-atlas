@@ -133,7 +133,8 @@ export const store = {
     st.weights = `preset:${id}`;
     st.preset = data;
     emit('config', st.config);
-    const sample = data.samples?.[0] ?? st.text;
+    // short samples keep the 3D tower readable; the user can paste longer text
+    const sample = data.samples?.find((x) => x.length <= 40) ?? data.samples?.[0] ?? st.text;
     this.setText(sample.slice(0, st.config.block_size), { quiet: true });
   },
 

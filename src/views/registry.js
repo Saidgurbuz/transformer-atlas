@@ -5,6 +5,7 @@
 export const GROUPS = ['Start', 'Input', 'Attention', 'Inside the block', 'Output', 'Experiments', 'Beyond', 'Review'];
 
 export const VIEWS = [
+  { id: 'explorer', title: '3D model explorer', group: 'Start', kind: 'attn', load: () => import('./explorer.js') },
   { id: 'overview', title: 'Architecture map', group: 'Start', kind: 'resid', load: () => import('./overview.js') },
   { id: 'stepper', title: 'Code ↔ forward pass', group: 'Start', kind: 'attn', load: () => import('./stepper.js') },
   { id: 'tokens', title: 'Tokens & embeddings', group: 'Input', kind: 'embed', load: () => import('./tokens.js') },

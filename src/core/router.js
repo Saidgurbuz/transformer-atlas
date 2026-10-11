@@ -11,7 +11,7 @@ export function startRouter(shell) {
   let current = null, token = 0;
 
   async function show() {
-    const id = (location.hash || '').replace(/^#/, '') || 'overview';
+    const id = (location.hash || '').replace(/^#/, '') || 'explorer';
     const def = VIEWS.find((v) => v.id === id) || VIEWS[0];
     const my = ++token;
     if (current) {
