@@ -9,6 +9,7 @@ export function autoScene() {
   return {
     mount(el, ctx) {
       const st = stage2d(el);
+      st.root.classList.add('k-auto');      // marks an unbuilt scene (smoke tests report it as a stub)
       const info = ctx.node;
       const kids = childrenOf(info.id, ctx.cfg).map((id) => nodeInfo(id, ctx.cfg));
       st.add(h('div', { class: 'k-title' }, info.title), { x: 800, y: 120, anchor: 'tc' });

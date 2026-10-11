@@ -51,9 +51,9 @@ async function check(view, { theme = 'light', width = 1440, height = 900, out = 
     title: document.title,
     overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
     viewOverflow: (() => { const m = document.querySelector('.main'); return m ? m.scrollWidth > m.clientWidth + 1 : false; })(),
-    stub: !!document.querySelector('.placeholder-view'),
-    failed: !!document.querySelector('#view-root > .callout.warn'),
-    textLength: document.querySelector('#view-root')?.innerText.length ?? 0,
+    stub: !!document.querySelector('.placeholder-view, .atlas-layer:not(.hidden) .k-auto'),
+    failed: !!document.querySelector('#view-root > .callout.warn, .atlas-error'),
+    textLength: (document.querySelector('.atlas-layer:not(.hidden)') || document.querySelector('#view-root'))?.innerText.length ?? 0,
   }));
   let evalResult;
   if (evalJs) {
@@ -67,14 +67,15 @@ async function check(view, { theme = 'light', width = 1440, height = 900, out = 
 
 try {
   if (flag('all')) {
-    const { VIEWS } = await import('../src/views/registry.js');
+    const { PATTERNS } = await import('../src/atlas/nodes.js');
+    const VIEWS = PATTERNS.map((p) => ({ id: p.pattern.replace(':l', '0').replace(':h', '0').replace(':n', '1') }));
     const rows = [];
-    for (const v of VIEWS.filter((x) => !x.hidden)) for (const theme of ['light', 'dark']) {
+    for (const v of VIEWS) for (const theme of ['light', 'dark']) {
       const r = await check(v.id, { theme, wait: 700 });
       rows.push(r);
       console.log(`${(r.errors.length || r.failed ? 'FAIL' : r.stub ? 'stub' : 'ok').padEnd(5)} ${v.id.padEnd(11)} ${theme.padEnd(5)} errors=${r.errors.length} overflow=${r.overflowX || r.viewOverflow} ${r.errors.slice(0, 2).join(' | ').slice(0, 200)}`);
     }
-    if (flag('mobile')) for (const v of VIEWS.filter((x) => !x.hidden)) {
+    if (flag('mobile')) for (const v of VIEWS) {
       const r = await check(v.id, { width: 400, height: 860, wait: 700 });
       console.log(`${(r.errors.length || r.failed ? 'FAIL' : 'ok').padEnd(5)} ${v.id.padEnd(11)} 400px errors=${r.errors.length} overflow=${r.overflowX}`);
     }
