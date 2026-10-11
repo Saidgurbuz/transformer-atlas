@@ -65,6 +65,8 @@ export class SceneEngine {
     this.dirty = true;
     this.running = true;
     this.insets = { left: 0, right: 0, top: 0, bottom: 0 };
+    this.renderFn = null;          // optional replacement for renderer.render (post-processing)
+    this.resizeHooks = new Set();
 
     this.applyTheme();
     this.offTheme = onThemeChange(() => { this.applyTheme(); this.handlers.onTheme?.(); });
@@ -100,8 +102,15 @@ export class SceneEngine {
     // shift the projection so the scene centres in the area not covered by HUD panels
     this.camera.setViewOffset(w, h, -(left - right) / 2, -(top - bottom) / 2, w, h);
     this.camera.updateProjectionMatrix();
+    for (const fn of this.resizeHooks ?? []) fn(w, h);
     this.invalidate();
   }
+
+  /** Replace the default render call, e.g. with an EffectComposer. null restores it. */
+  setRenderFn(fn) { this.renderFn = fn; this.invalidate(); }
+
+  /** fn(width, height) after every resize. Returns remover. */
+  onResize(fn) { this.resizeHooks.add(fn); return () => this.resizeHooks.delete(fn); }
 
   /** Pixels covered by overlay panels on each side; framing centres in the rest. */
   setInsets(insets) { this.insets = { ...this.insets, ...insets }; this.resize(); }
@@ -123,7 +132,8 @@ export class SceneEngine {
     for (const fn of this.frameHooks) if (fn(t) !== false) this.dirty = true;
     const moved = this.controls.update();
     if (this.dirty || moved) {
-      this.renderer.render(this.scene, this.camera);
+      if (this.renderFn) this.renderFn(this.scene, this.camera);
+      else this.renderer.render(this.scene, this.camera);
       this.labels.render(this.scene, this.camera);
       this.dirty = false;
     }

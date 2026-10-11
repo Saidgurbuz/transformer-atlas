@@ -11,6 +11,9 @@ import { codeLines, lineForKey } from '../core/codemap.js';
 import { VIEWS } from './registry.js';
 import { mathCard, mathTipHTML, mathFor } from '../core/mathview.js';
 import { tex } from '../ui/index.js';
+import { PARTS } from '../scene/parts/index.js';
+import { themeColor, label as sceneLabel, ease as sceneEase } from '../scene/engine3d.js';
+import { CELL_X, CELL_Z } from '../scene/tower.js';
 
 const SPEEDS = [0.5, 1, 2, 4];
 
@@ -35,6 +38,11 @@ export default {
       onTheme: () => { tower.sync(ctx.state, { animate: false }); },
     });
     const tower = new Tower(engine);
+    const hooks = { sync: new Set(), select: new Set(), step: new Set(), context: new Set() };
+    const stepAnims = [];
+    const towerSync = tower.sync.bind(tower);
+    tower.sync = (...a) => { towerSync(...a); for (const f of hooks.sync) safe(f); };
+    function safe(f, ...args) { try { return f(...args); } catch (e) { console.error('[explorer part]', e); return undefined; } }
     const setInsets = () => {
       const narrow = stage.clientWidth < 700;
       engine.setInsets({ left: narrow ? 0 : 196, top: 56, right: 8, bottom: narrow ? 150 : 236 });
@@ -265,7 +273,10 @@ export default {
       if (sh) {
         const box = tower.boxOf([key]);
         engine.flyTo({ ...engine.framing(box, new THREE.Vector3(0.5, 0.75, 0.75), 1.35), duration: Math.min(900, stepDuration() * 0.6) });
-        if (animateReveal) await engine.tween({ duration: stepDuration() * 0.75, delay: Math.min(300, stepDuration() * 0.2), easing: (t) => t, update: (e) => sh.setReveal(e) });
+        const custom = animateReveal && stepAnims.find((a) => a.pattern.test(key));
+        for (const f of hooks.step) safe(f, { key, index: i, sheet: sh, playing, duration: stepDuration() });
+        if (custom) await Promise.resolve(safe(custom.fn, key, sh, { duration: stepDuration(), api })).catch(() => {}).then(() => sh.setReveal(1));
+        else if (animateReveal) await engine.tween({ duration: stepDuration() * 0.75, delay: Math.min(300, stepDuration() * 0.2), easing: (t) => t, update: (e) => sh.setReveal(e) });
       }
       showStep(key);
       renderScrub(); renderLayers();
@@ -370,6 +381,7 @@ export default {
         view && { label: `Deep dive: ${view.title}`, run: () => ctx.navigate(view.id) },
         g !== 'head' && { label: tower.expanded.has(g) ? `Close ${groupName(g)}` : `Open ${groupName(g)}`, run: () => toggleGroup(g) },
         { label: 'Play forward pass from here', run: () => { stepIdx = Math.max(-1, steps.indexOf(key) - 1); play(); } },
+        ...[...hooks.context].flatMap((f) => safe(f, info) || []),
       ].filter(Boolean), { title: `${key} · ${infoK.title}` });
     }
 
@@ -384,13 +396,34 @@ export default {
 
     // ------------------------------------------------------------ store
     ctx.on('trace', () => render());
-    ctx.on('select', (sel) => { tower.select(sel); renderHeads(); });
+    ctx.on('select', (sel) => { tower.select(sel); renderHeads(); for (const f of hooks.select) safe(f, sel); });
+    // ------------------------------------------------------------ plug-ins
+    const api = {
+      THREE, engine, tower, store: ctx.store, ctx, hud, stage,
+      get state() { return ctx.state; },
+      themeColor, label: sceneLabel, ease: sceneEase, CELL_X, CELL_Z,
+      on: (event, fn) => ctx.on(event, fn),
+      onSync(fn) { hooks.sync.add(fn); return () => hooks.sync.delete(fn); },
+      onSelect(fn) { hooks.select.add(fn); return () => hooks.select.delete(fn); },
+      onStep(fn) { hooks.step.add(fn); return () => hooks.step.delete(fn); },
+      addContextItems(fn) { hooks.context.add(fn); return () => hooks.context.delete(fn); },
+      stepAnimation(pattern, fn) { const a = { pattern, fn }; stepAnims.push(a); return () => stepAnims.splice(stepAnims.indexOf(a), 1); },
+      addTool({ label: text, title, run }) { const b = hudBtn(text, title, run); tools.append(b); return () => b.remove(); },
+      focusKey: (k, o) => focusKey(k, o), focusGroup: (g) => focusOn(g), overview: () => overview(),
+      play: () => play(), pause: () => pause(), isPlaying: () => playing, speed: () => speed,
+    };
+    const disposers = [];
+    for (const part of PARTS) {
+      try { const d = part.install(api); if (typeof d === 'function') disposers.push(d); } catch (e) { console.error(`[explorer part ${part.id}]`, e); }
+    }
+
     tower.expanded = new Set();
     render({ animate: true });
     setTimeout(() => overview({ duration: 1600 }), 50);
     if (ctx.state.focusKey) { const k = ctx.state.focusKey; delete ctx.state.focusKey; setTimeout(() => focusKey(k), 700); }
 
     return () => {
+      for (const d of disposers) safe(d);
       pause();
       window.removeEventListener('keydown', onKey);
       hideTip();
