@@ -10,3 +10,4 @@ export * from './tokens.js';
 export * from './codeview.js';
 export * from './math.js';
 export * from './anim.js';
+export * from './contextmenu.js';

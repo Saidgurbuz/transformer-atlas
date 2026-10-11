@@ -32,6 +32,7 @@ const DEFAULTS = {
   onLeave: null,
   onClick: null,
   ariaLabel: 'heatmap',
+  traceKey: null,         // enables the global right-click menu (show code, inspect)
 };
 
 export function heatmap(options) {
@@ -39,6 +40,7 @@ export function heatmap(options) {
   const canvas = h('canvas', { role: 'img', 'aria-label': o.ariaLabel });
   const titleEl = h('div', { class: 'heatmap-title' });
   const el = h('div', { class: 'heatmap' }, titleEl, canvas);
+  if (o.traceKey) canvas.dataset.trace = o.traceKey;
   let hover = null, layout = null;
 
   function computeLayout() {
@@ -193,7 +195,11 @@ export function heatmap(options) {
   return {
     el,
     canvas,
-    update(patch) { o = { ...o, ...patch }; render(); },
+    update(patch) {
+      o = { ...o, ...patch };
+      if (o.traceKey) canvas.dataset.trace = o.traceKey; else delete canvas.dataset.trace;
+      render();
+    },
     get options() { return o; },
     destroy() { offTheme(); hideTip(); },
   };
