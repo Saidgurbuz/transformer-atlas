@@ -7,7 +7,7 @@ import { PRESETS } from '../presets/index.js';
 import { CONFIG_CHOICES, countParams, dHead } from '../engine/index.js';
 import {
   h, s, clear, fmt, fmtCount, heatmap, segmented, select, slider, toggle, button, shapeBadge, kindTag,
-  codeView, notifyThemeChange, kindVar,
+  codeView, notifyThemeChange, kindVar, openContextMenu,
 } from '../ui/index.js';
 
 const THEME_KEY = 'te-theme';
@@ -198,6 +198,21 @@ export function buildShell(root, { onNavigate }) {
       h('div', { class: 'row' }, button('Reset to defaults', () => { store.useRandomVocab(); store.setConfig({ n_layer: 2, n_head: 4, n_kv_head: 4, d_model: 64, d_ff: 256, pos_encoding: 'learned', norm: 'layernorm', norm_placement: 'pre', activation: 'gelu', mask: 'causal', residual: true, attn_scale: true, tie_weights: false, bias: true, block_size: 32 }); renderSettings(); })),
     );
   }
+
+  // ------------------------------------------- right-click on any traced element
+  document.addEventListener('contextmenu', (e) => {
+    const el = e.target.closest?.('[data-trace]');
+    if (!el) return;
+    e.preventDefault();
+    const key = el.dataset.trace, info = infoFor(key), line = lineForKey(key, store.state.config);
+    const target = VIEWS.find((v) => v.id === info.view);
+    openContextMenu(e.clientX, e.clientY, [
+      { label: `Show code${line ? ` · model.py:${line}` : ''}`, hint: 'Inspector with the producing line', run: () => store.inspect(key) },
+      { label: 'Find in 3D explorer', run: () => { store.state.focusKey = key; location.hash = 'explorer'; } },
+      { label: 'Step to it in the code stepper', run: () => { store.state.focusKey = key; location.hash = 'stepper'; } },
+      target && { label: `Deep dive: ${target.title}`, run: () => { location.hash = target.id; } },
+    ].filter(Boolean), { title: `${key} · ${info.title}` });
+  });
 
   // ------------------------------------------------------------- notices
   let noticeTimer;
