@@ -117,6 +117,29 @@ export class SceneEngine {
 
   invalidate() { this.dirty = true; }
 
+  /** Stop / restart the render loop (e.g. while the scene is hidden). */
+  pause() { this.running = false; cancelAnimationFrame(this.raf); }
+  resume() {
+    if (this.running) return;
+    this.running = true;
+    this.dirty = true;
+    const loop = (now) => { if (!this.running) return; this.raf = requestAnimationFrame(loop); this.tick(now); };
+    this.raf = requestAnimationFrame(loop);
+  }
+
+  /** Screen rectangle (viewport px) covered by an object's bounding box. */
+  screenRect(object) {
+    const box = new THREE.Box3().setFromObject(object);
+    const r = this.renderer.domElement.getBoundingClientRect();
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
+      const p = new THREE.Vector3(x, y, z).project(this.camera);
+      const sx = r.left + (p.x + 1) / 2 * r.width, sy = r.top + (1 - p.y) / 2 * r.height;
+      x0 = Math.min(x0, sx); y0 = Math.min(y0, sy); x1 = Math.max(x1, sx); y1 = Math.max(y1, sy);
+    }
+    return new DOMRect(x0, y0, Math.max(8, x1 - x0), Math.max(8, y1 - y0));
+  }
+
   tick(now) {
     const t = now / 1000;
     if (this.tweens.size) {
