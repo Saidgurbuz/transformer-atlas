@@ -142,3 +142,10 @@
 .m3-label.hot { transform: scale(1.06); border-color: var(--kind); }
 .m3-token { font: 600 16px/1 var(--font-mono); color: var(--fg); }
 .m3-pred { font: 600 14px/1.2 var(--font-mono); color: var(--fg); padding: 3px 8px; border-radius: 6px; background: color-mix(in srgb, var(--surface) 80%, transparent); border: 1px solid color-mix(in srgb, var(--c-head) 45%, transparent); }
+
+/* scrollable document layout for reference scenes (cheat sheet, calculators, labs) */
+.k-doc { position: absolute; inset: 0; overflow-y: auto; padding: 84px 24px 110px; }
+.k-doc-inner { max-width: 1120px; margin-inline: auto; display: grid; gap: 28px; }
+.k-doc h1 { font: 700 44px/1.05 var(--font-display); letter-spacing: -.02em; }
+.k-doc h2 { font: 650 26px/1.2 var(--font-display); }
+.k-doc .lede { font-size: 18px; color: var(--fg-2); max-width: 70ch; }

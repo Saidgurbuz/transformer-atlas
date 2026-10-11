@@ -67,6 +67,7 @@ export default {
 - Colours: component kinds (`q k v attn o mlp norm resid head embed pos mask`) through
   `var(--c-<kind>)`; tensor values through the kit (`vec`, `mat`) or `diverging`/`sequential`.
   Never hard-code hex colours. Both themes must look right.
+- Reference scenes in the "More" menu (cheat sheet, scaling, lab, encdec, vision) may use a scrollable document instead of the canvas: `el.append(h("div", {class: "k-doc"}, h("div", {class: "k-doc-inner"}, ...)))`, still with the same restraint, cards and motion.
 - Depth ("2.5D"): soft shadows and raised cells come with the kit; `mat(..., {tilt: true})`
   for a perspective plane; layering (back/mid/front) for parallax-like depth. No 3D engine in
   2.5D scenes.
