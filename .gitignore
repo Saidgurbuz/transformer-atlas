@@ -1,0 +1,15 @@
+# environments and tool installs
+.venv/
+tools/node_modules/
+__pycache__/
+*.pyc
+
+# local runtime artefacts
+tools/.smoke.lock
+logs/
+dist/
+drafts/
+.DS_Store
+
+# downloaded corpus (fetch with tools/fetch_data.sh)
+data/*.txt
