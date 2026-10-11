@@ -4,6 +4,7 @@ import { VIEWS, GROUPS } from '../views/registry.js';
 import { infoFor, shapePairs } from './describe.js';
 import { lineForKey, codeLines } from './codemap.js';
 import { PRESETS } from '../presets/index.js';
+import { mathCard } from './mathview.js';
 import { CONFIG_CHOICES, countParams, dHead } from '../engine/index.js';
 import {
   h, s, clear, fmt, fmtCount, heatmap, segmented, select, slider, toggle, button, shapeBadge, kindTag,
@@ -145,6 +146,10 @@ export function buildShell(root, { onNavigate }) {
         ...[['mean', fmt(mean, 4)], ['std', fmt(std, 4)], ['min', fmt(mn, 4)], ['max', fmt(mx, 4)], ['finite values', String(n)]]
           .flatMap(([a, b]) => [h('dt', null, a), h('dd', null, b)])));
     }
+    // maths for the selected token's row (first column) when the tensor has a token axis
+    const cellRow = t.shape.length === 3 ? { band: inspectedSlice, r: Math.min(st.sel.token, t.shape[1] - 1), x: 0 } : t.shape.length === 2 ? { band: 0, r: Math.min(st.sel.token, t.shape[0] - 1), x: 0 } : null;
+    const mc = mathCard(st, key, cellRow);
+    if (mc) body.append(mc);
     // code
     const line = lineForKey(key, st.config);
     if (line) {

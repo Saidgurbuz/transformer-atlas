@@ -595,7 +595,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .drawer:not(.open) { box-shadow: none; visibility: hidden; transition: transform .28s var(--ease), visibility 0s linear .28s; }
 .drawer.open { transform: none; }
 .drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); }
-.drawer-body { overflow-y: auto; padding: 16px; display: grid; gap: 16px; align-content: start; }
+.drawer-body { overflow-y: auto; padding: 16px; display: grid; gap: 16px; align-content: start; grid-auto-rows: max-content; }
 
 .empty { padding: 28px; text-align: center; color: var(--fg-3); border: 1px dashed var(--line-strong); border-radius: var(--r-lg); }
 .placeholder-view { display: grid; gap: 12px; padding: 40px; border: 1px dashed var(--line-strong); border-radius: var(--r-lg); color: var(--fg-2); }
@@ -747,3 +747,32 @@ a.cite:hover { border-bottom-style: solid; }
   .hud-bottom { right: 8px; left: 8px; bottom: 8px; }
   .hud-caption .cap-what { display: none; }
 }
+
+/* ------------------------------------------------------------ typeset maths */
+.tex .katex { font-size: 1.08em; }
+.tex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; max-width: 100%; }
+.tex-display .katex-display { margin: .3em 0; }
+.k-q { color: var(--c-q); } .k-k { color: var(--c-k); } .k-v { color: var(--c-v); } .k-o { color: var(--c-o); }
+.k-attn { color: var(--c-attn); } .k-mlp { color: var(--c-mlp); } .k-embed { color: var(--c-embed); } .k-pos { color: var(--c-pos); }
+.k-head { color: var(--c-head); } .k-resid { color: var(--c-resid); } .k-norm { color: var(--c-norm); } .k-mask { color: var(--c-mask); }
+.tooltip .katex { font-size: 1em; color: inherit; }
+
+/* maths cards */
+.math-card { display: grid; gap: 10px; min-width: 0; }
+.math-title { font-family: var(--font-display); font-weight: 650; font-size: 1.02rem; }
+.math-symbols { display: grid; gap: 4px; }
+.math-sym { display: grid; grid-template-columns: minmax(56px, auto) minmax(0, 1fr) auto; gap: 10px; align-items: baseline; font-size: var(--fs-sm); color: var(--fg-2); }
+.math-live { display: grid; gap: 4px; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); min-width: 0; }
+.math-ok { color: var(--good); }
+.math-bad { color: var(--bad); }
+.math-deriv { border-top: 1px solid var(--line); padding-top: 8px; }
+.math-deriv summary { cursor: pointer; font-weight: 600; font-size: var(--fs-sm); color: var(--fg-2); }
+.math-deriv[open] summary { margin-bottom: 4px; }
+.tip-math { margin-top: 6px; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--bg) 30%, transparent); }
+.tooltip { max-width: 520px; }
+.hud-math { position: absolute; right: 16px; top: 64px; width: min(480px, calc(100% - 32px)); max-height: calc(100% - 330px); overflow: auto; padding: 12px 14px; display: grid; gap: 8px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent); backdrop-filter: blur(12px); border: 1px solid var(--line-strong); border-radius: var(--r-lg); box-shadow: var(--shadow-2); }
+.hud-math[hidden] { display: none; }
+.hud-math-head { display: flex; justify-content: space-between; align-items: center; }
+.cap-tex .katex-display { margin: .15em 0; text-align: left; }
+.cap-tex .katex-display > .katex { text-align: left; }

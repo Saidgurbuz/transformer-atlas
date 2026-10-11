@@ -9,6 +9,8 @@ import { h, fmt, kindVar, codeView, showTip, hideTip, segmented } from '../ui/in
 import { infoFor, shapePairs, parseKey } from '../core/describe.js';
 import { codeLines, lineForKey } from '../core/codemap.js';
 import { VIEWS } from './registry.js';
+import { mathCard, mathTipHTML, mathFor } from '../core/mathview.js';
+import { tex } from '../ui/index.js';
 
 const SPEEDS = [0.5, 1, 2, 4];
 
@@ -229,7 +231,7 @@ export default {
           h('span', { class: 'shape' }, shapePairs(key, st.config, st.ids.length).map(([s, n]) => `${s}=${n}`).join(' × ')),
           line && h('span', { class: 'muted small mono' }, `model.py:${line}`)),
         h('div', { class: 'cap-title' }, info.label || info.title),
-        h('div', { class: 'cap-formula math', html: info.formula }),
+        mathFor(key) ? tex(mathFor(key).tex, { display: true, className: 'cap-tex' }) : h('div', { class: 'cap-formula math', html: info.formula }),
         h('div', { class: 'cap-what' }, info.what));
       if (line) cv.setHighlight([line]);
       renderCrumbs();
@@ -302,7 +304,7 @@ export default {
         const colName = /probs$|scores|scaled|masked|biased|^mask$/.test(key) && !/^probs$/.test(key) ? `key ${tok(c.x)}(${c.x})`
           : key === 'logits' || key === 'probs' ? `next = “${st.tokenizer.label(c.x)}”` : `dim ${c.x}`;
         const band = sh.bands > 1 ? `head ${c.band} · ` : '';
-        showTip(ev.clientX, ev.clientY, `<b>${key}</b><br>${band}token “${tok(c.r)}”(${c.r}) · ${colName}<br>value <b>${fmt(c.value, 4)}</b>`);
+        showTip(ev.clientX, ev.clientY, `<b>${key}</b><br>${band}token “${tok(c.r)}”(${c.r}) · ${colName}<br>value <b>${fmt(c.value, 4)}</b>${mathTipHTML(st, key, c)}`);
         const line = lineForKey(key, st.config);
         if (line && !playing) cv.setHighlight([line], { scroll: false });
       } else if (d.arc) {
@@ -335,6 +337,19 @@ export default {
       }
     }
 
+    // floating maths panel (right-click > Show the math)
+    const mathPanel = h('div', { class: 'hud-math', hidden: true });
+    hud.append(mathPanel);
+    function showMath(key, cell) {
+      const card = mathCard(ctx.state, key, cell);
+      if (!card) return;
+      mathPanel.replaceChildren(
+        h('div', { class: 'hud-math-head' }, h('span', { class: 'kind-tag', style: { '--kind': kindVar(infoFor(key).kind) } }, key),
+          h('button', { class: 'btn icon ghost', type: 'button', 'aria-label': 'Close maths', onClick: () => { mathPanel.hidden = true; } }, '✕')),
+        card);
+      mathPanel.hidden = false;
+    }
+
     function contextMenu(info, ev) {
       if (!info?.traceKey) {
         openContextMenu(ev.clientX, ev.clientY, [
@@ -348,6 +363,7 @@ export default {
       const g = groupOf(key);
       openContextMenu(ev.clientX, ev.clientY, [
         { label: `Show code${line ? ` · model.py:${line}` : ''}`, hint: 'Highlights the line that computes this tensor', run: () => { code.classList.remove('collapsed'); showStep(key); } },
+        mathFor(key) && { label: 'Show the math', hint: info.cell ? 'Equation with this cell’s numbers plugged in' : 'Equation, symbols and derivation', run: () => showMath(key, info.cell) },
         { label: 'Fly to this tensor', run: () => focusKey(key, { close: true }) },
         { label: 'Inspect tensor values', run: () => ctx.inspect(key) },
         view && { label: `Deep dive: ${view.title}`, run: () => ctx.navigate(view.id) },
