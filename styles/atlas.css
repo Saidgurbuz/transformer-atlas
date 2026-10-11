@@ -112,6 +112,8 @@
 .k-mat-body { padding: 8px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 72%, transparent); border: 1px solid color-mix(in srgb, var(--kind, var(--line-strong)) 40%, transparent); box-shadow: 0 14px 34px rgba(0, 0, 0, .16), 0 2px 0 color-mix(in srgb, var(--kind, var(--fg)) 22%, transparent); }
 .k-mat.tilt .k-mat-body { transform: perspective(1100px) rotateX(24deg); transform-origin: 50% 100%; }
 .k-grid { display: grid; gap: var(--gap); align-items: center; }
+.k-mat-body { position: relative; }
+.k-row-band { position: absolute; border-radius: 4px; border: 2px solid var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); pointer-events: none; transition: top .45s cubic-bezier(.65,0,.35,1); }
 .k-axis { font: 500 13px/1 var(--font-mono); color: var(--fg-3); text-align: center; padding: 2px; }
 .k-axis.row { text-align: right; padding-right: 6px; }
 .k-op { width: var(--size); height: var(--size); border-radius: 50%; display: grid; place-items: center; background: var(--surface); border: 2px solid var(--kind, var(--fg-2)); color: var(--fg); font-size: 22px; box-shadow: 0 0 0 7px color-mix(in srgb, var(--kind, var(--fg-3)) 12%, transparent), var(--shadow-1); }

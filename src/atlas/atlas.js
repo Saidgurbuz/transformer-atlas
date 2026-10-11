@@ -262,7 +262,7 @@ export function startAtlas(root) {
     if (!show || !top) return;
     const order = storyOrder(cfg(), { head: store.state.sel.head });
     const i = order.indexOf(top.id);
-    storyBar.replaceChildren(
+    storyBar.replaceChildren(...[
       h('button', { type: 'button', class: 'atlas-tool', 'aria-label': 'Previous', onClick: () => storyStep(-1) }, '‹'),
       h('div', { class: 'story-text' },
         h('div', { class: 'story-title' }, top.info.title, storyOn && i >= 0 ? h('span', { class: 'story-count' }, `${i + 1} / ${order.length}`) : null),
@@ -270,7 +270,8 @@ export function startAtlas(root) {
           ? h('div', { class: 'story-steps' }, st.labels.map((l, k) => h('button', { type: 'button', class: ['story-dot', k === st.index && 'cur', k < st.index && 'done'], onClick: () => { st.index = k; st.onStep?.(k); renderStory(); } }, l)))
           : h('div', { class: 'story-blurb' }, top.info.blurb)),
       h('button', { type: 'button', class: 'atlas-tool', 'aria-label': 'Next', onClick: () => storyStep(1) }, '›'),
-      storyOn && h('button', { type: 'button', class: ['atlas-tool', autoplay && 'on'], title: 'Auto-play', onClick: () => { autoplay = !autoplay; renderStory(); if (autoplay) tick(); } }, autoplay ? '❚❚' : '▶'));
+      storyOn && h('button', { type: 'button', class: ['atlas-tool', autoplay && 'on'], title: 'Auto-play', onClick: () => { autoplay = !autoplay; renderStory(); if (autoplay) tick(); } }, autoplay ? '❚❚' : '▶'),
+    ].filter(Boolean));
   }
   function tick() {
     clearTimeout(storyTimer);

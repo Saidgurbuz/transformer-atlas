@@ -147,7 +147,8 @@ export function mat(data, rows, cols, opts = {}) {
   if (o.trace) el.dataset.trace = o.trace;
   const grid = h('div', { class: 'k-grid', style: { gridTemplateColumns: `${o.rowLabels ? 'auto ' : ''}repeat(${cols}, var(--cell))` } });
   if (o.label || o.tex) el.append(h('div', { class: 'k-label', html: o.tex ? texHTML(o.tex) : o.label }));
-  el.append(h('div', { class: 'k-mat-body' }, grid));
+  const rowBand = h('div', { class: 'k-row-band', hidden: true });
+  el.append(h('div', { class: 'k-mat-body' }, grid, rowBand));
   let cells = [], current = Array.from(data);
   function build() {
     grid.replaceChildren();
@@ -181,7 +182,16 @@ export function mat(data, rows, cols, opts = {}) {
   const off = onThemeChange(() => paint(current));
   el.update = (vals, { range } = {}) => { current = Array.from(vals); paint(current, range); };
   el.cellEl = (r, c) => cells[r * cols + c];
-  el.highlightRow = (r) => cells.forEach((c, i) => c.classList.toggle('hl', Math.floor(i / cols) === r));
+  // one band over the row (reads better than outlining many small cells)
+  el.highlightRow = (r) => {
+    const c0 = cells[r * cols], cN = cells[r * cols + cols - 1];
+    if (!c0) { rowBand.hidden = true; return; }
+    rowBand.hidden = false;
+    rowBand.style.top = `${c0.offsetTop - 2}px`;
+    rowBand.style.left = `${c0.offsetLeft - 3}px`;
+    rowBand.style.width = `${cN.offsetLeft + cN.offsetWidth - c0.offsetLeft + 6}px`;
+    rowBand.style.height = `${c0.offsetHeight + 4}px`;
+  };
   el.highlightCol = (cc) => cells.forEach((c, i) => c.classList.toggle('hl', i % cols === cc));
   el.highlightCells = (list) => { const S = new Set(list.map(([r, c]) => r * cols + c)); cells.forEach((c, i) => c.classList.toggle('hl', S.has(i))); };
   el.clearHighlight = () => cells.forEach((c) => c.classList.remove('hl'));
@@ -335,3 +345,11 @@ export function countTo(el, to, { from = 0, duration = 700, digits = 3 } = {}) {
 }
 
 export const wait = (ms) => new Promise((r) => setTimeout(r, reducedMotion() ? 0 : ms));
+
+/** Inject a scene's CSS once (selectors should be prefixed with the scene's class). */
+const injected = new Set();
+export function useStyle(id, css) {
+  if (injected.has(id)) return;
+  injected.add(id);
+  document.head.append(h('style', { dataset: { scene: id } }, css));
+}
