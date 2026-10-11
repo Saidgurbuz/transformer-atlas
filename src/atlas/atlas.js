@@ -10,6 +10,8 @@ import { h, clear, fmt, codeView, openContextMenu, reducedMotion, kindVar, texHT
 import * as ui from '../ui/index.js';
 import * as kit from './kit.js';
 import * as engine from '../engine/index.js';
+import { notesFor, topicsFor } from '../core/notes.js';
+import { REFERENCES, cite } from '../core/references.js';
 
 const DUR = 760;
 const EASE = 'cubic-bezier(.65,0,.35,1)';
@@ -38,6 +40,7 @@ export function startAtlas(root) {
     storyBtn,
     toolBtn('∑', 'Maths for this view', () => openRight('maths')),
     toolBtn('</>', 'Code for this view', () => openRight('code')),
+    toolBtn('ⓘ', 'Notes & sources: how to read this view, with references', () => openRight('notes')),
     toolBtn('⚙', 'Model, weights and input', () => openRight('model')),
     themeBtn,
     toolBtn('☰', 'Menu: every part of the model', () => openLeft()));
@@ -292,7 +295,7 @@ export function startAtlas(root) {
   function renderRight() {
     const top = stack[stack.length - 1];
     const body = h('div', { class: 'atlas-drawer-body' });
-    const titles = { code: 'Code', maths: 'Maths', model: 'Model, weights & input', inspect: 'Tensor' };
+    const titles = { code: 'Code', maths: 'Maths', model: 'Model, weights & input', inspect: 'Tensor', notes: 'Notes & sources' };
     rightDrawer.replaceChildren(h('div', { class: 'atlas-drawer-head' }, h('h3', null, titles[rightMode]),
       h('button', { type: 'button', class: 'atlas-tool', 'aria-label': 'Close', onClick: closeRight }, '✕')), body);
     const st = store.state;
@@ -307,6 +310,28 @@ export function startAtlas(root) {
         const cell = rightArg.cell ?? (t.shape.length >= 2 ? { band: t.shape.length === 3 ? st.sel.head % t.shape[0] : 0, r: Math.min(st.sel.token, (t.shape.length === 3 ? t.shape[1] : t.shape[0]) - 1), x: 0 } : null);
         const c = mathCard(st, k, cell);
         if (c) body.append(h('div', { class: 'eyebrow' }, k), c);
+      }
+    } else if (rightMode === 'notes') {
+      const id = top?.id || 'model';
+      const notes = notesFor(id);
+      body.append(h('p', { class: 'small muted' }, 'Interpretation notes drafted from the sources below and fact-checked against them.'));
+      for (const n of notes) {
+        body.append(h('div', { class: 'note-card' },
+          h('div', { class: 'eyebrow' }, n.placement),
+          h('p', null, n.text),
+          h('div', { class: 'small' }, 'Sources: ', n.refs.flatMap((r, i) => (i ? [', ', cite(r)] : [cite(r)])))));
+      }
+      if (!notes.length) body.append(h('p', { class: 'muted' }, 'No notes for this view yet.'));
+      const topics = topicsFor(id);
+      const refs = REFERENCES.filter((r) => r.views.some((v) => topics.includes(v)))
+        .sort((a, b) => (a.type === 'paper') - (b.type === 'paper') || b.year - a.year);
+      if (refs.length) {
+        body.append(h('div', { class: 'eyebrow' }, `Further reading · ${refs.length}`));
+        body.append(h('ul', { class: 'reading-list one-col' }, refs.map((r) => h('li', null,
+          h('div', { class: 'reading-meta' }, h('span', { class: 'reading-type' }, r.type), h('span', null, /\d{4}/.test(r.org) ? r.org : `${r.org} · ${r.year}`)),
+          h('a', { href: r.url, target: '_blank', rel: 'noopener' }, r.title),
+          h('div', { class: 'small muted' }, r.authors),
+          h('p', { class: 'small' }, r.why)))));
       }
     } else if (rightMode === 'code') {
       const keys = rightArg.keys || (rightArg.key ? [rightArg.key] : top?.info.keys || []);

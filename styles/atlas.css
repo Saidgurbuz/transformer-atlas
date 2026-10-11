@@ -171,3 +171,7 @@
 .k-check { display: inline-flex; align-items: center; gap: 6px; font: 600 14px/1 var(--font-mono); padding: 6px 10px; border-radius: 999px; }
 .k-check.ok { color: var(--good); background: color-mix(in srgb, var(--good) 12%, transparent); }
 .k-check.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+
+.note-card { display: grid; gap: 6px; padding: 12px 14px; border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--line); }
+.note-card p { font-size: var(--fs-sm); line-height: 1.55; color: var(--fg); max-width: none; }
+.reading-list.one-col { grid-template-columns: 1fr; }
