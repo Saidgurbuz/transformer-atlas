@@ -13,3 +13,4 @@ drafts/
 
 # downloaded corpus (fetch with tools/fetch_data.sh)
 data/*.txt
+.pages/

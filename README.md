@@ -40,6 +40,18 @@ python3 -m http.server 8000       # then open http://localhost:8000
 
 From the cluster, forward the port (`ssh -L 8000:localhost:8000 <login-node>`) and open it locally.
 
+## Deploy (GitHub Pages)
+
+The app is static, so GitHub Pages can host it at `https://saidgurbuz.github.io/transformer-explorer/`.
+
+```bash
+tools/deploy_pages.sh            # rebuild and update the `site` branch (private; nothing is published)
+tools/deploy_pages.sh --enable   # also turn on Pages for that branch: the site becomes public
+```
+The script copies `index.html`, `styles/`, `src/` and the single-file build to the `site` branch
+with a `.nojekyll` marker. It deliberately does not use a branch named `gh-pages`, because GitHub
+publishes that branch automatically.
+
 ## Layout
 
 ```
