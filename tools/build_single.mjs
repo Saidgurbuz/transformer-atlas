@@ -21,7 +21,11 @@ const result = await esbuild.build({
   legalComments: 'none',
 });
 const js = result.outputFiles[0].text.replace(/<\/script/gi, '<\\/script');
-const css = readFileSync(join(root, 'styles/main.css'), 'utf8');
+// KaTeX CSS with its woff2 fonts inlined as data URIs, then the app styles
+const katexDir = join(root, 'src/vendor/katex');
+const katexCss = readFileSync(join(katexDir, 'katex.min.css'), 'utf8').replace(/url\((fonts\/[^)]+\.woff2)\)/g,
+  (_, f) => `url(data:font/woff2;base64,${readFileSync(join(katexDir, f)).toString('base64')})`);
+const css = [katexCss, readFileSync(join(root, 'styles/main.css'), 'utf8'), readFileSync(join(root, 'styles/atlas.css'), 'utf8')].join('\n');
 const fonts = 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400..700&display=swap';
 
 const inner = `<title>Transformer Explorer</title>

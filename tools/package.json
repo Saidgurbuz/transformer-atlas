@@ -12,6 +12,7 @@
   "type": "commonjs",
   "dependencies": {
     "esbuild": "^0.24.0",
+    "katex": "^0.16.11",
     "playwright": "^1.48.2",
     "three": "^0.160.0"
   }
