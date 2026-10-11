@@ -236,13 +236,20 @@ export class Sheet {
     return sh && sh.rows === this.rows && sh.bands === this.bands && sh.cols === this.cols;
   }
 
-  setReveal(p) { this.uniforms.reveal.value = p; }
+  // Unrevealed sheets become faint ghost slots: the frame shows where the tensor will appear.
+  setReveal(p) {
+    this.uniforms.reveal.value = p;
+    const ghost = p <= 0.001;
+    this.bodyMat.opacity = (ghost ? 0.04 : 0.22) * this.opacity;
+    this.edgeMat.opacity = (ghost ? 0.22 : 0.55) * this.opacity;
+  }
 
   setOpacity(a) {
     this.opacity = a;
     this.uniforms.opacity.value = a;
-    this.bodyMat.opacity = 0.22 * a;
-    this.edgeMat.opacity = 0.55 * a;
+    const ghost = this.uniforms.reveal.value <= 0.001;
+    this.bodyMat.opacity = (ghost ? 0.04 : 0.22) * a;
+    this.edgeMat.opacity = (ghost ? 0.22 : 0.55) * a;
     this.top.userData.opacity = a;
     this.tag.userData.el.style.opacity = String(Math.min(1, a * 1.2));
     this.group.visible = a > 0.01;

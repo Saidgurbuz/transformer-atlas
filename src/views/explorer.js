@@ -166,7 +166,7 @@ export default {
       focusGroup = null; focusedKey = null;
       tower.setFocusGroup(null);
       const box = tower.boxAll();
-      if (!box.isEmpty()) engine.flyTo({ ...engine.framing(box, new THREE.Vector3(0.62, 0.38, 0.9), 1.0), duration });
+      if (!box.isEmpty()) engine.flyTo({ ...engine.framing(box, new THREE.Vector3(0.62, 0.38, 0.9), 0.66), duration });
       cv.setHighlight([]);
       renderCrumbs(); renderLayers();
       showStep(null);
@@ -177,7 +177,7 @@ export default {
       if (open && !tower.expanded.has(g) && g !== 'head') { tower.expanded.add(g); tower.sync(ctx.state); }
       tower.setFocusGroup(g);
       const box = tower.boxOfGroup(g);
-      if (!box.isEmpty()) engine.flyTo({ ...engine.framing(box, new THREE.Vector3(0.75, 0.42, 0.75), 0.95), duration: 1000 });
+      if (!box.isEmpty()) engine.flyTo({ ...engine.framing(box, new THREE.Vector3(0.8, 0.32, 0.72), 0.95), duration: 1000 });
       renderLayers(); renderCrumbs();
     }
 
@@ -216,6 +216,7 @@ export default {
     // ------------------------------------------------------------ captions & code
     function showStep(key, { fly = false } = {}) {
       focusedKey = key;
+      tower.setActiveKey(key);
       const st = ctx.state;
       if (!key || !st.trace[key]) {
         caption.replaceChildren(h('div', { class: 'cap-title' }, st.preset ? st.preset.title : 'Random weights'),

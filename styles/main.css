@@ -671,7 +671,9 @@ a.cite:hover { border-bottom-style: solid; }
 .sheet-tag { display: flex; align-items: baseline; gap: 6px; padding: 2px 7px; border-left: 2px solid var(--kind); background: color-mix(in srgb, var(--bg) 70%, transparent); border-radius: 0 4px 4px 0; }
 .sheet-tag b { color: var(--fg); font-weight: 650; }
 .sheet-tag span { color: var(--kind); }
-.sheet-tag i { font-style: normal; font-weight: 500; color: var(--fg-3); font-family: var(--font-body); }
+.sheet-tag i { font-style: normal; font-weight: 500; color: var(--fg-3); font-family: var(--font-body); display: none; }
+.sheet-tag.active { border-left-width: 3px; background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--shadow-1); }
+.sheet-tag.active i { display: inline; color: var(--fg-2); }
 .plate-tag { text-transform: uppercase; letter-spacing: .1em; font-size: 10px; color: var(--kind); }
 .token-tag { display: grid; justify-items: center; gap: 0; padding: 2px 4px; border-radius: 4px; color: var(--fg); background: color-mix(in srgb, var(--surface) 80%, transparent); border: 1px solid var(--line); cursor: pointer; }
 .token-tag small { font-size: 8px; color: var(--fg-3); font-weight: 500; }

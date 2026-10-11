@@ -46,7 +46,7 @@ export function computeLayout(trace, cfg, expanded) {
     const g = groupOf(k);
     const exp = expanded.has(g);
     if (prevGroup !== null) {
-      y += g !== prevGroup ? 1.5 : exp ? 0.85 : 1.25;
+      y += g !== prevGroup ? 1.5 : exp ? 1.05 : 1.25;
     }
     items.push({ key: k, y, group: g });
     prevGroup = g;
@@ -158,6 +158,11 @@ export class Tower {
     const { layer } = parseKey(key);
     const short = key.replace(/^L\d+\./, '');
     return `<b>${short}</b>${layer != null ? `<span>L${layer}</span>` : ''}<i>${info.title}</i>`;
+  }
+
+  /** Emphasise one sheet's label (full title) and keep the others terse. */
+  setActiveKey(key) {
+    for (const [k, sh] of this.sheets) sh.tag.userData.el.classList.toggle('active', k === key);
   }
 
   opacityFor(key) { return this.dim.get(groupOf(key)) ?? 1; }
@@ -303,24 +308,39 @@ export class Tower {
       const T = probs.shape[1], h = Math.min(sel.head, probs.shape[0] - 1);
       const yFrom = plate.range[0] + 0.1, yTo = target.group.position.y;
       const color = themeColor('--c-attn');
+      const zFront = this.frontZ() + 0.35;
       for (let j = 0; j < T; j++) {
         const w = probs.data[h * T * T + q * T + j];
         if (!(w > 0.02)) continue;
-        const a = new THREE.Vector3(this.xOf(j), yFrom, 0.25);
-        const b = new THREE.Vector3(this.xOf(q), yTo, 0.25);
+        // arcs hang in front of the tower so the sheets never hide them
+        const a = new THREE.Vector3(this.xOf(j), yFrom, zFront);
+        const b = new THREE.Vector3(this.xOf(q), yTo, zFront);
         const mid = a.clone().lerp(b, 0.5);
-        mid.y += 0.5 + Math.abs(q - j) * CELL_X * 0.18;
-        mid.z += 0.9;
+        mid.y += 0.35 + Math.abs(q - j) * CELL_X * 0.12;
+        mid.z += 0.6 + Math.abs(q - j) * CELL_X * 0.25;
         const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
         const geo = new THREE.TubeGeometry(curve, 28, 0.012 + 0.05 * w, 6, false);
-        const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.25 + 0.7 * w, depthWrite: false });
+        const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.3 + 0.7 * w, depthWrite: false, depthTest: false });
         const mesh = new THREE.Mesh(geo, mat);
+        mesh.renderOrder = 10;
+        this.engine.addPickable(mesh);
         mesh.userData = { traceKey: `L${i}.attn.probs`, kind: 'attn', focus: `L${i}`, arc: { layer: i, head: h, q, k: j, w } };
         const total = geo.index.count;
         geo.setDrawRange(0, 0);
         this.engine.tween({ duration: 650, delay: i * 120, easing: ease.out, update: (e) => geo.setDrawRange(0, Math.floor(total * e / 3) * 3) });
         this.arcGroup.add(mesh);
+        if (w > 0.15) {
+          const dotMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthTest: false });
+          const cap = new THREE.Mesh(new THREE.SphereGeometry(0.03 + 0.05 * w, 12, 8), dotMat);
+          cap.position.copy(a);
+          cap.renderOrder = 11;
+          this.arcGroup.add(cap);
+        }
       }
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.09, 16, 12), new THREE.MeshBasicMaterial({ color: themeColor('--accent'), depthTest: false }));
+      head.position.set(this.xOf(q), yTo, zFront);
+      head.renderOrder = 12;
+      this.arcGroup.add(head);
     }
   }
 
