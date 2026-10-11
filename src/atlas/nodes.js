@@ -74,6 +74,14 @@ export const PATTERNS = [
     scene: () => import('./scenes/encdec.js'), keys: () => [] },
   { pattern: 'vision', title: T('Vision tokens'), parent: () => 'tokens', extra: true, kind: 'embed', blurb: 'How images become tokens: ViT patches to VLMs.',
     scene: () => import('./scenes/vision.js'), keys: () => [] },
+
+  // Component demos (hidden from the menu; for development and smoke tests)
+  { pattern: 'demo-matmul', title: T('Demo: matmul'), parent: () => 'model', extra: true, hidden: true, kind: 'q', blurb: 'Animated matrix product.',
+    scene: () => import('./scenes/legacy.js').then((m) => m.legacy('_demo_matmul')), keys: () => [] },
+  { pattern: 'demo-arcs', title: T('Demo: arcs'), parent: () => 'model', extra: true, hidden: true, kind: 'attn', blurb: 'Attention arcs.',
+    scene: () => import('./scenes/legacy.js').then((m) => m.legacy('_demo_arcs')), keys: () => [] },
+  { pattern: 'demo-flow', title: T('Demo: flow'), parent: () => 'model', extra: true, hidden: true, kind: 'resid', blurb: 'Motion kit.',
+    scene: () => import('./scenes/legacy.js').then((m) => m.legacy('_demo_flow')), keys: () => [] },
 ];
 
 /** Resolve an id like "head.1.2" to {def, params}. */
@@ -145,7 +153,7 @@ export function storyOrder(cfg, { head = 0 } = {}) {
   return ids.filter((id) => validFor(id, cfg));
 }
 
-export const EXTRAS = PATTERNS.filter((p) => p.extra).map((p) => p.pattern);
+export const EXTRAS = PATTERNS.filter((p) => p.extra && !p.hidden).map((p) => p.pattern);
 
 /** The node that best explains a trace key (for "zoom to this tensor"). */
 export function nodeForKey(key, sel = { head: 0 }) {

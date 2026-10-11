@@ -40,7 +40,7 @@ export function startAtlas(root) {
     storyBtn,
     toolBtn('∑', 'Maths for this view', () => openRight('maths')),
     toolBtn('</>', 'Code for this view', () => openRight('code')),
-    toolBtn('ⓘ', 'Notes & sources: how to read this view, with references', () => openRight('notes')),
+    toolBtn(h('span', { class: 'icon-i', 'aria-hidden': 'true' }, 'i'), 'Notes & sources: how to read this view, with references', () => openRight('notes')),
     toolBtn('⚙', 'Model, weights and input', () => openRight('model')),
     themeBtn,
     toolBtn('☰', 'Menu: every part of the model', () => openLeft()));
