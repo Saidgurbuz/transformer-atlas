@@ -130,12 +130,12 @@ export function vec(values, opts = {}) {
       cells[n].title = `${i}: ${fmt(vals[i], 4)}`;
     });
   }
-  let current = Array.from(values);
+  let current = Array.from(values), lastRange;
   build(current.length);
   paint(current);
-  // repaint on theme change; the listener removes itself once the element is gone
-  const off = onThemeChange(() => { if (!el.isConnected) { off(); return; } paint(current); });
-  el.update = (vals, { range } = {}) => { const v = Array.from(vals); if (v.length !== current.length) build(v.length); current = v; paint(v, range); };
+  // repaint on theme change with the same range; the listener removes itself once the element is gone
+  const off = onThemeChange(() => { if (!el.isConnected) { off(); return; } paint(current, lastRange); });
+  el.update = (vals, { range } = {}) => { const v = Array.from(vals); if (v.length !== current.length) build(v.length); current = v; lastRange = range; paint(v, range); };
   el.highlight = (set) => { const S = new Set(set); idx.forEach((i, n) => cells[n].classList.toggle('hl', S.has(i))); };
   el.values = () => current;
   el.destroy = off;
@@ -186,10 +186,11 @@ export function mat(data, rows, cols, opts = {}) {
       if (o.showValues) c.textContent = vals[i] === -Infinity ? '−∞' : fmt(vals[i], o.digits);
     }
   }
+  let lastRange;
   build();
   paint(current);
-  const off = onThemeChange(() => { if (!el.isConnected) { off(); return; } paint(current); });
-  el.update = (vals, { range } = {}) => { current = Array.from(vals); paint(current, range); };
+  const off = onThemeChange(() => { if (!el.isConnected) { off(); return; } paint(current, lastRange); });
+  el.update = (vals, { range } = {}) => { current = Array.from(vals); lastRange = range; paint(current, range); };
   el.cellEl = (r, c) => cells[r * cols + c];
   // one band over the row (reads better than outlining many small cells)
   el.highlightRow = (r) => {
