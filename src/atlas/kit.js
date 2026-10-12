@@ -126,7 +126,8 @@ export function vec(values, opts = {}) {
   let current = Array.from(values);
   build(current.length);
   paint(current);
-  const off = onThemeChange(() => paint(current));
+  // repaint on theme change; the listener removes itself once the element is gone
+  const off = onThemeChange(() => { if (!el.isConnected) { off(); return; } paint(current); });
   el.update = (vals, { range } = {}) => { const v = Array.from(vals); if (v.length !== current.length) build(v.length); current = v; paint(v, range); };
   el.highlight = (set) => { const S = new Set(set); idx.forEach((i, n) => cells[n].classList.toggle('hl', S.has(i))); };
   el.values = () => current;
@@ -161,7 +162,8 @@ export function mat(data, rows, cols, opts = {}) {
       if (o.rowLabels) grid.append(h('div', { class: 'k-axis row' }, o.rowLabels[r]));
       for (let c = 0; c < cols; c++) {
         const cell = h('div', { class: 'k-cell' });
-        if (o.cellOf) cell.dataset.cell = o.cellOf(r, c);
+        const ref = o.cellOf ? o.cellOf(r, c) : null;
+        if (ref != null) cell.dataset.cell = ref;
         grid.append(cell);
         cells.push(cell);
       }
@@ -179,7 +181,7 @@ export function mat(data, rows, cols, opts = {}) {
   }
   build();
   paint(current);
-  const off = onThemeChange(() => paint(current));
+  const off = onThemeChange(() => { if (!el.isConnected) { off(); return; } paint(current); });
   el.update = (vals, { range } = {}) => { current = Array.from(vals); paint(current, range); };
   el.cellEl = (r, c) => cells[r * cols + c];
   // one band over the row (reads better than outlining many small cells)
@@ -206,6 +208,9 @@ export function op(content, { kind, size = 56, tex: isTex = true, title } = {}) 
   return h('div', { class: ['k-op', kind && `kind-${kind}`], title, style: { '--size': `${size}px`, '--kind': kind ? `var(--c-${kind})` : null }, html: isTex ? texHTML(content) : content });
 }
 
+// magnifier with a plus (drawn, so it never depends on a font having the glyph)
+const ZOOM_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M10.5 7.5v6M7.5 10.5h6"/></svg>';
+
 /** Rounded 2.5D card; with `node` it becomes a zoom target. */
 export function card({ title, sub, kind, node, w, hgt, body, trace } = {}) {
   const el = h('div', {
@@ -217,7 +222,7 @@ export function card({ title, sub, kind, node, w, hgt, body, trace } = {}) {
   sub && h('div', { class: 'k-card-sub', html: sub }),
   body);
   if (trace) el.dataset.trace = trace;
-  if (node) el.append(h('div', { class: 'k-zoom-badge', 'aria-hidden': 'true' }, '⤢'));
+  if (node) el.append(h('div', { class: 'k-zoom-badge', 'aria-hidden': 'true', html: ZOOM_ICON }));
   return el;
 }
 
@@ -373,7 +378,11 @@ export function sceneHeader(stage, { chips = [], title, sub = '' } = {}) {
   const s = h('div', { class: 'k-scene-sub', html: sub });
   const el = h('div', { class: 'k-header' }, eyebrow, t, s);
   stage.add(el, { x: ZONES.header.x, y: ZONES.header.y });
-  return { el, title: t, setSub(html) { s.innerHTML = html; } };
+  return {
+    el, title: t,
+    setSub(html) { s.innerHTML = html; },
+    setChips(list) { eyebrow.replaceChildren(...list.map(([text, kind]) => chip(text, kind))); },
+  };
 }
 
 /** One- or two-sentence caption in the bottom zone; text changes cross-fade. */

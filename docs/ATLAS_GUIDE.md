@@ -94,11 +94,11 @@ export default {
 `mat(data, rows, cols, {cell, gap, kind, mode, range, rowLabels, colLabels, tex, trace, cellOf, tilt, showValues})` (`.update`, `.highlightRow(r)`, `.highlightCol`, `.highlightCells`, `.cellEl(r, c)`) — up to ~2500 cells; for bigger use `heatmap` from the UI kit with `traceKey` ·
 `op(latex, {kind, size})` · `card({title, sub, kind, node, w})` · `token(label, i, {selected, kind})` · `texLabel(latex, {size, kind})` · `caption(html)` · `chip(text, kind)` ·
 motion: `appear(els, {stagger, from})`, `pulse(el)`, `fly(stage, fromEl, toEl, {duration})`, `countTo(el, value)`, `wait(ms)` · `useStyle(id, css)` ·
-shared parts: `sceneHeader(stage, {chips: [[text, kind]], title, sub}) -> {el, setSub(html)}`, `sceneCaption(stage, {x, y, w}) -> {set(html)}`, `tokenPicker(stage, ctx, {x, y, label, kind}) -> {el}`, `headPicker(stage, ctx, {x, y}) -> {el}`, `checkBadge(computed, traced, {label}) -> element`, `ZONES`, `MOTION`.
+shared parts: `sceneHeader(stage, {chips: [[text, kind]], title, sub}) -> {el, setSub(html), setChips(list)}`, `sceneCaption(stage, {x, y, w}) -> {set(html)}`, `tokenPicker(stage, ctx, {x, y, label, kind}) -> {el}`, `headPicker(stage, ctx, {x, y}) -> {el}`, `checkBadge(computed, traced, {label}) -> element`, `ZONES`, `MOTION`.
 
 ## Animated components (src/ui/*.js, import from '../../ui/index.js' or the file)
 
-- `matmulAnim({A: {data, rows, cols, name, kind, shape, rowLabels}, B: {..., bias, biasName}, transposeB, C: {name, kind, data}, maxWidth, showValues, speed})` → `{el, focus(i, j), play(), pause(), reset(), showAll(), update(patch), destroy()}`: the textbook A · Bᵀ animation, canvas based, smooth up to 64 × 64.
+- `matmulAnim({A: {data, rows, cols, name, kind, shape, rowLabels}, B: {..., bias, biasName}, transposeB, C: {name, kind, data}, maxWidth, showValues, speed, hint})` (hint: false hides the idle corner text) → `{el, focus(i, j), play(), pause(), reset(), showAll(), update(patch), destroy()}`: the textbook A · Bᵀ animation, canvas based, smooth up to 64 × 64.
 - `arcDiagram({labels, weights: {data, rows, cols}, mask, query, layout: 'arc' | 'bipartite', keyLabels, threshold, dots, onSelect})` → `{el, setQuery(i), update(patch), play(), stop(), destroy()}`: attention as arcs between tokens.
 - `vectorStrip({values, orientation, cell, mode, kind, labels, title, range})` → `{el, update(values, {animate}), pulse(), highlight(idx), destroy()}`;
   `flyClone(fromEl, toEl, {duration})`, `ticker(el, from, to)`, `drawPath(path)`, `stagger`, `sequence(steps)` + `sequencePlaybar` (prefer `ctx.setSteps` for scene steps).
