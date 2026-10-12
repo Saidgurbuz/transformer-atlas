@@ -33,7 +33,7 @@ export function buildShell(root, { onNavigate }) {
 
   // ---------------------------------------------------------------- nav
   const nav = h('nav', { class: 'nav', 'aria-label': 'Sections' });
-  nav.append(h('div', { class: 'brand' }, logo(), h('div', null, 'Transformer Explorer', h('small', null, 'every tensor, every line'))));
+  nav.append(h('div', { class: 'brand' }, logo(), h('div', null, 'Transformer Atlas', h('small', null, 'every tensor, every line'))));
   const links = new Map();
   for (const g of GROUPS) {
     const items = VIEWS.filter((v) => v.group === g && !v.hidden);

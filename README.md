@@ -1,4 +1,4 @@
-# Transformer Explorer
+# Transformer Atlas
 
 A full-screen, zoomable atlas of a decoder-only Transformer running a real (tiny, trained)
 model in your browser. Start from a 3D view of the whole model, click a part to zoom into it
@@ -37,13 +37,13 @@ the exact line of PyTorch that computes it. Arrow keys walk the forward pass as 
 
 ## Run it
 
-Open `dist/transformer-explorer.html` (built by `node tools/build_single.mjs`) directly, or serve the
+Open `dist/transformer-atlas.html` (built by `node tools/build_single.mjs`) directly, or serve the
 repository:
 
 The app is plain ES modules with no build step. It must be served over HTTP (not `file://`):
 
 ```bash
-cd transformer-explorer
+cd transformer-atlas
 python3 -m http.server 8000       # then open http://localhost:8000
 ```
 
@@ -51,7 +51,7 @@ From the cluster, forward the port (`ssh -L 8000:localhost:8000 <login-node>`) a
 
 ## Deploy (GitHub Pages)
 
-The app is static, so GitHub Pages can host it at `https://saidgurbuz.github.io/transformer-explorer/`.
+The app is static, so GitHub Pages can host it at `https://saidgurbuz.github.io/transformer-atlas/`.
 
 ```bash
 tools/deploy_pages.sh            # rebuild and update the `site` branch (private; nothing is published)

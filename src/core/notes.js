@@ -593,7 +593,7 @@ export const NOTES = {
  ],
  "vision": [
   {
-   "placement": "Patch grid and visual-token count readout (the vision view is still a placeholder in /proj/docling-vision/users/said/sandbox/transformer-explorer/src/views/vision.js, so these placements name the planned panels)",
+   "placement": "Patch grid and visual-token count readout",
    "text": "With P×P patches, an H×W image gives <code>N = HW/P²</code> tokens, so a 336 px image with 14 px patches gives 24×24 = 576 patch tokens, and the ViT paper notes that the sequence length is 'inversely proportional to the square of the patch size'. Beyond cutting the image into patches (and interpolating position embeddings when the resolution changes), a ViT has little built-in 2D structure: its learned 1D position embeddings start with no 2D information, and the authors report no significant gain from 2D-aware ones.",
    "refs": [
     "dosovitskiy2020",

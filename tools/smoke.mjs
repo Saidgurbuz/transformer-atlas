@@ -1,7 +1,7 @@
 // Headless browser check for one or all views.
 //   tools/smoke.sh --view attention [--theme dark] [--width 420] [--out shot.png] [--eval "js expr"] [--full]
 //   tools/smoke.sh --all            (every view, light + dark, desktop; prints a table)
-//   tools/smoke.sh --file dist/transformer-explorer.html --view head   (single-file build via file://)
+//   tools/smoke.sh --file dist/transformer-atlas.html --view head   (single-file build via file://)
 // Prints JSON per view: console errors, page errors, horizontal overflow, stub status.
 // Always run through tools/smoke.sh, which allows one browser at a time on the login node.
 import http from 'node:http';

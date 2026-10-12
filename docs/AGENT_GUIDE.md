@@ -1,4 +1,4 @@
-# Transformer Explorer: contributor guide
+# Transformer Atlas: contributor guide
 
 Read this whole file before writing code. It is the contract every view follows.
 

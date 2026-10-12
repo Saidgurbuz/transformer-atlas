@@ -3,7 +3,7 @@
 # (Not `gh-pages`: GitHub auto-publishes a branch with that name, even for private repos.)
 #   tools/deploy_pages.sh            update the site branch (nothing becomes public by itself)
 #   tools/deploy_pages.sh --enable   also turn on GitHub Pages for the branch: the site goes
-#                                    public at https://<user>.github.io/transformer-explorer/
+#                                    public at https://<user>.github.io/transformer-atlas/
 #                                    (works for this private repo on the owner's plan)
 # To unpublish: delete the Pages site in the repo settings (or gh api -X DELETE repos/<repo>/pages).
 set -euo pipefail
@@ -31,7 +31,7 @@ fi
 # fresh copy of the app (no tests, tools, reference code or docs)
 find "$SITE" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
 cp -r index.html styles src "$SITE/"
-cp dist/transformer-explorer.html "$SITE/transformer-explorer.html"
+cp dist/transformer-atlas.html "$SITE/transformer-atlas.html"
 touch "$SITE/.nojekyll"          # serve files that start with _ (Jekyll would drop them)
 
 cd "$SITE"

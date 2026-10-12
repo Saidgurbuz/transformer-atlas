@@ -24,7 +24,7 @@ export function startRouter(shell) {
     const root = shell.viewRoot;
     root.replaceChildren();
     shell.main.scrollTop = 0;
-    document.title = `${def.title} · Transformer Explorer`;
+    document.title = `${def.title} · Transformer Atlas`;
     const offs = [];
     const ctx = {
       store,

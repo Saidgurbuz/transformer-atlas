@@ -1,6 +1,6 @@
 // Bundle the whole app (code, CSS, trained weights) into one HTML file.
 //   node tools/build_single.mjs
-// Writes dist/transformer-explorer.html (opens from disk, no server needed) and
+// Writes dist/transformer-atlas.html (opens from disk, no server needed) and
 // dist/artifact.html (same content without the document skeleton, for publishing).
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -28,7 +28,7 @@ const katexCss = readFileSync(join(katexDir, 'katex.min.css'), 'utf8').replace(/
 const css = [katexCss, readFileSync(join(root, 'styles/main.css'), 'utf8'), readFileSync(join(root, 'styles/atlas.css'), 'utf8')].join('\n');
 const fonts = 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400..700&display=swap';
 
-const inner = `<title>Transformer Explorer</title>
+const inner = `<title>Transformer Atlas</title>
 <link rel="stylesheet" href="${fonts}">
 <style>${css}</style>
 <div id="app"></div>
@@ -50,12 +50,12 @@ mkdirSync(join(root, 'dist', 'artifact'), { recursive: true });
 // multi-file variant for hosts that prefer a small page: index.html + app.js + app.css
 writeFileSync(join(root, 'dist/artifact/app.js'), result.outputFiles[0].text);
 writeFileSync(join(root, 'dist/artifact/app.css'), css);
-writeFileSync(join(root, 'dist/artifact/index.html'), `<title>Transformer Explorer</title>
+writeFileSync(join(root, 'dist/artifact/index.html'), `<title>Transformer Atlas</title>
 <link rel="stylesheet" href="${fonts}">
 <link rel="stylesheet" href="app.css">
 <div id="app"></div>
 <script type="module" src="app.js"></script>
 `);
-writeFileSync(join(root, 'dist/transformer-explorer.html'), page);
+writeFileSync(join(root, 'dist/transformer-atlas.html'), page);
 writeFileSync(join(root, 'dist/artifact.html'), inner + '\n');
-console.log(`dist/transformer-explorer.html  ${(page.length / 1e6).toFixed(2)} MB`);
+console.log(`dist/transformer-atlas.html  ${(page.length / 1e6).toFixed(2)} MB`);

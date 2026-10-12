@@ -11,6 +11,7 @@ import * as ui from '../ui/index.js';
 import * as kit from './kit.js';
 import * as engine from '../engine/index.js';
 import { notesFor, topicsFor } from '../core/notes.js';
+import { VERSION } from '../version.js';
 import { REFERENCES, cite } from '../core/references.js';
 
 const DUR = 760;
@@ -207,7 +208,7 @@ export function startAtlas(root) {
     }
     const top = stack[stack.length - 1];
     if (push) history.replaceState(null, '', `#${id}`);
-    document.title = `${top.info.title} · Transformer Explorer`;
+    document.title = top.id === 'model' ? 'Transformer Atlas' : `${top.info.title} · Transformer Atlas`;
     renderCrumbs();
     renderStory();
     if (rightDrawer.classList.contains('open')) renderRight();
@@ -379,7 +380,7 @@ export function startAtlas(root) {
     }
     tree.push(item('final-norm', 1), item('lm-head', 1), item('sampling', 2), item('generation', 1));
     leftDrawer.replaceChildren(
-      h('div', { class: 'atlas-drawer-head' }, h('div', { class: 'atlas-brand' }, h('b', null, 'Transformer Explorer'), h('small', null, 'every tensor, every line')),
+      h('div', { class: 'atlas-drawer-head' }, h('div', { class: 'atlas-brand' }, h('b', null, 'Transformer Atlas'), h('small', null, `v${VERSION} · every tensor, every line`)),
         h('button', { type: 'button', class: 'atlas-tool', 'aria-label': 'Close', onClick: closeLeft }, '✕')),
       h('div', { class: 'atlas-drawer-body' },
         h('div', { class: 'eyebrow' }, 'The model'), h('div', { class: 'menu-tree' }, tree.filter(Boolean)),

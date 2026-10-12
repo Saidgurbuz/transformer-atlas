@@ -1,4 +1,4 @@
-"""Transformer Explorer: reference decoder-only Transformer in PyTorch.
+"""Transformer Atlas: reference decoder-only Transformer in PyTorch.
 
 This file is the ground truth for the app. A line that produces a tensor the app
 can show ends with a `@trace <key>` marker; `{i}` stands for the layer index.
