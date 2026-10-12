@@ -8,25 +8,37 @@
 // Pipeline (design units): h_t strip -> x -> W_U plate -> logit bars -> softmax -> probability bars.
 // The h_t strip and the operations are untilted; only the W_U plate carries the kit tilt, hinged at its
 // top edge so the columns stay under the strip.
+//
+// A large vocabulary (V > 64, the subword preset) cannot be drawn whole. The plate and the bars then show
+// the TOP_K largest logits at this position, largest first, plus the next token's row when it is not one of
+// them. The ellipsis row says how many rows are not drawn (computed) and, in the probability step, how much
+// probability they hold. Every drawn number is traced; only the choice of rows is the scene's.
 import { stage2d, sceneHeader, sceneCaption, tokenPicker, chip, checkBadge, op, appear, pulse, useStyle, MOTION } from '../kit.js';
 import { h, fmt, num, texHTML, clamp, diverging, sequential, onThemeChange, reducedMotion } from '../../ui/index.js';
 
 const STEPS = ['Final vector', 'Dot with every token', 'Logits', 'Probabilities'];
 
 // Geometry. Columns are 5 units wide with a 1-unit gap (pitch 6). Rows have pitch 11 up to 32 rows;
-// beyond that the rows share ROWS_SPAN units so the plate keeps its height.
-const CELL_W = 5, COL_GAP = 1, ELL_W = 12;
+// beyond that the rows share ROWS_SPAN units so the plate keeps its height. The label gutter is LABEL_W
+// for the character presets; a large vocabulary sizes it to the widest label the text draws (at least LARGE_LABEL_MIN).
+const CELL_W = 5, CELL_LARGE_W = 8, COL_GAP = 1, ELL_W = 12;   // a large vocabulary's plate has fewer rows, so its columns are wider
 const ROW_GAP = 2, PITCH_MAX = 11, ROWS_SPAN = 352;
-const PAD = 10, LABEL_W = 30, LABEL_GAP = 8, GUTTER = LABEL_W + LABEL_GAP;
-const MAX_COLS = 64, MAX_ROWS = 40;              // longer axes: first entries, an ellipsis, the last 4
-const TRACK_W = 290, VAL_W = 64, VAL_GAP = 10;
-const TRACK_X = GUTTER;                          // where the bar track starts inside the bar panel
-const TILT = 12;                                 // degrees: W_U is a tilted plane, hinged at its top edge
-const PERSPECTIVE = 2200;                        // px: a long lens keeps the tilted bottom corners near the plate's own width
-const LABEL_FIT = 0.8;                           // two value labels may sit on adjacent rows when pitch >= LABEL_FIT x the value size
+const PAD = 10, LABEL_W = 30, LABEL_GAP = 8, LABEL_PAD = 6;
+const MAX_COLS = 64;                                   // character presets: a vector longer than this shows its first 59 and last 4 entries
+const COLS_HEAD = 12, COLS_TAIL = 4;                   // top-k plate: a vector longer than 17 shows its first 12 and last 4 entries
+const MAX_ROWS = 40;                                   // character presets: a vocabulary of 41 to 64 elides its middle
+const LARGE_V = 64;                                    // above this many entries only the largest logits are drawn
+const LARGE_LABEL_MIN = 98;                            // narrowest label column of a large vocabulary: the × stays clear of the W_U tag (it ends near x 270)
+const TOP_K = 14;                                      // rows drawn for a large vocabulary (plus the next token)
+const PITCH_LARGE = 22;                                // row pitch of the top-k plate: 16 rows keep the plate's height
+const LARGE_FS = clamp(PITCH_LARGE + 3, 12, 15);       // label size of the top-k plate, also used to measure labels
+const TRACK_W = 290, VAL_W = 64, VAL_GAP = 10;         // bar track of the character presets, and the value column
+const TILT = 12;                                       // degrees: W_U is a tilted plane, hinged at its top edge
+const PERSPECTIVE = 2200;                              // px: a long lens keeps the tilted bottom corners near the plate's own width
+const LABEL_FIT = 0.8;                                 // two value labels may sit on adjacent rows when pitch >= LABEL_FIT x the value size
 
 // Placement on the 10-unit grid (design units)
-const BODY_X = 110, CELLS_X = BODY_X + 1 + PAD + GUTTER;     // first column of W_U and h_t: x 159
+const BODY_X = 110, CELLS_X0 = BODY_X + 1 + PAD + LABEL_W + LABEL_GAP;   // first column of W_U and h_t: x 159 for the character presets
 const H_Y = 260, H_H = 20, H_BOT = H_Y + H_H;               // the h_t strip: 260 .. 280
 const OP_D = 48, OP_CY = 324, OP_TOP = OP_CY - OP_D / 2, OP_BOT = OP_CY + OP_D / 2;   // the times node: 300 .. 348
 const PLATE_Y = 368;                                         // the W_U plate top; 32 rows end near 745, 55 above the caption
@@ -45,11 +57,11 @@ useStyle('lm-head', `
 .lh-row { display: flex; align-items: center; height: var(--lh-ch, 10px); }
 .lh-row + .lh-row { margin-top: ${ROW_GAP}px; }
 .lh-row.ell .lh-lab { color: var(--fg-3); }
-.lh-lab { flex: none; width: ${LABEL_W}px; margin-right: ${LABEL_GAP}px; text-align: right; font: 600 var(--lh-fs, 15px)/var(--lh-ch, 10px) var(--font-mono); color: var(--fg-2); white-space: nowrap; }
+.lh-lab { flex: none; width: var(--lh-lw, ${LABEL_W}px); margin-right: ${LABEL_GAP}px; text-align: right; font: 600 var(--lh-fs, 15px)/var(--lh-ch, 10px) var(--font-mono); color: var(--fg-2); white-space: nowrap; }
 .lh-body .lh-lab { transition: opacity .4s ease; }
 .lh-body.quiet .lh-lab { opacity: 0; }
 .lh-cells { display: flex; gap: ${COL_GAP}px; }
-.lh-c { flex: none; width: ${CELL_W}px; height: var(--lh-ch, 10px); border-radius: 2px; transition: background-color .5s ease; }
+.lh-c { flex: none; width: var(--lh-cw, ${CELL_W}px); height: var(--lh-ch, 10px); border-radius: 2px; transition: background-color .5s ease; }
 .lh-c.ell { width: ${ELL_W}px; background: none !important; font: 600 11px/var(--lh-ch, 10px) var(--font-mono); color: var(--fg-3); text-align: center; }
 .lh-ellrow { display: block; font: 600 14px/var(--lh-ch, 10px) var(--font-mono); color: var(--fg-3); text-align: center; }
 .lh-hstrip { display: flex; gap: ${COL_GAP}px; height: ${H_H}px; border-radius: 4px; transition: opacity .4s ease; }
@@ -68,12 +80,15 @@ useStyle('lm-head', `
   border-color: color-mix(in srgb, var(--c-head) 45%, transparent); box-shadow: 0 16px 36px rgba(0, 0, 0, .14); }
 .lh-probs-head { position: absolute; left: 12px; top: 10px; height: 20px; font: 600 15px/20px var(--font-mono); color: var(--c-head); white-space: nowrap; }
 .lh-hint { position: absolute; right: 12px; top: 10px; height: 20px; font: 500 14px/20px var(--font-mono); color: var(--fg-3); white-space: nowrap; }
-.lh-bars { position: absolute; left: 12px; width: ${TRACK_X + TRACK_W + VAL_GAP + VAL_W}px; transition: opacity .4s ease; }
+.lh-bars { position: absolute; left: 12px; width: calc(var(--lh-lw, ${LABEL_W}px) + ${LABEL_GAP + VAL_GAP + VAL_W}px + var(--lh-tw, ${TRACK_W}px)); transition: opacity .4s ease; }
 .lh-bars.off { opacity: .35; }
 .lh-brow { position: absolute; left: 0; right: 0; display: flex; align-items: center; height: var(--lh-ch, 10px); }
-.lh-track { position: relative; flex: none; width: ${TRACK_W}px; height: var(--lh-ch, 10px); border-radius: 3px; transition: background-color .4s ease; }
+.lh-track { position: relative; flex: none; width: var(--lh-tw, ${TRACK_W}px); height: var(--lh-ch, 10px); border-radius: 3px; transition: background-color .4s ease; }
 .lh-bars.probs .lh-track { background: color-mix(in srgb, var(--fg) 4%, transparent); }
 .lh-bars.probs .lh-brow.dim .lh-track { background: color-mix(in srgb, var(--fg) 2%, transparent); }
+.lh-brow.ell .lh-track { background: none; }
+.lh-brow.ell .lh-lab, .lh-brow.ell .lh-val { color: var(--fg-3); }
+.lh-rest { position: absolute; left: 0; top: 0; padding-left: 6px; font: 500 13px/var(--lh-ch, 10px) var(--font-mono); color: var(--fg-3); white-space: nowrap; }
 .lh-bars.probs .lh-bar { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-head) 50%, transparent); }
 .lh-bar { position: absolute; top: 1px; left: 0; width: 0; height: calc(var(--lh-ch, 10px) - 2px); border-radius: 3px;
   transition: left var(--lh-dur, ${MORPH_TRANS}ms) cubic-bezier(.65,0,.35,1), width var(--lh-dur, ${MORPH_TRANS}ms) cubic-bezier(.65,0,.35,1), background-color .5s ease, opacity .4s ease; }
@@ -99,25 +114,43 @@ useStyle('lm-head', `
 `);
 
 // ------------------------------------------------------------------ pure helpers
-/** Indices to draw for an axis of length n: all of them, or the first ones, -1 (ellipsis), the last 4. */
-function elide(n, max) {
+/** Indices to draw for an axis of length n: all of them, or the first `head`, -1 (an ellipsis), the last `tail`. */
+function elide(n, max, head = max - 5, tail = 4) {
   if (n <= max) return Array.from({ length: n }, (_, i) => i);
-  const tail = 4, head = max - tail - 1;
   return [...Array.from({ length: head }, (_, i) => i), -1, ...Array.from({ length: tail }, (_, i) => n - tail + i)];
 }
-/** Row pitch, label sizes and plate width for this many columns and rows. */
-function geometry(cols, nRows) {
-  const pitch = Math.min(PITCH_MAX, Math.floor(ROWS_SPAN / Math.max(1, nRows)));
-  const cellsW = cols.reduce((w, c, i) => w + (c < 0 ? ELL_W : CELL_W) + (i ? COL_GAP : 0), 0);
+/** Ids of the k largest values of arr[off .. off + V), largest first. A tie keeps the lower id first. */
+function topOf(arr, off, V, k) {
+  const best = [];
+  for (let v = 0; v < V; v++) {
+    const x = arr[off + v];
+    if (best.length === k && x <= arr[off + best[k - 1]]) continue;
+    let i = best.length;
+    while (i > 0 && arr[off + best[i - 1]] < x) i--;
+    best.splice(i, 0, v);
+    if (best.length > k) best.length = k;
+  }
+  return best;
+}
+/** Layout of one plate: row pitch and label sizes, the label gutter, the x of the columns and the bar track. */
+function geometry(cols, rows, labelW, large) {
+  const pitch = Math.min(large ? PITCH_LARGE : PITCH_MAX, Math.floor(ROWS_SPAN / Math.max(1, rows.length)));
+  const cellW = large ? CELL_LARGE_W : CELL_W;
+  const cellsW = cols.reduce((w, c, i) => w + (c < 0 ? ELL_W : cellW) + (i ? COL_GAP : 0), 0);
+  const gutter = labelW + LABEL_GAP;
   return {
-    pitch, ch: pitch - ROW_GAP, fs: clamp(pitch + 3, 12, 15), vfs: clamp(pitch + 1, 10, 13),
-    cellsW, plateW: cellsW + 2 * PAD + GUTTER + 2,
+    pitch, ch: pitch - ROW_GAP, fs: clamp(pitch + 3, 12, 15), vfs: clamp(pitch + 1, 10, 13), cellW, large,
+    cellsW, labelW, gutter, cellsX: BODY_X + 1 + PAD + gutter,
+    trackX: gutter, trackW: large ? PROB_W - 24 - gutter - VAL_GAP - VAL_W : TRACK_W,
+    plateW: cellsW + 2 * PAD + gutter + 2,
   };
 }
 const maxAbs = (xs) => { let m = 0; for (const x of xs) m = Math.max(m, Math.abs(x)); return m || 1; };
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const pct = (p) => `${(p * 100).toFixed(p < 0.1 ? 1 : 0)}%`;   // as head.js and softmax.js: one decimal below 10%, none above
+const pctOrLess = (p) => (p > 0 && p < 0.0005 ? '<0.1%' : pct(p));   // under 0.05% would read as a false 0.0%
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const fmtN = (n) => n.toLocaleString('en-US');                  // 4096 -> 4,096
 const minus = (s) => String(s).replace(/-/g, '−');              // a typographic minus for every hyphen in plain text
 /** Two decimals in a typographic minus. A value that rounds to zero reads 0.00, never -0.00 or an exponent. */
 const dec2 = (v) => minus(Math.abs(v) < 0.005 ? '0.00' : v.toFixed(2));
@@ -128,9 +161,10 @@ export default {
   mount(el, ctx) {
     const st = stage2d(el);
     let step = 0, lastD = null, built = null, lastMain = '', alive = true;
-    let layoutCols = [], layoutRows = [], geo = null;
+    let geo = null, layoutCols = [], layoutRows = [], flowKey = null;
     let hCells = [], wCells = [], bars = [], band = null, zeroEl = null;
-    let flow = {}, smIn = null, smOut = null, drawn = false;
+    let flow = {}, smIn = null, smOut = null, arrowsIn = false;
+    let gutterCache = null, measurer = null;           // the label width of a large vocabulary, cached per forward pass
     let timers = [], auto = null, autoStepping = false;
     const stopTimers = () => { timers.forEach(clearTimeout); timers = []; };
     const stopAuto = () => { clearTimeout(auto); auto = null; };
@@ -146,9 +180,9 @@ export default {
     const hStrip = h('div', { class: 'lh-hstrip' });
     const hLab = h('div', { class: 'lh-hlab', html: texHTML('h_t') });
     const hVals = h('div', { class: 'lh-hvals' });
-    st.add(hStrip, { x: CELLS_X, y: H_Y });
-    st.add(hLab, { x: CELLS_X - 10, y: H_Y + H_H / 2, anchor: 'rc' });
-    st.add(hVals, { x: CELLS_X, y: H_BOT + 8 });
+    st.add(hStrip, { x: CELLS_X0, y: H_Y });
+    st.add(hLab, { x: CELLS_X0 - 10, y: H_Y + H_H / 2, anchor: 'rc' });
+    st.add(hVals, { x: CELLS_X0, y: H_BOT + 8 });
 
     // ------------------------------------------------------------ W_U plate (tilted), its tag and its operation
     const body = h('div', { class: 'lh-body' });
@@ -157,7 +191,7 @@ export default {
     st.add(wLab, { x: BODY_X, y: PLATE_Y - LABEL_GAP, anchor: 'bl' });
     const timesOp = op('\\times', { kind: 'head', size: OP_D });
     timesOp.classList.add('lh-op');
-    st.add(timesOp, { x: CELLS_X, y: OP_CY, anchor: 'c' });
+    st.add(timesOp, { x: CELLS_X0, y: OP_CY, anchor: 'c' });
 
     // ------------------------------------------------------------ bars: logits, then probabilities
     const probHead = h('div', { class: 'lh-probs-head' }, 'logits z');
@@ -198,6 +232,31 @@ export default {
       }).catch(() => {});
     };
 
+    // ------------------------------------------------------------ label widths (a large vocabulary only)
+    /** Width in design units of a label in the plate's mono face (the canvas measures the same font). */
+    function textWidth(s, fs) {
+      measurer ??= document.createElement('canvas').getContext('2d');
+      const family = getComputedStyle(st.canvas).getPropertyValue('--font-mono').trim() || 'monospace';
+      measurer.font = `600 ${fs}px ${family}`;
+      return measurer.measureText(s).width;
+    }
+    /** The label gutter of a large vocabulary: as wide as the widest label this text draws at any position (and at
+     *  least LARGE_LABEL_MIN), so the plate keeps its width when the reader moves to another position. Cached per forward pass. */
+    function gutterFor() {
+      const cs = ctx.state, tr = cs.trace;
+      if (gutterCache?.trace === tr) return gutterCache.w;
+      const T = cs.ids.length, V = tr.logits.shape[1], lg = tr.logits.data;
+      const ids = new Set();
+      for (let t = 0; t < T; t++) {
+        for (const v of topOf(lg, t * V, V, TOP_K)) ids.add(v);
+        if (t + 1 < T) ids.add(cs.ids[t + 1]);
+      }
+      let w = 0;
+      for (const v of ids) w = Math.max(w, textWidth(lab(v), LARGE_FS));
+      gutterCache = { trace: tr, w: Math.max(LARGE_LABEL_MIN, Math.ceil(w) + LABEL_PAD) };
+      return gutterCache.w;
+    }
+
     // ------------------------------------------------------------ data for the selected position
     function snap() {
       const cs = ctx.state, cfg = cs.config, tr = cs.trace || {};
@@ -225,36 +284,61 @@ export default {
         if (M && M.data[u * T + u + 1] === 1) leak = true;     // a mask that shows the next token
       }
       const zMax = Math.max(...z), zMin = Math.min(...z);
-      const zLo = Math.min(0, zMin), zHi = Math.max(0, zMax);
-      const rank = [...Array(V).keys()].sort((a, b) => p[b] - p[a] || a - b);
+      const top = topOf(z, 0, V, TOP_K);                        // the largest logits, largest first
+      const large = V > LARGE_V;
+      const rowIds = large
+        ? [...top, -1, ...(hasNext && !top.includes(next) ? [next] : [])]
+        : elide(V, MAX_ROWS);                                   // every entry (or, as before, the first and last of 41 to 64)
+      const shown = rowIds.filter((v) => v >= 0);
+      // one scale for the logit bars: the drawn rows of a large vocabulary, every entry otherwise
+      const zs = large ? shown.map((v) => z[v]) : z;
+      const zLo = Math.min(0, ...zs), zHi = Math.max(0, ...zs);
       return {
         T, V, d, t, z, p, hv, W, hKey, preLN, rms: cfg.norm === 'rmsnorm', tied, nLayer: cfg.n_layer, ids: cs.ids,
         hasNext, next, pNext: hasNext ? p[next] : null,
         meanLoss: nScored ? nll / nScored : null, nScored, leak,
         zMax, zMin, zLo, zHi, zSpan: zHi - zLo || 1, zAbs: Math.max(-zLo, zHi) || 1,
         hRange: maxAbs(hv), wRange: maxAbs(W.data),
-        rank, top5: new Set(rank.slice(0, 5)), argmaxZ: z.indexOf(zMax),
+        large, rowIds, shown, notShown: V - shown.length,
+        restP: large ? Math.max(0, 1 - shown.reduce((s, v) => s + p[v], 0)) : 0,   // probability held by the rows not drawn
+        top, top5: new Set(top.slice(0, 5)), argmaxZ: z.indexOf(zMax),
         Zs: z.reduce((s, v) => s + Math.exp(v - zMax), 0),        // softmax denominator, shifted by the max
-        focus: hasNext ? next : rank[0],                          // the row the live equation shows
+        focus: hasNext ? next : top[0],                           // the row the live equation shows
       };
     }
 
-    // ------------------------------------------------------------ DOM: built when the weights or shape change
+    // ------------------------------------------------------------ DOM: built when the weights, shape or rows change
     function ensurePlate(D) {
-      if (built && built.W === D.W && built.V === D.V && built.d === D.d) return;
-      built = { W: D.W, V: D.V, d: D.d };
-      layoutCols = elide(D.d, MAX_COLS);
-      layoutRows = elide(D.V, MAX_ROWS);
-      geo = geometry(layoutCols, layoutRows.length);
-      st.canvas.style.setProperty('--lh-ch', `${geo.ch}px`);
-      st.canvas.style.setProperty('--lh-fs', `${geo.fs}px`);
-      st.canvas.style.setProperty('--lh-vfs', `${geo.vfs}px`);
-      const HX = CELLS_X + geo.cellsW / 2;                 // the operation sits over the centre of the columns
-      st.move(timesOp, HX, OP_CY);
+      const labelW = D.large ? gutterFor() : LABEL_W;
+      const rowsKey = D.rowIds.join(',');
+      if (built && built.W === D.W && built.V === D.V && built.d === D.d && built.rowsKey === rowsKey && built.labelW === labelW) return;
+      built = { W: D.W, V: D.V, d: D.d, rowsKey, labelW };
+      layoutCols = D.large ? elide(D.d, COLS_HEAD + COLS_TAIL + 1, COLS_HEAD, COLS_TAIL) : elide(D.d, MAX_COLS);   // character presets keep their 59 + 4 columns
+      layoutRows = D.rowIds;
+      geo = geometry(layoutCols, layoutRows, labelW, D.large);
+      const vars = { '--lh-ch': `${geo.ch}px`, '--lh-fs': `${geo.fs}px`, '--lh-vfs': `${geo.vfs}px`, '--lh-lw': `${geo.labelW}px`, '--lh-tw': `${geo.trackW}px`, '--lh-cw': `${geo.cellW}px` };
+      for (const [k, v] of Object.entries(vars)) st.canvas.style.setProperty(k, v);
+      place();
       buildStrip();
       buildPlate(D);
       buildBars();
-      buildFlow();
+      const fk = [geo.cellsX, geo.cellsW, geo.plateW, layoutRows.length, geo.pitch].join();   // the arrows depend on these only
+      if (fk !== flowKey) { flowKey = fk; buildFlow(); }
+    }
+
+    /** The h_t strip, its label and values, and the times operation sit over the columns of the plate. */
+    function place() {
+      st.move(hStrip, geo.cellsX, H_Y);
+      st.move(hLab, geo.cellsX - 10, H_Y + H_H / 2);
+      st.move(timesOp, geo.cellsX + geo.cellsW / 2, OP_CY);
+      if (geo.large) {
+        // A narrow strip (12 + 4 entries) is shorter than its values, so the arrow would run through them: they go to its right.
+        st.move(hVals, geo.cellsX + geo.cellsW + 12, H_Y + H_H / 2);
+        hVals.style.translate = '0 -50%';
+      } else {
+        st.move(hVals, geo.cellsX, H_BOT + 8);
+        hVals.style.translate = '';
+      }
     }
 
     const wTip = (v, c, D) => `W_U[${v}, ${c}] = ${minus(fmt(D.W.data[v * D.d + c], 3))}\n${name(v)} · row ${v} · column ${c}\n${D.tied ? 'wte.weight, tied with W_E · model.py:241' : 'lm_head.weight · model.py:278'}`;
@@ -291,12 +375,13 @@ export default {
       zeroEl = h('div', { class: 'lh-zero' });
       bars = layoutRows.map((v) => {
         const bar = h('div', { class: 'lh-bar' });
+        const note = h('span', { class: 'lh-rest' });          // the ellipsis row's note: rows not shown
         const val = h('span', { class: 'lh-val' });
         const row = h('div', { class: ['lh-brow', v < 0 && 'ell'] },
           h('span', { class: 'lh-lab' }, v < 0 ? '⋮' : lab(v)),
-          h('div', { class: 'lh-track' }, bar),
+          h('div', { class: 'lh-track' }, bar, note),
           val);
-        return { v, row, bar, val };
+        return { v, row, bar, note, val };
       });
       barsHost.replaceChildren(...bars.map((b) => b.row), zeroEl);
     }
@@ -304,7 +389,7 @@ export default {
     /** The arrows that join the stages. Their ends depend on the plate, so they are rebuilt with it. */
     function buildFlow() {
       Object.values(flow).forEach((a) => a.destroy());
-      const HX = CELLS_X + geo.cellsW / 2;
+      const HX = geo.cellsX + geo.cellsW / 2;
       const mid = PLATE_Y + body.offsetHeight / 2;
       flow = {
         hop: st.arrow({ x: HX, y: H_BOT }, { x: HX, y: OP_TOP }, { kind: 'resid', width: 2 }),
@@ -339,9 +424,10 @@ export default {
       hVals.textContent = [0, 1, 2, 3].filter((c) => c < D.d).map((c) => dec2(D.hv[c])).join('   ');
     }
 
-    /** The probability rows that write their value: the next input token first, so its row always carries its number,
-     *  then the top five by probability. Two labels may sit on adjacent rows when the rows are far enough apart. */
+    /** The rows that write their value. Character presets: the next input token first, then the top five by probability,
+     *  where two labels may sit on adjacent rows when the rows are far enough apart. A large vocabulary: every drawn row. */
     function valueRows(D) {
+      if (D.large) return new Set(bars.flatMap((b, i) => (b.v >= 0 ? [i] : [])));
       const rowOf = new Map(bars.map((b, i) => [b.v, i]));
       const picked = [];
       const take = (v, minP) => {
@@ -351,20 +437,25 @@ export default {
         picked.push(ri);
       };
       if (D.hasNext) take(D.next, 0);
-      for (const v of D.rank.slice(0, 5)) take(v, 0.0005);     // a value under 0.05% is not written
+      for (const v of D.top.slice(0, 5)) take(v, 0.0005);     // a value under 0.05% is not written
       return new Set(picked);
     }
 
     /** mode: 'zero' (not computed), 'logit' (the first `upTo` rows are computed), 'prob' (softmax). */
     function paintBars(D, mode, upTo = Infinity) {
-      const x0 = (TRACK_W * -D.zLo) / D.zSpan;          // where logit 0 sits on the track
-      const xOf = (z) => x0 + (z / D.zSpan) * TRACK_W;
+      const x0 = (geo.trackW * -D.zLo) / D.zSpan;          // where logit 0 sits on the track
+      const xOf = (z) => x0 + (z / D.zSpan) * geo.trackW;
       const probs = mode === 'prob';
-      zeroEl.style.left = `${TRACK_X + (probs ? 0 : x0)}px`;
+      zeroEl.style.left = `${geo.trackX + (probs ? 0 : x0)}px`;
       const writes = probs ? valueRows(D) : null;
       let k = 0;
       bars.forEach((b, ri) => {
-        if (b.v < 0) { b.bar.style.width = '0px'; b.val.textContent = ''; return; }
+        if (b.v < 0) {                                      // the ellipsis row: what is not drawn
+          b.bar.style.width = '0px';
+          b.note.textContent = D.large ? `${fmtN(D.notShown)} rows not shown` : '';
+          b.val.textContent = probs && D.large ? pctOrLess(D.restP) : '';
+          return;
+        }
         const on = mode !== 'zero' && k < upTo;
         k++;
         const v = b.v;
@@ -373,11 +464,11 @@ export default {
         if (probs) {
           const q = D.p[v];                             // a fixed 0 … 100% scale, as in the attention pattern
           b.bar.style.left = '0px';
-          b.bar.style.width = `${q * TRACK_W}px`;
+          b.bar.style.width = `${q * geo.trackW}px`;
           b.bar.style.background = sequential(q, 'head');
           const top = D.top5.has(v), next = D.hasNext && v === D.next;
-          b.val.textContent = writes.has(ri) ? pct(q) : '';
-          b.row.className = ['lh-brow', top && 'top', !top && 'dim', next && 'next'].filter(Boolean).join(' ');
+          b.val.textContent = writes.has(ri) ? pctOrLess(q) : '';
+          b.row.className = ['lh-brow', top && 'top', !top && !D.large && 'dim', next && 'next'].filter(Boolean).join(' ');
         } else {
           const z = D.z[v];
           b.bar.style.left = `${on ? Math.min(x0, xOf(z)) : x0}px`;
@@ -434,33 +525,37 @@ export default {
       smOp.style.opacity = late ? '1' : '0.35';
       smIn.setOpacity(late ? 1 : 0.35);
       smOut.setOpacity(late ? 1 : 0.35);
-      if (late && !drawn) { drawn = true; smIn.draw(420); smOut.draw(420, 260); }
+      if (late && !arrowsIn) { arrowsIn = true; smIn.draw(420); smOut.draw(420, 260); }
     }
 
     function chrome(D) {
       const { V, d, t } = D;
       header.el.querySelector('.k-eyebrow').replaceChildren(
-        chip(`V = ${V}`, 'head'), chip(`d = ${d}`, 'resid'),
+        chip(`V = ${fmtN(V)}`, 'head'), chip(`d = ${d}`, 'resid'),
         ...(D.tied ? [chip('W_U = W_E', 'embed')] : []));
-      header.setSub(`Position <b>${t}</b> (<b>“${esc(tokName(t))}”</b>) reads its final vector h<sub>t</sub> and scores all ${V} vocabulary entries.`);
-      wLab.innerHTML = `${texHTML('\\WU')} · ${V} × ${d}<small>${D.tied ? 'tied to W_E (wte.weight)' : 'lm_head.weight'}</small>`;
-      probHead.textContent = step >= 3 ? 'probabilities p' : 'logits z';
+      header.setSub(`Position <b>${t}</b> (<b>“${esc(tokName(t))}”</b>) reads its final vector h<sub>t</sub> and scores all ${fmtN(V)} vocabulary entries.`);
+      const tie = D.tied ? (D.large ? 'tied to W_E' : 'tied to W_E (wte.weight)') : 'lm_head.weight';
+      wLab.innerHTML = `${texHTML('\\WU')} · ${fmtN(V)} × ${d}<small>${tie}</small>`;
+      probHead.textContent = `${step >= 3 ? 'probabilities p' : 'logits z'}${D.large ? ` · ${D.top.length} largest` : ''}`;
       stepLab.textContent = STEPS[step];
       readout.style.opacity = step >= 3 ? '1' : '0';
     }
 
     /** The caption for the current step. Position t is the last one when it has no next input token. */
     function captionFor(D) {
-      const { V, d, t, T, nScored } = D;
+      const { V, d, t, T, nScored, large, notShown, restP } = D;
       if (step === 0) return D.preLN
         ? `The head reads one vector per position: h<sub>t</sub>, the state of position <b>${t}</b> after the final norm. Earlier tokens reach the prediction only through this vector.`
         : `The head reads one vector per position: h<sub>t</sub>, the output of the last block at position <b>${t}</b>. Earlier tokens reach the prediction only through this vector.`;
-      if (step === 1) return `Each of the ${V} rows of W<sub>U</sub> is dotted with h<sub>t</sub>: one multiply-and-add over each of the ${d} entries, giving one score per vocabulary entry.`;
+      if (step === 1) return large
+        ? `Each drawn row of W<sub>U</sub> is dotted with h<sub>t</sub>: one multiply-and-add over each of the ${d} entries, giving one score per row. The other ${fmtN(notShown)} rows are computed the same way but not drawn.`
+        : `Each of the ${V} rows of W<sub>U</sub> is dotted with h<sub>t</sub>: one multiply-and-add over each of the ${d} entries, giving one score per vocabulary entry.`;
       if (step === 2) return 'These are the logits: raw scores that can be negative. Adding one constant to every logit changes nothing, so only their differences matter.';
       const soft = 'Softmax makes every score positive and rescales the row to sum to 1.';
-      if (D.hasNext) return `${soft} The next input token <b>“${esc(tokName(t + 1))}”</b> gets <b>${pct(D.pNext)}</b>, so its loss is <b>${lossTxt(-Math.log(D.pNext))} nats</b>.`;
-      if (T === 1) return `${soft} Position 0 is the only token, so no token is scored.`;
-      return `${soft} Position <b>${t}</b> is the last one, so it predicts no input token. The mean loss still scores the other ${plural(nScored, 'position')}.`;
+      const rest = large ? ` The ${fmtN(notShown)} rows not drawn hold <b>${esc(pctOrLess(restP))}</b>.` : '';
+      if (D.hasNext) return `${soft} The next input token <b>“${esc(tokName(t + 1))}”</b> gets <b>${esc(pctOrLess(D.pNext))}</b>, so its loss is <b>${lossTxt(-Math.log(D.pNext))} nats</b>.${rest}`;
+      if (T === 1) return `${soft} Position 0 is the only token, so no token is scored.${rest}`;
+      return `${soft} Position <b>${t}</b> is the last one, so it predicts no input token. The mean loss still scores the other ${plural(nScored, 'position')}.${rest}`;
     }
 
     /** Equations, checks and caption for the current step. `v` is the row the sweep is on (step 1). */
@@ -472,7 +567,7 @@ export default {
       if (step === 0) {
         const hNorm = D.preLN ? (D.rms ? '\\RMSNorm_f\\big(\\xres_t\\big)' : '\\LN_f\\big(\\xres_t\\big)') : `\\xres^{(${D.nLayer - 1})}_t`;
         main = `h_t = ${hNorm} \\in \\R^{${d}}`;
-        note = `${d} numbers at position ${t}. Entries 0 to 3 are written under the strip.`;
+        note = `${d} numbers at position ${t}. Entries 0 to 3 are written ${geo.large ? 'to the right of' : 'under'} the strip.`;
       } else if (step === 1) {
         let zc = 0;
         for (let c = 0; c < d; c++) zc += hv[c] * W.data[f * d + c];
@@ -562,6 +657,13 @@ export default {
 
     // ------------------------------------------------------------ mount
     render({ animate: true });
+    // Web fonts can arrive after the first measure: re-measure the label gutter once they are in.
+    document.fonts?.ready?.then(() => {
+      if (!alive || !lastD || !lastD.large) return;
+      const before = geo?.labelW;
+      gutterCache = null;
+      if (gutterFor() !== before) { built = null; render({ animate: false }); }
+    });
     // The plate only fades: a transform animation would replace its tilt while it runs, and the bars are measured against the tilt.
     if (!reducedMotion()) body.animate([{ opacity: 0 }, { opacity: 1 }], { duration: MOTION.appear, easing: MOTION.easeOut });
     appear([header.el, picker.el, hStrip, hLab, hVals, wLab, timesOp, probsWrap, smOp, side], { stagger: MOTION.stagger })
