@@ -14,6 +14,8 @@ const MATH = onlyArg > 0
   : (await import('../src/core/math/index.js')).MATH;
 import { parseKey } from '../src/core/describe.js';
 import { modelFromWeights, infer, makeTokenizer, mulberry32 } from '../src/engine/index.js';
+import { tokenizerFromPreset } from '../src/engine/tokenizer.js';
+import { PRESETS, loadPresetData } from '../src/presets/index.js';
 
 globalThis.atob ??= (b) => Buffer.from(b, 'base64').toString('binary');
 const here = dirname(fileURLToPath(import.meta.url));
@@ -40,19 +42,15 @@ for (const [k, e] of Object.entries(MATH)) {
 const states = [];
 for (const f of readdirSync(join(here, 'fixtures')).filter((x) => x.endsWith('.json'))) {
   const fx = JSON.parse(readFileSync(join(here, 'fixtures', f), 'utf8'));
+  if (!fx.params) continue;                 // tokenizer cases (bpe_cases.json) carry no model
   const model = modelFromWeights(fx.config, fx.params);
   const tok = makeTokenizer('abcdefghijkl'.slice(0, fx.config.vocab_size));
   states.push({ name: fx.name, model, config: model.config, ids: fx.ids, tokenizer: tok, sel: { head: 0 } });
 }
-for (const f of readdirSync(join(here, '..', 'src', 'presets')).filter((x) => /^(charlm|llama|induction|reverse)\.js$/.test(x))) {
-  const mod = (await import(pathToFileURL(join(here, '..', 'src', 'presets', f)).href)).default;
-  const bin = atob(mod.weights), bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  const flat = new Float32Array(bytes.buffer), w = {};
-  let off = 0;
-  for (const [n, s] of mod.order) { const k = s.reduce((a, b) => a * b, 1); w[n] = { data: flat.subarray(off, off + k) }; off += k; }
-  const model = modelFromWeights(mod.config, w), tok = makeTokenizer(mod.vocab);
-  states.push({ name: mod.id, model, config: model.config, ids: tok.encode(mod.samples[0]).ids.slice(0, mod.config.block_size), tokenizer: tok, sel: { head: 0 } });
+for (const { id } of PRESETS) {            // every shipped model, char and subword (f32 or f16 weights)
+  const data = await loadPresetData(id);
+  const model = modelFromWeights(data.config, data.weights), tok = tokenizerFromPreset(data);
+  states.push({ name: id, model, config: model.config, ids: tok.encode(data.samples[0]).ids.slice(0, data.config.block_size), tokenizer: tok, sel: { head: 0 } });
 }
 const rnd = mulberry32(7);
 let liveRuns = 0;
