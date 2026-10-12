@@ -1,9 +1,10 @@
 """Train a subword (byte-level BPE) tokenizer and a small GPT-2-style model on TinyStories,
 then export them as an app preset. Uses reference/model.py unchanged.
 
-Run on a GPU node, not the login node:
-    bsub -G grp_vision_docling -q normal -gpu "num=1" -n 8 -R "rusage[mem=32GB] span[hosts=1]" -W 180 \
-        -o logs/bpe.%J.log .venv-gpu/bin/python tools/train_bpe_preset.py
+Run as a batch job, never on the login node (also for --smoke). On CPU it uses every core LSF grants:
+    STEPS=20000 bsub -G grp_vision_docling -q normal -n 32 -R "rusage[mem=32GB] span[hosts=1]" -W 240 \
+        -o logs/bpe.%J.log .venv/bin/python tools/train_bpe_preset.py
+A CUDA build of torch also works (add -gpu "num=1"); STEPS defaults to 30,000.
 
 Inputs:  data/tinystories/valid.txt, data/tinystories/train_slice.txt (TinyStoriesV2-GPT4)
 Outputs: src/presets/tinystories.js (fp16 weights + tokenizer), src/presets/manifest.js (entry
@@ -14,6 +15,7 @@ from __future__ import annotations
 import base64
 import json
 import math
+import os
 import re
 import sys
 import time
@@ -85,6 +87,8 @@ def encode_all(tok, texts):
 
 def main():
     t0 = time.time()
+    if DEVICE == "cpu" and os.environ.get("LSB_DJOB_NUMPROC"):
+        torch.set_num_threads(int(os.environ["LSB_DJOB_NUMPROC"]))
     torch.manual_seed(0)
     train_texts = stories(DATA / "train_slice.txt", 5000 if SMOKE else None)
     val_texts = stories(DATA / "valid.txt", 1000 if SMOKE else None)
@@ -112,7 +116,7 @@ def main():
     print(f"model: {n_params:,} parameters on {DEVICE}", flush=True)
 
     T, B = cfg.block_size, 128
-    steps = 60 if SMOKE else 30_000
+    steps = 60 if SMOKE else int(os.environ.get("STEPS", 30_000))
     train_t = torch.as_tensor(train_ids, device=DEVICE)
     val_t = torch.as_tensor(val_ids, device=DEVICE)
 
