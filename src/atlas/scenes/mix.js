@@ -1,6 +1,7 @@
 // Weighted sum of values: what one head outputs for each token.
 // For the selected query q, the value vectors v_j of the KV head are columns (one per key
-// position) and their attention weights A_qj are bars above them. Each column shrinks to its
+// position) and their attention weights A_qj are bars above them, scaled so the tallest visible weight
+// fills the band (the scale is named under the bars). Each column shrinks to its
 // weight, flies into a running sum, and the sum is o_q, checked against the traced
 // L{l}.attn.ctx[h, q]. The last step shows every query at once: the head's T x d_h output, checked
 // against the whole trace.
@@ -21,9 +22,9 @@ const COL_MAX = 224;
 const BIG = { y: 270, h: 490 };       // the step-3 matrix is centred in the hero band y 270 … 760
 const HERO = { x: 110, w: 1030 };     // hero zone x 110 … 1140; the side column starts at 1180
 const SIDE = { x: 1180, y: 270, w: 340 };
-const YZ = 470;                       // zero line of the weight bars
-const YCOL = 504;                     // top of the value columns and of the running sum
-const BAR_MAX = 170;                  // bar height of a weight of 1, design units
+const YZ = 480;                       // zero line of the weight bars
+const YCOL = 514;                     // top of the value columns and of the running sum
+const BAR_MAX = 180;                  // height of the tallest visible weight; the other bars scale to it, as softmax does
 const GUT = 56;                       // gutter for the axis tags (A, v_j)
 const GAP = 48;                       // gap between the last key slot and the running sum
 const FLY_MS = 640;                   // one term flies into the sum (kit fly: 600–800 ms)
@@ -55,7 +56,9 @@ useStyle('mix', `
 .mx-stepname { font: 600 17px/1.2 var(--font-mono); color: var(--fg-2); }
 .mx-eq-main { font-size: 22px; white-space: nowrap; overflow-x: auto; }
 .mx-eq-main .katex-display { margin: .3em 0; }
-.mx-eq-live { font-size: 17px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); display: grid; gap: 8px; }
+.mx-eq-live { font-size: 18px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); display: grid; gap: 8px; }
+.mx-eq-live .katex-display { margin: 0; }
+.k-label.mx-axis { color: var(--fg-3); font-size: 15px; margin: 0; }
 .mx-tbl { display: grid; gap: 3px 8px; font: 500 14px/1.35 var(--font-mono); color: var(--fg); align-items: baseline; }
 .mx-tbl > div { white-space: nowrap; }
 .mx-tbl .hd { color: var(--fg-3); font-size: 12px; }
@@ -65,6 +68,12 @@ useStyle('mix', `
 .mx-thumb { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 12px; }
 .mx-thumb-note { flex: 1 1 110px; font: 500 13px/1.45 var(--font-mono); color: var(--fg-3); }
 `);
+
+// The matrix fills in top to bottom the first time the last step is shown (the head scene's wave).
+function wave(node) {
+  if (reducedMotion()) return;
+  node.animate([{ clipPath: 'inset(0 0 100% 0)' }, { clipPath: 'inset(0 0 0 0)' }], { duration: MOTION.move, easing: MOTION.ease });
+}
 
 // A matrix drawn on a canvas in the kit's diverging colours. A repaint is one pass over the cells
 // and reads no layout, so a new forward pass or query does not stall the page (a DOM cell per entry
@@ -124,9 +133,10 @@ export default {
     const accent = () => theme.accent;
     const cfg = () => ctx.cfg;
     const esc = (x) => String(x).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-    const label = (j) => esc(ctx.label(j));
-    const pct = (a) => (a >= 0.1 ? `${Math.round(a * 100)}%` : a >= 0.001 ? `${(a * 100).toFixed(1)}%` : a > 0 ? '<0.1%' : '0%');
-    const pct1 = (a) => `${(a * 100).toFixed(1)}%`;
+    const tok = (j) => (ctx.label(j) === '␣' ? 'space' : ctx.label(j));   // the space token reads as a word
+    const label = (j) => esc(tok(j));
+    // every weight on screen has one format: one decimal, and anything below 0.05% reads as below 0.1%
+    const pct = (a) => (a > 0 && a < 0.0005 ? '<0.1%' : `${(a * 100).toFixed(1)}%`);
     const table = (cols, rows) => {
       const t = h('div', { class: 'mx-tbl', style: { gridTemplateColumns: cols.map((c) => c.w).join(' ') } });
       cols.forEach((c) => t.append(h('div', { class: ['hd', c.r && 'r'] }, c.t)));
@@ -147,6 +157,7 @@ export default {
     let geoKey = null, geo = null;                   // the layout is rebuilt only when T, d_h or the heads change
     let colEls = [], barEls = [], keyEls = [], heroEls = [], bigEls = [];
     let accWrap = null, accVec = null, readout = null, outLabel = null, big = null, thumb = null;
+    let wTag = null, scaleNote = null, waved = false;     // the weight tag, the bars' scale note, the step-3 wave (once per build)
     let header, tp, cap, stepLabel, eqMain, eqLive, checkSlot, side, thumbSlot, thumbNote;
 
     const put = (node, opts) => { built.push(node); return st.add(node, opts); };
@@ -214,7 +225,7 @@ export default {
       thumb?.destroy(); thumb = null;
       thumbSlot?.replaceChildren();
       colEls = []; barEls = []; keyEls = []; heroEls = []; bigEls = [];
-      accWrap = null; readout = null; outLabel = null;
+      accWrap = null; readout = null; outLabel = null; wTag = null; scaleNote = null; waved = false;
       geoKey = null; geo = null;
     }
 
@@ -226,7 +237,7 @@ export default {
       const p = Math.min(44, Math.floor(KEYS_MAX / T));           // slot width per key
       const c = clamp(Math.min(p - 10, Math.floor((COL_MAX - 6 - (shown - 1) * 2) / shown)), 4, 12), g = c >= 8 ? 2 : 1;   // value cell and gap: 4 px at least
       const boxH = shown * c + (shown - 1) * g + 6;
-      const bw = clamp(c + 6, 4, 22), wellW = c + 18;
+      const bw = Math.max(2, Math.min(clamp(c + 6, 4, 22), p - 2)), wellW = c + 18;   // a bar never reaches its neighbour
       const groupW = GUT + T * p + GAP + wellW;
       const x0 = HERO.x + Math.max(0, (HERO.w - groupW) / 2) + GUT;   // left edge of key slot 0
       const xAcc = x0 + T * p + GAP + wellW / 2;
@@ -242,7 +253,14 @@ export default {
         barEls.push({ bar, val });
       }
       heroEls.push(put(bars, { x: x0, y: YZ - BAR_MAX - 28 }));
-      heroEls.push(put(texLabel('\\Aw_{tj}', { size: 16, kind: 'attn' }), { x: x0 - 12, y: YZ - 50, anchor: 'rc' }));
+      // the weight tag names this query's weights, so it appears with the bars (steps 1 and 2)
+      wTag = put(texLabel(`\\Aw_{${d.q},j}`, { size: 16, kind: 'attn' }), { x: x0 - 12, y: YZ - 50, anchor: 'rc' });
+      wTag.classList.add('mx-fade');
+      wTag.dataset.q = String(d.q);
+      // the bars' scale, under the zero line at the right end of the keys; and the key row's axis name
+      scaleNote = put(h('div', { class: 'k-label mx-axis' }), { x: x0 + T * p, y: YZ + 6, anchor: 'tr' });
+      heroEls.push(scaleNote);
+      heroEls.push(put(h('div', { class: 'k-label mx-axis' }, 'keys →'), { x: x0 - 12, y: keysY + 8, anchor: 'rc' }));
 
       // values: v_j as a column of dh cells, one per key position
       for (let j = 0; j < T; j++) {
@@ -290,10 +308,11 @@ export default {
       bigEls.forEach((e) => e.classList.add('mx-fade'));
 
       // side thumbnail: the whole output of this head, the query's row marked
-      const thumbCell = clamp(Math.min(Math.floor(170 / T), Math.floor(300 / dh)), 2, 6);
+      const thumbCell = clamp(Math.min(Math.floor(170 / T), Math.floor(300 / dh)), 3, 6);   // 3 units at 64 tokens: still readable
       thumb = matrixCanvas({ rows: T, cols: dh, cell: thumbCell, traceKey: `L${l}.attn.ctx`, head: hd, accent,
         label: `head ${hd} output at every position` });
       thumb.update({ data: d.Call, range: d.R, hiRow: -1 });
+      thumb.el.classList.add('mx-fade');                  // its opacity eases with the step, like the rest
       thumbNote = h('div', { class: 'mx-thumb-note' });
       thumbSlot.replaceChildren(thumb.el, thumbNote);
     }
@@ -323,27 +342,32 @@ export default {
     ][step];
     const words = (d) => {
       const nMasked = d.T - d.visList.length;
+      // with no grouped heads each head has its own value projection, so "KV head" would be jargon
+      const src = d.H === d.Hkv ? `head ${d.kv}’s value projection` : `KV head ${d.kv}`;
       return [
-        `Each position <b>j</b> has a value vector <b>v<sub>j</sub></b> of length d<sub>h</sub> = ${d.dh}, read from KV head ${d.kv}.${nMasked ? ' Hatched columns are masked keys: this query may not see them.' : ''}`,
-        `Query “<b>${label(d.q)}</b>” at position ${d.q} gives each key it may see a weight. The bars are the weights and sum to 1.${nMasked ? ' Masked keys get exactly 0.' : ' No key is masked, so every key gets a weight.'}`,
+        `Each position <b>j</b> has a value vector <b>v<sub>j</sub></b> of length d<sub>h</sub> = ${d.dh}, read from ${src}.${nMasked ? ' Hatched columns are masked keys: this query may not see them.' : ''}`,
+        nMasked
+          ? `Query “<b>${label(d.q)}</b>” at position ${d.q} gives each visible key a weight: the bars sum to 1, and masked keys get exactly 0.`
+          : `Query “<b>${label(d.q)}</b>” at position ${d.q} gives each key a weight: the bars sum to 1, and no key is masked.`,
         `Each value enters the sum scaled by its weight. The sum is the head’s output <b>o<sub>${d.q}</sub></b>, which equals <b>L${l}.attn.ctx</b> for this query.`,
         `Doing this for every query gives the head’s output <b>A V</b>: (T×T)(T×d<sub>h</sub>) = (T×d<sub>h</sub>), one row per position. Row ${d.q} is the output for “${label(d.q)}”.`,
       ];
     };
-    const ctxCheck = (d) => checkBadge(d.maxOne, 0, { label: `equals L${l}.attn.ctx[${hd}, ${d.q}]`, tol: 1e-9 });
+    const ctxCheck = (d) => checkBadge(d.maxOne, 0, { label: `equals L${l}.attn.ctx[${hd}, ${d.q}, :]`, tol: 1e-9 });
     const allCheck = (d) => checkBadge(d.maxAll, 0, { label: `equals L${l}.attn.ctx, all positions`, tol: 1e-9 });
 
     // one live line per step, plus a small table of the top terms where the numbers need one
     function live(d) {
       const { q, dh, kv } = d;
       if (step === 0) {
-        const first = Array.from(d.v.subarray(q * dh, q * dh + Math.min(4, dh)), (x) => num(x, 2));
-        return [h('div', { html: texHTML(`v_{${q}} = (${first.join(',\\,')}${dh > 4 ? ',\\,\\dots' : ''})`) })];
+        // three entries and an ellipsis: the line fits its box on one row (the strip shows all of them)
+        const first = Array.from(d.v.subarray(q * dh, q * dh + Math.min(3, dh)), (x) => num(x, 2));
+        return [h('div', { html: texHTML(`v_{${q}} = (${first.join(', ')}${dh > 3 ? ', \\dots' : ''})`, { display: true }) })];
       }
       if (step === 1) {
         const rest = d.visList.length - d.top.length;
-        const rows = d.top.map((j) => ({ cells: [String(j), ctx.label(j), pct1(d.A[j])] }));
-        if (rest > 0) rows.push({ cells: ['', `${rest} more`, pct1(d.sumA - d.top.reduce((a, j) => a + d.A[j], 0))], dim: true });
+        const rows = d.top.map((j) => ({ cells: [String(j), tok(j), pct(d.A[j])] }));
+        if (rest > 0) rows.push({ cells: ['', `${rest} more`, pct(d.sumA - d.top.reduce((a, j) => a + d.A[j], 0))], dim: true });
         return [
           h('div', { html: texHTML(`\\sum_{j} \\Aw_{${q},j} = ${num(d.sumA, 3)}`) }),
           table([{ t: 'key', w: '46px' }, { t: 'token', w: '1fr' }, { t: 'A', w: '72px', r: true }], rows),
@@ -352,9 +376,9 @@ export default {
       if (step === 2) {
         const k = d.kStar, rest = d.visList.filter((j) => !d.top.includes(j));
         const restA = rest.reduce((a, j) => a + d.A[j], 0), restAV = rest.reduce((a, j) => a + d.A[j] * d.v[j * dh + k], 0);
-        const rows = d.top.map((j) => ({ cells: [String(j), ctx.label(j), pct1(d.A[j]), fmt(d.v[j * dh + k], 2), fmt(d.A[j] * d.v[j * dh + k], 3)] }));
-        if (rest.length) rows.push({ cells: ['', `${rest.length} more`, pct1(restA), '', fmt(restAV, 3)], dim: true });
-        rows.push({ cells: ['', 'sum', pct1(d.sumA), '', fmt(d.oc[k], 3)], tot: true });
+        const rows = d.top.map((j) => ({ cells: [String(j), tok(j), pct(d.A[j]), fmt(d.v[j * dh + k], 2), fmt(d.A[j] * d.v[j * dh + k], 3)] }));
+        if (rest.length) rows.push({ cells: ['', `${rest.length} more`, pct(restA), '', fmt(restAV, 3)], dim: true });
+        rows.push({ cells: ['', 'sum', pct(d.sumA), '', fmt(d.oc[k], 3)], tot: true });
         return [
           h('div', { html: texHTML(`o_{${q},${k}} = \\sum_{j} \\Aw_{${q},j}\\, v_{j,${k}} = ${num(d.oc[k], 3)}`) }),
           table([{ t: 'j', w: '26px' }, { t: 'token', w: '72px' }, { t: 'A', w: '62px', r: true }, { t: 'v', w: '58px', r: true }, { t: 'A·v', w: '1fr', r: true }], rows),
@@ -390,23 +414,27 @@ export default {
       if (instant) still();
       const q = d.q, N = d.visList.length, heroOn = step < 3;
       heroEls.forEach((e) => e.classList.toggle('mx-off', !heroOn));
+      wTag.classList.toggle('mx-off', step === 0 || !heroOn);
+      if (String(q) !== wTag.dataset.q) { wTag.dataset.q = String(q); wTag.innerHTML = texHTML(`\\Aw_{${q},j}`); }
       bigEls.forEach((e) => e.classList.toggle('mx-off', heroOn));
+      if (step === 3 && !instant && !waved) { waved = true; wave(big.el); }   // the output fills in top to bottom, once per build
       thumbSlot.classList.toggle('mx-off', step === 3);
       colEls.forEach((col, j) => {
         const vis = d.vis[j], cells = col.querySelector('.k-cells');
         col.classList.toggle('mx-off', !heroOn);
         col.classList.toggle('mx-masked', !vis);
         col.classList.toggle('mx-q', j === q);
-        cells.style.opacity = !vis ? '0.7' : step === 0 ? '1' : String(0.22 + 0.78 * (d.A[j] / (d.Amax || 1)));
+        cells.style.opacity = !vis ? '0.4' : step === 0 ? '1' : String(0.22 + 0.78 * (d.A[j] / (d.Amax || 1)));
       });
-      const labelOn = labelSet(d);
+      const labelOn = labelSet(d), scale = d.Amax || 1;   // the tallest visible weight fills BAR_MAX
       barEls.forEach(({ bar, val }, j) => {
         const vis = d.vis[j], on = step >= 1 && vis;
         bar.dataset.cell = `${q},${j},${hd}`;
         bar.classList.toggle('masked', !vis);
-        bar.style.height = !vis ? '8px' : `${on ? Math.max(2, d.A[j] * BAR_MAX) : 0}px`;
+        bar.style.height = !vis ? '8px' : `${on ? Math.max(2, (d.A[j] / scale) * BAR_MAX) : 0}px`;
         val.textContent = on && labelOn.has(j) ? pct(d.A[j]) : '';
       });
+      scaleNote.textContent = step >= 1 ? `tallest bar = ${pct(d.Amax)}` : '';
       keyEls.forEach((k, j) => {
         const name = ctx.label(j);                                  // the token text can change at the same T
         if (k.textContent !== name) k.textContent = name;
@@ -422,8 +450,8 @@ export default {
       if (outLabel.dataset.q !== String(q)) { outLabel.dataset.q = String(q); outLabel.innerHTML = texHTML(`o_{${q}}`); }
 
       header.setSub(step === 3
-        ? 'Every position mixes the value vectors of the keys it may see. Each head makes one such mixture per token.'
-        : `Query “<b>${label(q)}</b>” at position ${q} mixes the value vectors of the keys it may see. Every head makes one such mixture per token.`);
+        ? 'Every position mixes the value vectors of the keys it may see.'
+        : `Query “<b>${label(q)}</b>” at position ${q} mixes the value vectors of the keys it may see.`);
       cap.set(words(d)[step]);
       stepLabel.textContent = STEPS[step];
       eqMain.innerHTML = texHTML(mainTex(d), { display: true });
@@ -434,7 +462,7 @@ export default {
       if (step === 3) checkSlot.append(allCheck(d));
       thumb.update({ hiRow: step >= 2 ? q : -1 });
       thumb.el.style.opacity = step >= 2 ? '1' : '0.45';
-      thumbNote.textContent = `head ${hd} output at every position · row ${q} is “${ctx.label(q)}”`;
+      thumbNote.textContent = `head ${hd} output at every position · row ${q} is “${tok(q)}”`;
       big.update({ hiRow: q });
       if (step === 2 && !instant) flights(g, d, acc);
     }
@@ -532,7 +560,13 @@ export default {
 
     return {
       pause() { active = false; stopAuto(); gen++; timers.forEach(clearTimeout); timers = []; },
-      resume() { active = true; paint({ animate: false }); },
+      resume() {
+        active = true;
+        // the trace handler ignores events while hidden: a pass or token that changed meanwhile is read here
+        const nd = read();
+        if (nd && geoKey !== null && geometryKey(nd) === geoKey) refreshData(nd);
+        paint({ animate: false, d: nd });
+      },
       destroy() {
         stopAuto(); gen++; timers.forEach(clearTimeout); timers = [];
         offs.forEach((f) => f());

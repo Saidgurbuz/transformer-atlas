@@ -1,89 +1,161 @@
-// Q, K and V: where queries, keys and values come from. Each one is the attention input X times
-// one head's rows of its weight matrix, plus bias. The hero is that product on the real weights,
-// computed cell by cell and checked against the traced projection: the matrix fills row by row,
-// then the selected token's largest entry runs its dot product (the entry the live line shows).
-// Every cell of the product and of the side context carries the atlas hover card and menu.
-// The last step splits Q into its head bands. Steps: input X, queries, keys, values, split into heads.
+// Q, K and V: where queries, keys and values come from. Each one is the attention input X times one
+// head's rows of its weight matrix, plus its bias. The hero is one token's row of that product on the
+// real weights, as a matrix-vector product: the row x_t lies over W (d_h × d, the stored layout), and
+// each entry of the output column is the dot product of one row of W with x_t. The largest entry runs
+// its dot product term by term, the rest of the row fills in, and a check compares the whole row with
+// the trace. The side column shows the full projection with the token's row and the head's columns
+// marked. The last step splits Q into its head bands. Steps: input X, queries, keys, values, split.
 // Reference scene for contributors: see docs/ATLAS_GUIDE.md.
-import { stage2d, sceneHeader, sceneCaption, tokenPicker, headPicker, checkBadge, mat, chip, appear, ZONES, MOTION, useStyle } from '../kit.js';
-import { h, num, texHTML, clamp, segmented, diverging, onThemeChange, reducedMotion, hideTip } from '../../ui/index.js';
-import { matmulAnim } from '../../ui/matmul.js';
+import { stage2d, sceneHeader, sceneCaption, tokenPicker, headPicker, checkBadge, texLabel, appear, ZONES, MOTION, useStyle } from '../kit.js';
+import { h, fmt, num, texHTML, clamp, diverging, onThemeChange, reducedMotion } from '../../ui/index.js';
 import { runLive } from '../../core/math/index.js';
 import { attnInput } from '../../core/math/util.js';
 
 const STEPS = ['Input X', 'Queries', 'Keys', 'Values', 'Split into heads'];
-const STEP_CHIP = [['Input X', 'norm'], ['Queries · Q', 'q'], ['Keys · K', 'k'], ['Values · V', 'v'], ['Split · Q', 'q']];
-const PROJ_OF_STEP = ['q', 'q', 'k', 'v', 'q'];           // the split is of Q, as the spec asks
-const STEP_OF_PROJ = { q: 1, k: 2, v: 3 };
+const PROJ_OF_STEP = ['q', 'q', 'k', 'v', 'q'];          // the split is of Q, as the spec asks
 const SYM = { q: 'Q', k: 'K', v: 'V' };
 const SYM_TEX = { q: String.raw`\Q`, k: String.raw`\K`, v: String.raw`\V` };
 const NAME = { q: 'Queries', k: 'Keys', v: 'Values' };
-const HERO = { x: 110, y: 262, w: 1030, ht: 490 };       // hero zone (design units)
-const SIDE = { x: 1180, y: 262 };                        // side column, 340 wide
-const MM_MAX_H = HERO.ht;                                // the product canvas may use the whole hero: no title or equation bar
-const MM_OVERHEAD = 26 + 16 + 30;                        // ui/matmul.js: name row above B, gap B to C, name row under C
-const MM_GAP_AC = 26;                                    // ui/matmul.js: gap between A and the C block (B without row labels)
-const CELL_MODE_MAX = 36, CELL_PLAY_MS = 4200, ROW_PLAY_MS = [3000, 6000];   // mirror ui/matmul.js playback
-const DENSE_PICKER_T = 48;                               // above this many tokens the token picker wraps to two rows
+const INPUT_SUB = 'The same X feeds Q, K and V: one row per token, each mixed by its own weights.';
+const HERO = { x: 110, y: 260, w: 1030, h: 490 };        // the hero zone (design units)
+const SIDE = { x: 1180, y: 260 };                        // the side column, 340 wide, top-aligned with the hero
+const CTRL_Y = 196;                                       // controls row: token tiles on the left, head chips on the right
+const TOKEN_W = 1010;                                     // the token row's width, so the head chips fit beside it
+const HEADS = { x: 1154, w: 336 };                        // the head chips' box, right edge at 1490
+const DENSE_PICKER_T = 48;                                // above this many tokens the tile row wraps to two rows
+const PAD = 8, GAP = 1, GAP_Q = 52;                       // box padding, hairline between cells, output column to W (its running sum sits here)
+const CELL_MIN = 4, CELL_MAX = 20;                        // design units
+const HERO_V = 388;                                       // height left for the cells: HERO.h less the tags and padding
+const ROWS_MAX = 77;                                      // the most W rows drawn at the minimum cell; beyond this rows are elided
+const CTX_ROWS = 20, CTX_COLS = 64;                       // side context: entries per axis, ellipses included
+const CTX_CELL = 4, CTX_GAP = 1, CTX_ELL_ROW = 8, CTX_ELL_COL = 6;
+const SPLIT_GAP = [28, 120];                              // the gap between bands in the split: at least 28, so the 10-unit frames keep clear
+const SWEEP_MS = 900;                                     // a dot product runs in about this long
+const TAG = 22;                                           // height of a tag above or below a box
 
 useStyle('qkv', `
-.qkv-seg { display: flex; }
-.qkv-heads { flex-wrap: wrap; width: 340px; row-gap: 6px; }
-.qkv-heads .k-pick-head { width: 30px; }
-.qkv-picker { width: ${HERO.w}px; }
-.qkv-picker .k-picker { flex-wrap: wrap; row-gap: 4px; max-width: 1000px; }
-.qkv-picker.dense .k-pick { height: 30px; }
+.qkv-picker { width: ${TOKEN_W}px; }
+.qkv-picker .k-picker { flex-wrap: wrap; row-gap: 4px; max-width: 960px; }
+.qkv-picker.dense .k-pick { height: 28px; }
+.qkv-heads { width: ${HEADS.w}px; justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
+.qkv-heads .k-picker-label { display: none; }
+.qkv-heads .k-pick-head { width: 36px; height: 26px; font-size: 12px; }
 .qkv-hero { position: relative; }
-.qkv-legend { position: absolute; right: 0; top: 0; transition: opacity .35s ease; }
-.qkv-legend.off { opacity: 0; visibility: hidden; }
-.qkv-slot { position: absolute; left: 0; top: 0; width: 100%; height: 100%; transition: opacity .35s ease, visibility 0s linear 0s; }
-.qkv-slot.off { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .35s ease, visibility 0s linear .35s; }
-.qkv-mm { display: flex; align-items: center; justify-content: center; }
-.qkv-mm .mm { width: 560px; max-width: 100%; }
-.qkv-mm .mm-stage { position: relative; display: flex; justify-content: center; }
-.qkv-mm .mm-head, .qkv-mm .mm-eq, .qkv-mm .mm-foot { display: none; }
-.qkv-hit { position: absolute; display: grid; touch-action: pan-y; }
-.qkv-hit > i { display: block; }
-.qkv-band { position: absolute; top: 0; transition: left ${MOTION.move}ms ${MOTION.ease}; }
+.qkv-prod, .qkv-bands { position: absolute; inset: 0; transition: opacity .45s ease, visibility 0s linear 0s; }
+.qkv-prod.off, .qkv-bands.off { opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .45s ease, visibility 0s linear .45s; }
+.qkv-box { position: absolute; box-sizing: border-box; padding: ${PAD}px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 72%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kind) 40%, var(--line)), 0 14px 34px rgba(0, 0, 0, .16); transition: opacity .45s ease, box-shadow .3s ease; }
+.qkv-box.dim { opacity: .3; }
+.qkv-box.focus { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kind) 40%, var(--line)), 0 0 0 3px color-mix(in srgb, var(--accent) 80%, transparent), 0 14px 34px rgba(0, 0, 0, .16); }
+.qkv-grid { display: grid; }
+.qkv-ell { display: grid; place-items: center; font: 600 14px/1 var(--font-mono); color: var(--fg-3); }
+.qkv-tag { position: absolute; display: flex; align-items: center; gap: 8px; height: ${TAG}px; white-space: nowrap; }
+.qkv-tag .k-tex { color: var(--kind, var(--fg)); }
+.qkv-shape { font: 500 15px/1 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
+.qkv-scan { position: absolute; box-sizing: border-box; border: 2px solid var(--accent); border-radius: 4px; pointer-events: none; opacity: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); transition: left .14s linear, top .3s ease, opacity .3s ease; }
+.qkv-rowband { position: absolute; box-sizing: border-box; border: 2px solid var(--accent); border-radius: 5px; pointer-events: none; opacity: 0; transition: top .3s ease, opacity .3s ease; }
+.qkv-sum { position: absolute; font: 600 12px/16px var(--font-mono); color: var(--fg); white-space: nowrap; pointer-events: none; opacity: 0; transition: top .3s ease, opacity .3s ease; }
+.qkv-key { position: absolute; right: 0; top: 0; display: flex; align-items: center; gap: 6px; font: 600 14px/1 var(--font-mono); color: var(--fg-3); transition: opacity .35s ease; }
+.qkv-key.off { opacity: 0; visibility: hidden; }
+.qkv-key i { display: block; width: 110px; height: 6px; border-radius: 3px; }
 .qkv-bands.instant .qkv-band { transition: none; }
-.qkv-grid { display: grid; gap: 1px; }
-.qkv-frame { position: absolute; inset: -10px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--tint) 50%, var(--line)); background: color-mix(in srgb, var(--surface) 72%, transparent); box-shadow: 0 14px 34px rgba(0,0,0,.16); opacity: 0; transition: opacity .45s ease, border-color .3s ease, box-shadow .3s ease; }
-.qkv-bands.split .qkv-frame { opacity: 1; }
-.qkv-joined { position: absolute; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--c-q) 45%, var(--line)); background: color-mix(in srgb, var(--surface) 72%, transparent); box-shadow: 0 14px 34px rgba(0,0,0,.16); transition: opacity .45s ease; }
+.qkv-joined { position: absolute; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--c-q) 45%, var(--line)); background: color-mix(in srgb, var(--surface) 72%, transparent);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .16); transition: opacity .45s ease; }
 .qkv-bands.split .qkv-joined { opacity: 0; }
-.qkv-band-bar { position: absolute; left: 0; right: 0; top: -17px; height: 4px; border-radius: 2px; background: var(--tint); transition: opacity .4s ease; }
+.qkv-band { position: absolute; top: 0; transition: left ${MOTION.move}ms ${MOTION.ease}; }
+.qkv-frame { position: absolute; inset: -10px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--c-q) 50%, var(--line)); background: color-mix(in srgb, var(--surface) 72%, transparent);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .16); opacity: 0; transition: opacity .45s ease, border-color .3s ease, box-shadow .3s ease; }
+.qkv-bands.split .qkv-frame { opacity: 1; }
+.qkv-band-bar { position: absolute; left: 0; right: 0; top: -17px; height: 4px; border-radius: 2px; background: var(--c-q); transition: opacity .4s ease, background-color .3s ease; }
 .qkv-bands.split .qkv-band-bar { opacity: 0; }
-.qkv-band-lab { position: absolute; left: -12px; right: -12px; top: -46px; text-align: center; font: 600 15px/1 var(--font-mono); color: var(--tint); white-space: nowrap; transition: color .3s ease; }
-.qkv-band.sel .qkv-frame { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent), 0 14px 34px rgba(0,0,0,.16); }
+.qkv-band-lab { position: absolute; left: -12px; right: -12px; top: -46px; text-align: center; font: 600 15px/1 var(--font-mono); color: var(--c-q); white-space: nowrap; transition: color .3s ease; }
+.qkv-band-row { position: absolute; left: -3px; right: -3px; border-radius: 3px; border: 2px solid color-mix(in srgb, var(--c-q) 80%, transparent); pointer-events: none; }
+.qkv-band.sel .qkv-frame { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent), 0 14px 34px rgba(0, 0, 0, .16); }
 .qkv-band.sel .qkv-band-bar { background: var(--accent); }
 .qkv-band.sel .qkv-band-lab { color: var(--accent); }
-.qkv-side { width: 340px; display: grid; gap: 10px; align-content: start; }
-.qkv-lab { text-align: left; color: var(--kind, var(--fg-2)); }
-.qkv-eq { font-size: 25px; overflow-x: auto; }
-.qkv-lab-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 10px; }
-.qkv-lab-row .k-label { margin-bottom: 0; }
-.qkv-shape { font: 500 15px/1.3 var(--font-mono); color: var(--fg-3); text-align: right; }
-.qkv-live { font-size: 17px; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); overflow-x: auto; }
-.qkv-note { font: 500 13px/1.35 var(--font-mono); color: var(--fg-3); margin-bottom: 4px; }
+.qkv-side { width: 340px; display: grid; gap: 8px; align-content: start; }
+.qkv-lab { text-align: left; margin-bottom: 0; color: var(--kind, var(--fg-2)); }
+.qkv-sshape { font: 500 15px/1.3 var(--font-mono); color: var(--fg-3); }
+.qkv-eq { font-size: 24px; overflow-x: auto; }
+.qkv-eq .katex-display, .qkv-livetex .katex-display { margin: 0; }
+.qkv-live { font-size: 18px; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); overflow-x: auto; }
+.qkv-livetex { margin: 4px 0; }
+.qkv-note { font: 500 13px/1.35 var(--font-mono); color: var(--fg-3); }
+.qkv-math { margin-top: 4px; }
+.qkv-check { min-height: 28px; }
 .qkv-ctx { display: grid; gap: 6px; justify-items: start; }
 .qkv-ctx-lab { font: 500 15px/1.3 var(--font-mono); color: var(--fg-3); }
-.qkv-hm-mask { position: absolute; background: color-mix(in srgb, var(--bg) 62%, transparent); pointer-events: none; }
-.qkv-hm-band { position: absolute; border: 2px solid var(--kind); border-radius: 4px; pointer-events: none; }
-.qkv-check { min-height: 28px; }
-@media (prefers-reduced-motion: reduce) { .qkv-slot, .qkv-band, .qkv-frame, .qkv-joined, .qkv-band-bar, .qkv-band-lab { transition: none !important; } }
+.qkv-ctxbox { position: relative; padding: ${PAD}px; border-radius: 10px; background: color-mix(in srgb, var(--surface) 72%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kind) 40%, var(--line)), 0 10px 24px rgba(0, 0, 0, .14); }
+.qkv-cgrid { display: flex; flex-direction: column; gap: ${CTX_GAP}px; }
+.qkv-cr { display: flex; gap: ${CTX_GAP}px; border-radius: 2px; }
+.qkv-cr.hit { box-shadow: 0 0 0 2px var(--accent); }
+.qkv-ce { flex: none; width: ${CTX_ELL_COL}px; height: ${CTX_CELL}px; }
+.qkv-cell-ell { height: ${CTX_ELL_ROW}px; font: 600 10px/${CTX_ELL_ROW}px var(--font-mono); color: var(--fg-3); text-align: center; }
+.qkv-cmask { position: absolute; background: color-mix(in srgb, var(--surface) 62%, transparent); pointer-events: none; }
+.qkv-cband { position: absolute; border: 2px solid var(--kind); border-radius: 3px; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) {
+  .qkv-prod, .qkv-bands, .qkv-box, .qkv-scan, .qkv-rowband, .qkv-key, .qkv-band, .qkv-frame, .qkv-joined, .qkv-band-bar, .qkv-band-lab { transition: none !important; }
+}
 `);
 
 // ------------------------------------------------------------------ helpers
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));   // HTML strings only
 const maxAbs = (a) => { let m = 0; for (let i = 0; i < a.length; i++) { const v = Math.abs(a[i]); if (v > m && Number.isFinite(v)) m = v; } return m || 1; };
-/** Matmul playback length at speed 1 for a T × d_h product (the same rule as ui/matmul.js). */
-const playMs = (T, dh) => (T * dh <= CELL_MODE_MAX ? CELL_PLAY_MS : clamp(120 * T, ROW_PLAY_MS[0], ROW_PLAY_MS[1]));
-/** One entry's dot product over K inputs (ui/matmul.js: K steps of 50 to 170 ms, then a 520 ms tail). */
-const focusMs = (K) => K * clamp(1000 / K, 50, 170) + 520;
+const article = (n) => (/^(8\d*|11|18)$/.test(String(n)) ? 'an' : 'a');   // "an 8-wide slice", "a 16-wide slice"
 /** The attention input's trace key: LN1(x) for pre-LN, the block input (the stream) for post-LN. */
 const attnInKey = (l, preLN) => (preLN ? `L${l}.ln1` : l === 0 ? 'emb.out' : `L${l - 1}.resid_out`);
-const article = (n) => (/^(8\d*|11|18)$/.test(String(n)) ? 'an' : 'a');   // "an 8-wide slice", "a 16-wide slice"
+
+/** Indices to draw along an axis of n entries: all of them, or the span [lo, hi] in full, as much of the
+ *  rest as fits in max entries, and -1 where entries are cut (an ellipsis). */
+function keepSpan(n, lo, hi, max) {
+  if (n <= max) return Array.from({ length: n }, (_, i) => i);
+  const span = hi - lo + 1;
+  const e1 = lo > 0 ? 1 : 0, e2 = hi < n - 1 ? 1 : 0;
+  const budget = Math.max(0, max - span - e1 - e2);
+  let right = Math.min(n - 1 - hi, Math.ceil(budget / 2));
+  const left = Math.min(lo, budget - right);
+  right = Math.min(n - 1 - hi, budget - left);
+  const out = Array.from({ length: left }, (_, i) => i);
+  if (lo - left > 0) out.push(-1);
+  for (let i = lo; i <= hi; i++) out.push(i);
+  if (n - 1 - hi - right > 0) out.push(-1);
+  for (let i = n - right; i < n; i++) out.push(i);
+  return out;
+}
+
+/** Cell size and placement of the hero product: the input row over W (d_h rows of d cells), the output
+ *  column (d_h cells) on the left of W, all centred in the hero. The cell is as large as the hero allows. */
+function heroGeometry(d, R) {
+  const byWidth = (HERO.w - 4 * PAD - GAP_Q - (d - 1) * GAP) / (d + 1);     // the output column and d columns of W
+  const byHeight = (HERO_V - (R - 1) * GAP) / (R + 1);                     // the input row and R rows of W
+  const s = clamp(Math.floor(Math.min(CELL_MAX, byWidth, byHeight) * 10) / 10, CELL_MIN, CELL_MAX);
+  const boxW = d * s + (d - 1) * GAP + 2 * PAD;                            // the W box and the input box
+  const colW = s + 2 * PAD;                                                // the output column box
+  const xH = s + 2 * PAD, boxH = R * s + (R - 1) * GAP + 2 * PAD;
+  const totalW = colW + GAP_Q + boxW, totalH = 2 * TAG + 26 + xH + boxH;   // a tag, 8, the input box, 10, W, 8, a tag
+  const x0 = (HERO.w - totalW) / 2, y0 = (HERO.h - totalH) / 2;
+  const wX = x0 + colW + GAP_Q, xY = y0 + TAG + 8, wY = xY + xH + 10;
+  return { s, pitch: s + GAP, boxW, boxH, colW, xH, x0, y0, qX: x0, wX, xY, wY, tagY: wY + boxH + 8 };
+}
+
+/** Running sums of entry c's products over the inputs: ps[k] = sum over j ≤ k of X[t, j] · W[c, j]. */
+function partialSums(D, c) {
+  const { d, t, Xd, WS } = D, ps = new Float64Array(d);
+  let acc = 0;
+  for (let k = 0; k < d; k++) { acc += Xd[t * d + k] * WS[c * d + k]; ps[k] = acc; }
+  return ps;
+}
+/** The recomputed entry c of the token's row: its full dot product plus bias. */
+const entryValue = (D, c) => partialSums(D, c)[D.d - 1] + (D.bS ? D.bS[c] : 0);
+/** The largest difference between the recomputed row and the traced row of this head. */
+function rowError(D) {
+  let err = 0;
+  for (let c = 0; c < D.dh; c++) err = Math.max(err, Math.abs(entryValue(D, c) - D.C[D.t * D.dh + c]));
+  return err;
+}
 
 /** Everything the scene shows for one projection, read from the store. */
 function read(ctx, l, p) {
@@ -149,47 +221,16 @@ function keyNote(D) {
   return `Query heads ${g0} to ${g1} share key head ${D.kvh}, so K is ${D.Hkv * D.dh} columns wide, not ${D.H * D.dh}.`;
 }
 
-// Captions are HTML: the token name is escaped here, and only here.
+// Captions are HTML: the token name is escaped by the caller, and only there.
 function capText(D, step, tok) {
   const { t, dh, hi } = D;
   switch (step) {
-    case 0: return `Q, K and V are three linear maps of one matrix <b>X</b>, one row per token. Row ${t} is the input of ${tok} at position ${t}.`;
-    case 1: return `Each query is a row of X times the <b>${dh}</b> rows of W_Q that belong to head ${hi}. Row ${t} is the query of ${tok} at position ${t}.`;
-    case 2: return `Keys use W_K in the same way: row ${t} is the key of ${tok} at position ${t}. ${keyNote(D)}`;
-    case 3: return `Values use W_V and are read through the same KV head as the keys. Row ${t} is the value of ${tok}, the vector attention copies from it.`;
+    case 0: return `Row <b>${t}</b> is the input of ${tok} at position ${t}. Q, K and V are each computed from this row alone.`;
+    case 1: return `Each entry of the query is one dot product: a row of W<sub>Q,${hi}</sub> with this row of X. The largest entry is computed term by term, and the check compares the whole row with the trace.`;
+    case 2: return `Keys use W<sub>K</sub> in the same way: row ${t} is the key of ${tok} at position ${t}. ${keyNote(D)}`;
+    case 3: return `Values use W<sub>V</sub> and are read through the same KV head as the keys. Row ${t} is the value of ${tok}, the vector attention copies from it.`;
     default: return `Q is ${D.H} blocks of <b>${dh}</b> columns side by side. Row ${t} is the query of ${tok} in every head.`;
   }
-}
-
-/** DOM cells laid over one block of the product canvas. Each cell carries data-cell for the atlas
- *  hover card and menu. Pointer events are forwarded to the canvas, so its own hover, pin and arrow
- *  keys keep working; the canvas tooltip is hidden in favour of the atlas card. */
-function hitLayer(parent, canvas, { x, y, rows, cols, s, trace, cellOf, cursor }) {
-  const grid = h('div', {
-    class: 'qkv-hit', dataset: { trace },
-    style: {
-      left: `${canvas.offsetLeft + x}px`, top: `${canvas.offsetTop + y}px`, width: `${cols * s}px`, height: `${rows * s}px`,
-      gridTemplateColumns: `repeat(${cols}, ${s}px)`, gridTemplateRows: `repeat(${rows}, ${s}px)`, cursor,
-    },
-  });
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) grid.append(h('i', { dataset: { cell: cellOf(r, c) } }));
-  const forward = (type, ev) => canvas.dispatchEvent(new MouseEvent(type, { clientX: ev.clientX, clientY: ev.clientY }));
-  grid.addEventListener('pointermove', (ev) => { forward('pointermove', ev); hideTip(); });
-  grid.addEventListener('pointerleave', (ev) => forward('pointerleave', ev));
-  grid.addEventListener('click', (ev) => forward('click', ev));
-  parent.append(grid);
-  return grid;
-}
-
-/** Origin and cell pitch of the product canvas. The origin is read back from the component; the
- *  pitch follows its height rule, which binds for every shape this scene shows, and is checked
- *  against the drawn cells so the hit cells line up with them. */
-function matGeom(m, rows, cols, k) {
-  const c0 = m.cellRect(0, 0);
-  const sF = (MM_MAX_H - MM_OVERHEAD) / (k + rows);
-  const sRow = rows > 1 ? (m.cellRect(rows - 1, 0).y - c0.y) / (rows - 1) : sF;
-  const s = Math.abs(sRow - sF) <= 0.02 ? sF : sRow;
-  return { xC: c0.x, yC: c0.y, xA: c0.x - MM_GAP_AC - k * s, s };
 }
 
 // ------------------------------------------------------------------ scene
@@ -198,171 +239,326 @@ export default {
   mount(el, ctx) {
     const st = stage2d(el);
     const l = ctx.params.l ?? 0;
-    let step = 0, auto = null, advancing = false, timers = [], pollRaf = 0;
-    let mm = null, bands = null, ctxMat = null, mmTouched = false;
-    let lastHead = ctx.state.sel.head;
+    let step = 0, auto = null, advancing = false, paused = false, holdMs = MOTION.step;
+    let timers = [], sweepT = [], hoverT = 0, sweepRaf = 0;
+    let prod = null, bands = null, themed = [], lastHead = ctx.state.sel.head;
     const offs = [];
 
     const later = (ms, fn) => { timers.push(setTimeout(fn, ms)); };
-    const clearTimers = () => { timers.forEach(clearTimeout); timers = []; cancelAnimationFrame(pollRaf); pollRaf = 0; };
+    const stopSweep = () => {
+      sweepT.forEach(clearTimeout); sweepT = [];
+      if (sweepRaf) cancelAnimationFrame(sweepRaf);
+      sweepRaf = 0;
+      clearTimeout(hoverT); hoverT = 0;
+    };
+    const clearTimers = () => { timers.forEach(clearTimeout); timers = []; stopSweep(); };
+    const stopAuto = () => { clearTimeout(auto); auto = null; };
+    /** One cell's colour from a value in [−1, 1]; remembered so a theme change can repaint it. */
+    const paint = (cell, x) => { cell.style.background = diverging(x); themed.push([cell, x]); };
+    const cellEl = (size, x) => {
+      const c = h('div', { class: 'k-cell', style: { width: `${size}px`, height: `${size}px` } });
+      if (x != null) paint(c, x);
+      return c;
+    };
 
     // ------------------------------------------------------------ header, controls
-    const header = sceneHeader(st, { title: 'Q, K and V projections' });
-    const eyebrow = header.el.querySelector('.k-eyebrow');
-    const picker = tokenPicker(st, ctx, { label: 'token', maxWidth: HERO.w });
+    const header = sceneHeader(st, { chips: [[`Layer ${l}`, 'resid'], [`Head ${ctx.state.sel.head}`, 'attn']], title: 'Q, K and V projections' });
+    const picker = tokenPicker(st, ctx, { x: ZONES.controls.x, y: CTRL_Y, label: 'token', maxWidth: TOKEN_W });
     picker.el.classList.add('qkv-picker');
     const syncDense = () => picker.el.classList.toggle('dense', ctx.state.ids.length > DENSE_PICKER_T);
     syncDense();
-
-    const seg = segmented({
-      options: [
-        { value: 'q', label: 'Q', title: 'Queries: X · W_Qᵀ' },
-        { value: 'k', label: 'K', title: 'Keys: X · W_Kᵀ' },
-        { value: 'v', label: 'V', title: 'Values: X · W_Vᵀ' },
-      ],
-      value: 'q', ariaLabel: 'projection', onChange: (p) => ctx.setStep(STEP_OF_PROJ[p]),
-    });
-    st.add(h('div', { class: 'qkv-seg' }, seg.el), { x: SIDE.x, y: SIDE.y });
-    const heads = headPicker(st, ctx, { x: SIDE.x, y: SIDE.y + 46 });
+    const heads = headPicker(st, ctx, { x: HEADS.x, y: CTRL_Y });
     heads.el.classList.add('qkv-heads');
 
-    // ------------------------------------------------------------ hero: the product, or the bands
-    const mmSlot = h('div', { class: 'qkv-slot qkv-mm' });
-    const bandSlot = h('div', { class: 'qkv-slot qkv-bands off' });
-    const legendSlot = h('div', { class: 'qkv-legend' });
-    st.add(h('div', { class: 'qkv-hero', style: { width: `${HERO.w}px`, height: `${HERO.ht}px` } }, mmSlot, bandSlot, legendSlot), { x: HERO.x, y: HERO.y });
-    mmSlot.addEventListener('pointerdown', () => { mmTouched = true; });
+    // ------------------------------------------------------------ hero: the token's product, or the split bands
+    const prodEl = h('div', { class: 'qkv-prod' });
+    const bandsEl = h('div', { class: 'qkv-bands off' });
+    const keyBar = h('i');
+    const keyEl = h('div', { class: 'qkv-key' }, h('span', null, '−'), keyBar, h('span', null, '+'));
+    const heroEl = h('div', { class: 'qkv-hero', style: { width: `${HERO.w}px`, height: `${HERO.h}px` } }, prodEl, bandsEl, keyEl);
+    st.add(heroEl, { x: HERO.x, y: HERO.y });
+    const keyPaint = () => { keyBar.style.background = `linear-gradient(90deg, ${diverging(-1)}, ${diverging(0)}, ${diverging(1)})`; };
+    keyPaint();
 
-    // ------------------------------------------------------------ side column
+    // ------------------------------------------------------------ side column: label, shape, equation, live entry, check, context
     const sLab = h('div', { class: 'k-label qkv-lab' });
+    const sShape = h('div', { class: 'qkv-sshape' });
     const sEq = h('div', { class: 'qkv-eq' });
-    const sShape = h('div', { class: 'qkv-shape' });
-    const sLive = h('div', { class: 'qkv-live' });
+    const sNote = h('div', { class: 'qkv-note' });
+    const sTex = h('div', { class: 'qkv-livetex' });
+    const sMath = h('div', { class: 'qkv-note qkv-math' });
     const sCheck = h('div', { class: 'qkv-check' });
     const sCtx = h('div', { class: 'qkv-ctx' });
-    st.add(h('div', { class: 'qkv-side' }, h('div', { class: 'qkv-lab-row' }, sLab, sShape), sEq, sLive, sCheck, sCtx), { x: SIDE.x, y: SIDE.y + 90 });
+    const sideEl = h('div', { class: 'qkv-side' }, sLab, sShape, sEq, h('div', { class: 'qkv-live' }, sNote, sTex, sMath), sCheck, sCtx);
+    st.add(sideEl, { x: SIDE.x, y: SIDE.y });
     const cap = sceneCaption(st, { x: ZONES.caption.x, y: ZONES.caption.y, w: ZONES.caption.w });
 
-    // ------------------------------------------------------------ the product (steps 0 to 3)
-    function buildProduct(D, replay) {
-      mm?.destroy();
-      const P = SYM[D.p], i = D.hi, who = D.p === 'q' ? 'head' : 'KV head';
-      const rowLabels = Array.from({ length: D.T }, (_, r) => ctx.label(r));
-      mm = matmulAnim({
-        A: { data: D.Xd, rows: D.T, cols: D.d, name: 'X', kind: D.preLN ? 'norm' : 'resid', shape: 'T×d', rowLabels },
-        B: { data: D.WS, rows: D.dh, cols: D.d, name: `W_${P},${i}`, kind: D.p, shape: 'd_h×d', bias: D.bS ?? undefined, biasName: `b_${P},${i}` },
-        transposeB: true,
-        C: { data: D.C, name: `${P}_${i}`, kind: D.p, shape: 'T×d_h' },
-        title: `${P}, ${who} ${i}:  X · W_${P},${i}ᵀ${D.bS ? ` + b_${P},${i}` : ''}`,
-        maxWidth: HERO.w, maxHeight: MM_MAX_H, maxCell: 56, digits: 2,
+    // ------------------------------------------------------------ the token's product (steps 0 to 3)
+    /** Tags name the three boxes, with the symbol and the true shape. */
+    function setTags(D) {
+      const { d, dh, t, hi, p, preLN } = D;
+      prod.tagX.replaceChildren(texLabel(`X_{${t},:}`, { size: 16, kind: preLN ? 'norm' : 'resid' }), h('span', { class: 'qkv-shape' }, `1 × ${d}`));
+      prod.tagQ.replaceChildren(texLabel(`(${SYM_TEX[p]}_{${hi}})_{${t},:}`, { size: 16, kind: p }), h('span', { class: 'qkv-shape' }, `1 × ${dh}`));
+      prod.tagW.replaceChildren(texLabel(`W_{${SYM[p]},${hi}}`, { size: 16, kind: p }), h('span', { class: 'qkv-shape' }, `${dh} × ${d}`));
+    }
+
+    /** The hero's boxes, cells and overlays for one projection. Rebuilt when the head, the step or the
+     *  drawn rows change; a token change only repaints the input row and the output column. */
+    function buildProduct(D, shown, key) {
+      prodEl.replaceChildren();
+      const { d, dh, t, hi, p, cMax, preLN } = D;
+      const G = heroGeometry(d, shown.length);
+      const s = G.s, pitch = G.pitch, perCol = clamp(SWEEP_MS / d, 7, 24);
+      const rangeX = maxAbs(D.Xd), rangeW = maxAbs(D.WS), rangeC = maxAbs(D.full.data);
+      const grid = (cols) => h('div', { class: 'qkv-grid', style: { gridTemplateColumns: `repeat(${cols}, ${s}px)`, gap: `${GAP}px` } });
+      const ellRow = () => h('div', { class: 'qkv-ell', style: { gridColumn: '1 / -1', height: `${s}px` } }, '⋮');
+      const xGrid = grid(d), wGrid = grid(d), qGrid = grid(1);
+      for (let k = 0; k < d; k++) {
+        const e = cellEl(s, D.Xd[t * d + k] / rangeX);
+        e.dataset.cell = `${t},${k},0`;
+        xGrid.append(e);
+      }
+      const qEls = new Array(dh).fill(null), qMap = new Map();
+      shown.forEach((r) => {
+        if (r < 0) { wGrid.append(ellRow()); qGrid.append(ellRow()); return; }
+        for (let k = 0; k < d; k++) wGrid.append(cellEl(s, D.WS[r * d + k] / rangeW));
+        const q = cellEl(s, null);
+        q.dataset.cell = `${t},${hi * dh + r},0`;
+        qGrid.append(q);
+        qEls[r] = q;
+        qMap.set(q, r);
       });
-      mmSlot.replaceChildren(mm.el);
-      const scale = mm.el.querySelector('.mm-scale');        // the colour key moves to the hero corner
-      legendSlot.replaceChildren(...(scale ? [scale] : []));
-      addHitLayers(D);
-      if (replay && !reducedMotion()) mmSlot.animate([{ opacity: 0.25 }, { opacity: 1 }], { duration: 360, easing: MOTION.easeOut });
+      const box = (cls, x, y, w, hh, kind, kid) => h('div', { class: `qkv-box ${cls}`, style: { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${hh}px`, '--kind': `var(--c-${kind})` } }, kid);
+      const xBox = box('qkv-xbox', G.wX, G.xY, G.boxW, G.xH, preLN ? 'norm' : 'resid', xGrid);
+      xBox.dataset.trace = attnInKey(l, preLN);
+      const wBox = box('qkv-wbox', G.wX, G.wY, G.boxW, G.boxH, p, wGrid);
+      const qBox = box('qkv-qbox', G.qX, G.wY, G.colW, G.boxH, p, qGrid);
+      qBox.dataset.trace = `L${l}.attn.${p}`;
+      const tagX = h('div', { class: 'qkv-tag', style: { left: `${G.wX}px`, top: `${G.y0}px` } });
+      const tagQ = h('div', { class: 'qkv-tag', style: { left: `${G.qX}px`, top: `${G.tagY}px` } });
+      const tagW = h('div', { class: 'qkv-tag', style: { right: `${HERO.w - G.wX - G.boxW}px`, top: `${G.tagY}px` } });
+      const rowBand = h('div', { class: 'qkv-rowband', style: { left: `${G.wX + PAD - 3}px`, width: `${G.boxW - 2 * PAD + 6}px`, height: `${s + 6}px` } });
+      const scanBox = () => h('div', { class: 'qkv-scan', style: { width: `${s + 4}px`, height: `${s + 4}px`, transitionDuration: `${2 * perCol}ms, 300ms, 300ms` } });
+      const scanX = scanBox(), scanW = scanBox();
+      scanX.style.top = `${G.xY + PAD - 2}px`;
+      const sumEl = h('div', { class: 'qkv-sum', style: { left: `${G.qX + G.colW + 6}px` } });
+      prodEl.append(qBox, wBox, xBox, tagX, tagQ, tagW, rowBand, scanW, scanX, sumEl);
+      prod = { key, D, G, pitch, shown, qEls, qMap, rangeC, filled: new Set(), focusC: cMax, xBox, wBox, qBox, tagX, tagQ, tagW, rowBand, scanX, scanW, sumEl };
+      setTags(D);
+      qBox.addEventListener('pointerover', onQHover);
     }
 
-    /** Cells over the input block (X, the attention input) and the product block (C): the hover card
-     *  and menu read the traced tensors, and the pointer drives the matmul's own hover and pin. */
-    function addHitLayers(D) {
-      const canvas = mm.el.querySelector('canvas'), stageEl = mm.el.querySelector('.mm-stage');
-      const g = matGeom(mm, D.T, D.dh, D.d);
-      hitLayer(stageEl, canvas, {
-        x: g.xA, y: g.yC, rows: D.T, cols: D.d, s: g.s, cursor: 'default',
-        trace: attnInKey(l, D.preLN), cellOf: (r, kk) => `${r},${kk},0`,
+    /** A token change: the input row and the output column take the new row's values. */
+    function paintRow(D) {
+      const { d, dh, t, hi } = D;
+      const rangeX = maxAbs(D.Xd);
+      prod.D = D;
+      prod.xBox.querySelectorAll('.k-cell').forEach((cell, k) => { cell.dataset.cell = `${t},${k},0`; paint(cell, D.Xd[t * d + k] / rangeX); });
+      prod.qMap.forEach((r, cell) => {
+        cell.dataset.cell = `${t},${hi * dh + r},0`;
+        if (prod.filled.has(r)) paint(cell, D.C[t * dh + r] / prod.rangeC);
       });
-      hitLayer(stageEl, canvas, {
-        x: g.xC, y: g.yC, rows: D.T, cols: D.dh, s: g.s, cursor: 'pointer',
-        trace: `L${l}.attn.${D.p}`, cellOf: (r, c) => `${r},${D.hi * D.dh + c},0`,
-      });
+      setTags(D);
     }
 
-    function showCheck(D) {
-      if (!mm) return;
-      sCheck.replaceChildren(checkBadge(mm.maxError() ?? 0, 0, { label: `equals L${l}.attn.${D.p}, ${D.p === 'q' ? 'head' : 'KV head'} ${D.hi}` }));
+    /** Puts the highlight on row c of W and on its output cell, and the running sum beside them, without moving the scan. */
+    function placeRowBand(c) {
+      const { G, shown, pitch } = prod, s = G.s, di = shown.indexOf(c), y = G.wY + PAD + di * pitch;
+      prod.rowBand.style.top = `${y - 3}px`;
+      prod.rowBand.style.opacity = '1';
+      prod.scanW.style.top = `${y - 2}px`;
+      prod.sumEl.style.top = `${y + s / 2 - 8}px`;
+      prod.sumEl.style.opacity = '1';
+      prod.qEls.forEach((cell) => cell?.classList.remove('hl'));
+      prod.qEls[c]?.classList.add('hl');
     }
-
-    /** The matrix fills row by row (the matmul's own play). When it has finished, the check appears and
-     *  the selected token's largest entry runs its dot product. Timed by the component, not the clock. */
-    function settleProduct(D) {
-      cancelAnimationFrame(pollRaf);
-      const tick = () => {
-        if (mm.playing) { pollRaf = requestAnimationFrame(tick); return; }
-        pollRaf = 0;
-        showCheck(D);
-        if (!mmTouched) mm.focus(D.t, D.cMax);
-      };
-      pollRaf = requestAnimationFrame(tick);
+    /** The scan's column x: the same column of the input row and of W's row. */
+    function moveScan(k) {
+      const x = prod.G.wX + PAD + k * prod.pitch - 2;
+      prod.scanX.style.left = `${x}px`;
+      prod.scanW.style.left = `${x}px`;
     }
-
-    function showProduct(D, replay) {
-      mmSlot.classList.remove('off');
-      bandSlot.classList.add('off');
-      legendSlot.classList.remove('off');
-      if (bands) placeBands(false);                        // the bands slide back while the product returns
-      if (replay || !mm) {
-        buildProduct(D, replay);
-        if (step > 0) { mmTouched = false; mm.play(); settleProduct(D); }
+    /** The live line for entry c: its traced value (once computed) and the sum it stands for. */
+    function setEntryLive(c, value) {
+      const { D } = prod, { t, hi, dh, d, p } = D, col = hi * dh + c;
+      const live = runLive(ctx.state, `L${l}.attn.${p}`, { r: t, x: col, band: 0 });
+      const where = `token “${ctx.label(t)}” at position ${t}`;
+      sNote.textContent = live?.note ? `${live.note} · ${where}` : where;
+      const lhs = `${SYM_TEX[p]}_{${t},${col}}`;
+      if (value == null) {
+        sTex.innerHTML = texHTML(`${lhs} = \\dots`, { display: true });
+        sMath.textContent = '';
         return;
       }
-      if (step === 0) return;                              // a new token only re-reads the input row
-      mmTouched = false;
-      settleProduct(D);                                    // its entry runs once the matrix is filled
+      sTex.innerHTML = texHTML(`${lhs} = ${num(live?.result ?? value, 3)}`, { display: true });
+      sMath.textContent = `Σ over the ${d} inputs: X[${t}, ·] · W_${SYM[p]},${hi}[${c}, ·]${D.bS ? ` + b_${SYM[p]},${hi}[${c}]` : ''}`;
+    }
+    /** The row check: the recomputed row against the trace, one line under the live entry. */
+    function showRowCheck(D) {
+      sCheck.replaceChildren(checkBadge(rowError(D), 0, {
+        tol: 2e-4, label: `equals the traced ${SYM[D.p]} row, ${D.p === 'q' ? 'head' : 'KV head'} ${D.hi}`,
+      }));
+    }
+    /** An output entry is drawn: its colour from the trace, with a small pop when it is the focus. */
+    function fillEntry(r, pop) {
+      if (prod.filled.has(r)) return;
+      prod.filled.add(r);
+      const cell = prod.qEls[r];
+      if (!cell) return;
+      paint(cell, prod.D.C[prod.D.t * prod.D.dh + r] / prod.rangeC);
+      if (pop && !reducedMotion()) cell.animate([{ transform: 'scale(1.3)' }, { transform: 'scale(1)' }], { duration: 360, easing: MOTION.easeOut });
+    }
+    /** The dot product of entry c, term by term over the inputs (about SWEEP_MS), then the entry is drawn.
+     *  The sweep follows the clock, one frame at a time, so a slow frame cannot stretch it. */
+    function startEntry(c, { cascade = false, delay = 0 } = {}) {
+      stopSweep();
+      const { D } = prod;
+      prod.focusC = c;
+      placeRowBand(c);
+      prod.scanX.style.opacity = '1';
+      prod.scanW.style.opacity = '1';
+      moveScan(0);
+      const ps = partialSums(D, c), final = ps[D.d - 1] + (D.bS ? D.bS[c] : 0);
+      const perCol = clamp(SWEEP_MS / D.d, 7, 24), total = D.d * perCol;
+      setEntryLive(c, null);
+      prod.sumEl.textContent = fmt(ps[0], 2);
+      let t0 = null, lastK = -1;
+      const frame = (now) => {
+        sweepRaf = 0;
+        if (t0 === null) t0 = now + delay;
+        const e = now - t0;
+        if (e >= 0) {
+          const k = Math.min(D.d - 1, Math.floor(e / perCol));
+          if (k !== lastK) {
+            lastK = k;
+            moveScan(k);
+            prod.sumEl.textContent = fmt(ps[k], 2);
+            sMath.textContent = `Σ over k ≤ ${k} of ${D.d} products`;
+          }
+        }
+        if (e >= total + 140) { finishEntry(c, final, cascade); return; }
+        sweepRaf = requestAnimationFrame(frame);
+      };
+      sweepRaf = requestAnimationFrame(frame);
+    }
+    function finishEntry(c, value, cascade) {
+      prod.scanX.style.opacity = '0';
+      prod.scanW.style.opacity = '0';
+      prod.sumEl.textContent = fmt(value, 2);
+      fillEntry(c, true);
+      setEntryLive(c, value);
+      showRowCheck(prod.D);
+      if (cascade) {
+        let n = 0;
+        for (let r = 0; r < prod.D.dh; r++) if (!prod.filled.has(r)) sweepT.push(setTimeout(() => fillEntry(r, false), 16 * ++n));
+      }
+    }
+    /** Reduced motion: the end state at once, with the same numbers and check. */
+    function settle(D) {
+      prod.scanX.style.opacity = '0';
+      prod.scanW.style.opacity = '0';
+      placeRowBand(D.cMax);
+      prod.sumEl.textContent = fmt(entryValue(D, D.cMax), 2);
+      for (let r = 0; r < D.dh; r++) fillEntry(r, false);
+      setEntryLive(D.cMax, entryValue(D, D.cMax));
+      showRowCheck(D);
+    }
+    /** Step 0: the input row is the focus; W and the empty output column wait for the next step. */
+    function showInput(D) {
+      prod.rowBand.style.opacity = '0';
+      prod.scanX.style.opacity = '0';
+      prod.scanW.style.opacity = '0';
+      prod.sumEl.style.opacity = '0';
+      sCheck.replaceChildren();
+      const { d, t, Xd } = D;
+      sNote.textContent = `token “${ctx.label(t)}” at position ${t}`;
+      sTex.innerHTML = texHTML(`X_{${t},:} = (${num(Xd[t * d], 2)},\\ ${num(Xd[t * d + 1], 2)},\\ ${num(Xd[t * d + 2], 2)},\\ \\dots)`, { display: true });
+      sMath.textContent = `Row ${t} of X: ${d} entries, one per input feature.`;
+    }
+    /** Hovering an output entry runs its dot product (once the row is drawn). */
+    function onQHover(e) {
+      if (!prod || step === 0 || prod.filled.size < prod.D.dh) return;
+      const cell = e.target.closest?.('.k-cell');
+      const c = cell ? prod.qMap.get(cell) : undefined;
+      if (c === undefined || c === prod.focusC) return;
+      clearTimeout(hoverT);
+      hoverT = setTimeout(() => {
+        hoverT = 0;
+        if (reducedMotion()) {
+          prod.focusC = c;
+          placeRowBand(c);
+          prod.sumEl.textContent = fmt(entryValue(prod.D, c), 2);
+          setEntryLive(c, entryValue(prod.D, c));
+        } else startEntry(c, { cascade: false });
+      }, 120);
+    }
+
+    /** A projection step: the matrix of this head is shown, and the focus entry's dot product runs. */
+    function showProduct(D, replay) {
+      prodEl.classList.remove('off');
+      bandsEl.classList.add('off');
+      const shown = keepSpan(D.dh, D.cMax, D.cMax, ROWS_MAX);
+      const key = shown.join(',');
+      const rebuild = replay || !prod || prod.key !== key || prod.D.d !== D.d;
+      if (rebuild) buildProduct(D, shown, key); else paintRow(D);
+      prod.xBox.classList.toggle('focus', step === 0);
+      prod.wBox.classList.toggle('dim', step === 0);
+      prod.qBox.classList.toggle('dim', step === 0);
+      if (step === 0) { showInput(D); return; }
+      const incomplete = prod.filled.size < D.dh;
+      if (reducedMotion()) { settle(D); return; }
+      if (replay) prod.wBox.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 420, easing: MOTION.easeOut });
+      startEntry(D.cMax, { cascade: replay || incomplete, delay: replay ? 260 : 0 });
+      const perCol = clamp(SWEEP_MS / D.d, 7, 24);
+      holdMs = Math.max(MOTION.step, 260 + D.d * perCol + 140 + 16 * D.dh + 500);
     }
 
     // ------------------------------------------------------------ the bands (step 4)
-    function placeBands(isSplit, instant = false) {
-      if (!bands) return;
-      bandSlot.classList.toggle('split', isSplit);
-      if (instant) bandSlot.classList.add('instant');
-      bands.items.forEach((it) => { it.el.style.left = `${isSplit ? it.splitX : it.joinX}px`; });
-      if (instant) { void bandSlot.offsetWidth; bandSlot.classList.remove('instant'); }
-    }
-
-    function updateSel(D) {
-      if (!bands) return;
-      bands.items.forEach((it, i) => it.el.classList.toggle('sel', i === D.hd));
-    }
-
     function buildBands(D) {
-      bandSlot.replaceChildren();
-      const { T, H, dh, width } = D;
+      bandsEl.replaceChildren();
+      const { T, H, dh, width, t } = D;
       const QH = ctx.state.trace[`L${l}.attn.q_heads`];    // [H, T, dh]
       const range = maxAbs(D.full.data);
-      const cell = clamp(Math.min(360 / T, (HERO.w * 0.7) / (H * dh), 14), 3, 14);
-      const gap = 1;
-      const bw = dh * cell + (dh - 1) * gap, bh = T * cell + (T - 1) * gap;
+      const cellFit = ((HERO.w * 0.9 - (H - 1) * SPLIT_GAP[0]) / H - (dh - 1) * GAP) / dh;   // the bands fit 90% of the hero
+      const cell = clamp(Math.min(360 / T, cellFit, 14), 3, 14);
+      const bw = dh * cell + (dh - 1) * GAP, bh = T * cell + (T - 1) * GAP;
       const joinW = H * bw;
-      const splitGap = H > 1 ? clamp((HERO.w * 0.92 - H * bw) / (H - 1), 16, 120) : 0;
-      const splitW = H * bw + (H - 1) * splitGap;
-      const top = (HERO.ht - bh) / 2 + 8;
+      const splitGap = H > 1 ? clamp((HERO.w * 0.9 - joinW) / (H - 1), SPLIT_GAP[0], SPLIT_GAP[1]) : 0;
+      const splitW = joinW + (H - 1) * splitGap;
+      const top = Math.max(54, (HERO.h - bh) / 2 + 8);     // clears the band labels from the token picker's second row
       const x0J = (HERO.w - joinW) / 2, x0S = (HERO.w - splitW) / 2;
-      bandSlot.append(h('div', { class: 'qkv-joined', style: { left: `${x0J - 10}px`, top: `${top - 10}px`, width: `${joinW + 20}px`, height: `${bh + 20}px` } }));
-      const items = [], allCells = [];
+      bandsEl.append(h('div', { class: 'qkv-joined', style: { left: `${x0J - 10}px`, top: `${top - 10}px`, width: `${joinW + 20}px`, height: `${bh + 20}px` } }));
+      const pitch = cell + GAP, items = [];
       let err = 0;
       for (let hh = 0; hh < H; hh++) {
-        const tint = `color-mix(in srgb, var(--c-q) ${Math.round(100 - (hh * 50) / Math.max(1, H - 1))}%, var(--fg-3))`;
-        const grid = h('div', { class: 'qkv-grid', style: { '--cell': `${cell}px`, gridTemplateColumns: `repeat(${dh}, ${cell}px)` } });
-        for (let t = 0; t < T; t++) for (let c = 0; c < dh; c++) {
-          const v = QH.data[(hh * T + t) * dh + c];
-          const ce = h('div', { class: 'k-cell', dataset: { cell: `${t},${c},${hh}` } });   // r, column within the head, band (head)
-          ce.style.background = diverging(v / range);
+        const grid = h('div', { class: 'qkv-grid', style: { gridTemplateColumns: `repeat(${dh}, ${cell}px)`, gap: `${GAP}px` } });
+        for (let r = 0; r < T; r++) for (let c = 0; c < dh; c++) {
+          const v = QH.data[(hh * T + r) * dh + c];
+          const ce = cellEl(cell, v / range);
+          ce.dataset.cell = `${r},${c},${hh}`;   // r, column within the head, band (head)
           grid.append(ce);
-          allCells.push([ce, v]);
-          err = Math.max(err, Math.abs(v - D.full.data[t * width + hh * dh + c]));
+          err = Math.max(err, Math.abs(v - D.full.data[r * width + hh * dh + c]));
         }
         const el = h('div', {
           class: 'qkv-band', dataset: { trace: `L${l}.attn.q_heads`, node: `head.${l}.${hh}` },
-          style: { width: `${bw}px`, height: `${bh}px`, top: `${top}px`, left: '0px', '--tint': tint },
+          style: { width: `${bw}px`, height: `${bh}px`, top: `${top}px`, left: '0px' },
         },
         h('div', { class: 'qkv-frame' }), h('div', { class: 'qkv-band-bar' }),
-        h('div', { class: 'qkv-band-lab' }, `${D.p === 'q' ? 'head' : 'KV head'} ${hh}`), grid);
-        bandSlot.append(el);
+        h('div', { class: 'qkv-band-lab' }, H >= 9 ? `${hh}` : `head ${hh}`), grid,
+        h('div', { class: 'qkv-band-row', style: { top: `${t * pitch - 1}px`, height: `${cell + 2}px` } }));
+        bandsEl.append(el);
         items.push({ el, joinX: x0J + hh * bw, splitX: x0S + hh * (bw + splitGap) });
       }
-      bands = { items, cells: allCells, range, err };
-      updateSel(D);
+      bands = { items, err };
+      items.forEach((it, i) => it.el.classList.toggle('sel', i === D.hd));
+    }
+
+    function placeBands(isSplit, instant = false) {
+      if (!bands) return;
+      bandsEl.classList.toggle('split', isSplit);
+      if (instant) bandsEl.classList.add('instant');
+      bands.items.forEach((it) => { it.el.style.left = `${isSplit ? it.splitX : it.joinX}px`; });
+      if (instant) { void bandsEl.offsetWidth; bandsEl.classList.remove('instant'); }
     }
 
     function showSplitCheck() {
@@ -370,114 +566,108 @@ export default {
       sCheck.replaceChildren(checkBadge(bands.err, 0, { label: `each head is a band of L${l}.attn.q` }));
     }
 
+    function setSplitLive(D) {
+      const { t, hd, dh, cMax: c } = D;
+      const live = runLive(ctx.state, `L${l}.attn.q_heads`, { r: t, x: c, band: hd });
+      const where = `token “${ctx.label(t)}” at position ${t}`;
+      sNote.textContent = live?.note ? `${live.note} · ${where}` : where;
+      sTex.innerHTML = texHTML(`(${SYM_TEX.q}_{${hd}})_{${t},${c}} = ${num(live?.result ?? D.C[t * dh + c], 3)}`, { display: true });
+      sMath.textContent = `the same entry as Q[${t}, ${hd * dh + c}] in the full matrix`;
+    }
+
     function showBands(D, replay) {
-      mmSlot.classList.add('off');
-      bandSlot.classList.remove('off');
-      legendSlot.classList.add('off');                     // the bands' labels sit where the colour key would be
-      if (replay || !bands) {
-        buildBands(D);
+      prodEl.classList.add('off');
+      bandsEl.classList.remove('off');
+      const fresh = replay || !bands;
+      buildBands(D);                                       // rebuilt every time: the row marker follows the token
+      if (fresh && !reducedMotion()) {
         placeBands(false, true);                           // the full Q first, as one block
         later(450, () => placeBands(true));                // then the bands slide apart
         later(450 + MOTION.move + 50, showSplitCheck);
       } else {
-        updateSel(D);
+        placeBands(true, true);
+        showSplitCheck();
       }
+      setSplitLive(D);
+      holdMs = MOTION.step;
     }
 
-    // ------------------------------------------------------------ text: equation, live entry, context, caption
-    function liveFor(D) {
-      const s = ctx.state, t = D.t, dh = D.dh, c = D.cMax;
-      const where = `token “${ctx.label(t)}” at position ${t}`;
-      if (step === 0) {
-        const row = D.Xd.subarray(t * D.d, (t + 1) * D.d);
-        return {
-          note: where,
-          tex: String.raw`X_{${t},:} = (${num(row[0], 2)},\ ${num(row[1], 2)},\ ${num(row[2], 2)},\ \dots)`,
-        };
-      }
-      if (step === 4) {
-        const r = runLive(s, `L${l}.attn.q_heads`, { r: t, x: c, band: D.hd });
-        return r ? { note: `${r.note} · ${where}`, tex: String.raw`(Q_{${D.hd}})_{${t},${c}} = ${num(r.result, 3)}`, math: `the same entry as Q[${t}, ${D.hd * dh + c}] in the full matrix` } : null;
-      }
-      const col = D.hi * dh + c;                           // the entry's column in the full projection
-      const r = runLive(s, `L${l}.attn.${D.p}`, { r: t, x: col, band: 0 });
-      return r ? {
-        note: `${r.note} · ${where}`,
-        tex: `${SYM_TEX[D.p]}_{${t},${col}} = ${num(r.result, 3)}`,
-        math: `Σ over the ${D.d} inputs: X[${t}, ·] · W_${SYM[D.p]},${D.hi}[${c}, ·]${D.bS ? ` + b_${SYM[D.p]},${D.hi}[${c}]` : ''}`,
-      } : null;
-    }
-
-    /** The side context: the whole X (step 0) or the whole projection, with the selected token's row
-     *  outlined and, for Q, K and V, the selected head's columns outlined. Every cell carries data-cell. */
-    function ctxFor(D) {
-      ctxMat?.destroy();
-      ctxMat = null;
-      const isX = step === 0;
-      const data = isX ? D.Xd : D.full.data;
-      const rows = D.T, cols = isX ? D.d : D.width;
-      const cell = clamp(Math.floor(Math.min(300 / cols, 120 / rows)), 2, 4);
-      ctxMat = mat(data, rows, cols, {
-        cell, gap: 0, mode: 'diverging', range: maxAbs(data),
-        kind: isX ? (D.preLN ? 'norm' : 'resid') : D.p,
-        trace: isX ? attnInKey(l, D.preLN) : `L${l}.attn.${D.p}`, cellOf: (r, c) => `${r},${c},0`,
+    // ------------------------------------------------------------ the side context: the full projection, one token's row marked
+    /** The side context: the input X (step 0) or the whole projection, with the token's row marked and the
+     *  head's columns outlined. Rows and columns beyond the budget are elided; every drawn cell carries data-cell. */
+    function ctxParts(D, isX) {
+      const { T, d, t, hi, dh, width } = D;
+      const data = isX ? D.Xd : D.full.data, cols = isX ? d : width;
+      const range = maxAbs(data);
+      const rows = keepSpan(T, t, t, CTX_ROWS);
+      const colsIdx = isX
+        ? keepSpan(cols, 0, 0, CTX_COLS)
+        : keepSpan(cols, hi * dh, Math.min(hi * dh + dh - 1, hi * dh + CTX_COLS - 3), CTX_COLS);
+      const grid = h('div', { class: 'qkv-cgrid' });
+      rows.forEach((r) => {
+        if (r < 0) { grid.append(h('div', { class: 'qkv-cell-ell' }, '⋮')); return; }
+        const row = h('div', { class: ['qkv-cr', r === t && 'hit'] });
+        colsIdx.forEach((c) => {
+          if (c < 0) { row.append(h('span', { class: 'qkv-ce' })); return; }
+          const cell = h('div', { class: 'k-cell', dataset: { cell: `${r},${c},0` }, style: { width: `${CTX_CELL}px`, height: `${CTX_CELL}px`, borderRadius: '1px' } });
+          paint(cell, data[r * cols + c] / range);
+          row.append(cell);
+        });
+        grid.append(row);
       });
-      const lab = isX
-        ? `X · ${rows}×${cols}, the row of “${ctx.label(D.t)}” outlined`
-        : `${SYM[D.p]} · ${D.p === 'q' ? 'head' : 'KV head'} ${D.hi} = columns ${D.hi * D.dh}–${(D.hi + 1) * D.dh - 1} of ${D.width}`;
-      return [h('div', { class: 'qkv-ctx-lab' }, lab), ctxMat];
-    }
-
-    /** Outlines the selected head's columns in the side context (after the context is in the page). */
-    function placeHead(D) {
-      const body = ctxMat.querySelector('.k-mat-body');
-      if (!body || step === 0) return;
-      const first = ctxMat.cellEl(0, 0), last = ctxMat.cellEl(D.T - 1, D.width - 1);
-      const a = ctxMat.cellEl(0, D.hi * D.dh), b = ctxMat.cellEl(0, D.hi * D.dh + D.dh - 1);
-      const top = first.offsetTop, bottom = last.offsetTop + last.offsetHeight;
-      const left = first.offsetLeft, right = last.offsetLeft + last.offsetWidth;
-      const x0 = a.offsetLeft, x1 = b.offsetLeft + b.offsetWidth;
-      const box = (cls, x, w, extra = {}) => h('div', { class: cls, style: { left: `${x}px`, top: `${top}px`, width: `${w}px`, height: `${bottom - top}px`, ...extra } });
-      body.append(
-        box('qkv-hm-mask', left, x0 - left),
-        box('qkv-hm-mask', x1, right - x1),
-        box('qkv-hm-band', x0, x1 - x0, { '--kind': `var(--c-${D.p})` }));
-    }
-
-    function showText(D) {
-      const tok = `“${esc(ctx.label(D.t))}”`;
-      sEq.innerHTML = texHTML(eqTeX(D, step), { display: true });
-      sShape.textContent = shapeText(D, step);
-      const live = liveFor(D);
-      sLive.replaceChildren(...(live ? [
-        h('div', { class: 'qkv-note' }, live.note),
-        h('div', { html: texHTML(live.tex, { display: true }) }),
-        ...(live.math ? [h('div', { class: 'qkv-note' }, live.math)] : []),
-      ] : []));
-      sCtx.replaceChildren(...ctxFor(D));
-      ctxMat.highlightRow(D.t);
-      placeHead(D);
-      cap.set(capText(D, step, tok));
+      const colX = [];
+      let x = 0;
+      colsIdx.forEach((c) => { colX.push(x); x += (c < 0 ? CTX_ELL_COL : CTX_CELL) + CTX_GAP; });
+      const gridW = x - CTX_GAP;
+      const gridH = rows.reduce((a, r) => a + (r < 0 ? CTX_ELL_ROW : CTX_CELL), 0) + (rows.length - 1) * CTX_GAP;
+      const kind = isX ? (D.preLN ? 'norm' : 'resid') : D.p;
+      const box = h('div', {
+        class: 'qkv-ctxbox',
+        dataset: { trace: isX ? attnInKey(l, D.preLN) : `L${l}.attn.${D.p}` },
+        style: { '--kind': `var(--c-${kind})` },
+      }, grid);
+      if (!isX) {
+        const inHead = (c) => c >= hi * dh && c <= hi * dh + dh - 1;
+        const first = colsIdx.findIndex(inHead);
+        let last = -1;
+        colsIdx.forEach((c, i) => { if (inHead(c)) last = i; });
+        if (first >= 0) {
+          const x0 = colX[first], x1 = colX[last] + CTX_CELL;
+          const put = (cls, left, width, extra = {}) => box.append(h('div', { class: cls, style: { left: `${PAD + left}px`, top: `${PAD}px`, width: `${Math.max(0, width)}px`, height: `${gridH}px`, ...extra } }));
+          put('qkv-cmask', 0, x0);
+          put('qkv-cmask', x1, gridW - x1);
+          box.append(h('div', { class: 'qkv-cband', style: { left: `${PAD + x0 - 2}px`, top: `${PAD - 2}px`, width: `${x1 - x0 + 4}px`, height: `${gridH + 4}px` } }));
+        }
+      }
+      const label = isX
+        ? `X  ${T} × ${d}  ·  row ${t} outlined`
+        : `${SYM[D.p]}  ·  ${D.p === 'q' ? 'head' : 'KV head'} ${hi} = columns ${hi * dh}–${(hi + 1) * dh - 1} of ${width}`;
+      return [h('div', { class: 'qkv-ctx-lab' }, label), box];
     }
 
     // ------------------------------------------------------------ steps
     function render({ replay = true } = {}) {
       clearTimers();
+      themed = [];
       syncDense();
       const D = read(ctx, l, PROJ_OF_STEP[step]);
-      const [chipText, chipKind] = STEP_CHIP[step];
-      eyebrow.replaceChildren(chip(`Layer ${l}`, 'resid'), chip(`Head ${D.hd}`, 'attn'), chip(chipText, chipKind));
-      header.setSub(step === 4 ? splitSub(D) : subText(D));
-      seg.set(D.p);
+      const tok = `“${esc(ctx.label(D.t))}”`;
+      holdMs = MOTION.step;
+      header.setChips([[`Layer ${l}`, 'resid'], [`Head ${D.hd}`, 'attn']]);
+      header.setSub(step === 0 ? INPUT_SUB : step === 4 ? splitSub(D) : subText(D));
       sLab.textContent = STEPS[step];
-      sLab.style.setProperty('--kind', `var(--c-${chipKind})`);
-      if (replay) sCheck.replaceChildren();
+      sLab.style.setProperty('--kind', `var(--c-${step === 0 ? (D.preLN ? 'norm' : 'resid') : D.p})`);
+      sShape.textContent = shapeText(D, step);
+      sEq.innerHTML = texHTML(eqTeX(D, step), { display: true });
+      sCtx.replaceChildren(...ctxParts(D, step === 0));
+      sCheck.replaceChildren();
+      keyEl.classList.toggle('off', step === 4);
       if (step === 4) showBands(D, replay); else showProduct(D, replay);
-      showText(D);
+      cap.set(capText(D, step, tok));
     }
 
     function enterStep(i) {
-      if (!advancing) clearTimeout(auto);                  // a step chosen by hand stops the auto-play
+      if (!advancing) stopAuto();                          // a step chosen by hand stops the auto-walk
       step = i;
       render({ replay: true });
     }
@@ -485,46 +675,39 @@ export default {
     // ------------------------------------------------------------ start
     ctx.setSteps(STEPS, enterStep);
     render({ replay: true });
-    appear([header.el, picker.el, mmSlot.parentElement, sLab.parentElement], { stagger: MOTION.stagger });
+    appear([header.el, picker.el, heads.el, heroEl, sideEl], { stagger: MOTION.stagger });
 
-    // auto-advance the first time the scene is shown. A product step holds for its whole animation:
-    // the fill, then one entry's dot product, then a second to read it.
-    const holdFor = (i) => {
-      if (i === 0) return 2400;
-      if (i === 4) return 3200;
-      const s = ctx.state, d = s.config.d_model, dh = d / s.config.n_head;
-      return playMs(s.ids.length, dh) + focusMs(d) + 1000;
+    // Auto-advance the first time the scene is shown. Each step holds for its own animation plus a moment to read it.
+    const advance = () => {
+      auto = null;
+      if (step >= STEPS.length - 1) return;
+      advancing = true;
+      try { ctx.setStep(step + 1); } finally { advancing = false; }
+      if (step < STEPS.length - 1) auto = setTimeout(advance, holdMs);
     };
-    if (!reducedMotion()) {
-      const advance = () => {
-        advancing = true;
-        ctx.setStep(step + 1);
-        advancing = false;
-        if (step < STEPS.length - 1) auto = setTimeout(advance, holdFor(step));
-      };
-      auto = setTimeout(advance, holdFor(0));
-    }
-    el.addEventListener('pointerdown', () => clearTimeout(auto), { once: true });
+    if (!reducedMotion()) auto = setTimeout(advance, MOTION.step + 800);
+    el.addEventListener('atlas:interrupt', stopAuto);
+    el.addEventListener('pointerdown', stopAuto, { once: true });
 
     offs.push(ctx.on('trace', () => { heads.render(); render({ replay: true }); }));
     offs.push(ctx.on('select', () => {
-      const head = ctx.state.sel.head;
-      const changedHead = head !== lastHead;               // a new head replays the product; a new token only re-reads it
+      const head = ctx.state.sel.head, changedHead = head !== lastHead;   // a new head replays the product; a new token re-reads it
       lastHead = head;
       render({ replay: changedHead });
     }));
     const themeOff = onThemeChange(() => {
-      if (bands) bands.cells.forEach(([ce, v]) => { ce.style.background = diverging(v / bands.range); });
+      keyPaint();
+      themed.forEach(([cell, x]) => { if (cell.isConnected) cell.style.background = diverging(x); });
     });
 
     return {
+      pause() { paused = true; stopAuto(); clearTimers(); },
+      resume() { if (!paused) return; paused = false; render({ replay: false }); },
       destroy() {
-        clearTimeout(auto);
+        stopAuto();
         clearTimers();
         offs.forEach((off) => off());
         themeOff();
-        ctxMat?.destroy();
-        mm?.destroy();
         st.destroy();
       },
     };

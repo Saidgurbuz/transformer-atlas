@@ -1,21 +1,21 @@
 // Scores QKᵀ for one head and one query, in four steps on the real trace:
 // the query and every key as vectors → the dot product of the strongest key, element by element →
-// every score as a bar, and the full S matrix → scaled by 1/√dₕ, with a simulation of why.
+// every score as a bar, and the full S matrix → scaled by 1/√d_h, with a simulated illustration of why.
 // Reference scene for contributors: see docs/ATLAS_GUIDE.md.
-import { stage2d, sceneHeader, sceneCaption, tokenPicker, vec, mat, checkBadge, appear, countTo, useStyle, MOTION, ZONES } from '../kit.js';
+import { stage2d, sceneHeader, sceneCaption, tokenPicker, vec, mat, checkBadge, appear, useStyle, MOTION, ZONES } from '../kit.js';
 import { h, s, fmt, num, texHTML, diverging, heatmap, reducedMotion } from '../../ui/index.js';
 
-const STEPS = ['Query and keys', 'Dot product', 'All scores', 'Scale by 1/√dₕ'];
+const STEPS = ['Queries and keys', 'Dot product', 'All scores', 'Scale by 1/√d_h'];
 
-// Geometry on the 1600 × 900 canvas (docs/STYLE_GUIDE.md): hero x 110…1140, side column x 1180…1560
-// (the equation column is 380 wide, as in the softmax reference scene).
+// Geometry on the 1600 × 900 canvas (docs/STYLE_GUIDE.md): hero x 110…1140, side column x 1180…1520
+// (ZONES.side, 340 wide, the column lm-head.js uses). Anchors sit on the 10-unit grid.
 const LEFT = ZONES.hero.x;                        // left edge of all hero text (x = 110)
-const QX = LEFT + 18;                             // centre of the query vector
+const QX = LEFT + 20;                             // centre of the query vector
 const KX0 = 210, KX1 = 1130;                      // key columns span this range
-const TOK_Y = 532;                                // top of the token labels
-const VEC_BOT = TOK_Y - 14;                       // every vector hangs from this line, just above its token
-const BAND_Y = 596, BAND_H = 124, ZERO = 62, HALF = 50;   // score band: zero line and largest bar
-const SIDE_X = ZONES.side.x, EQ_Y = 268, MAT_Y = 504;     // equation column, then the S matrix below it
+const TOK_Y = 530;                                // top of the token labels
+const VEC_BOT = TOK_Y - 10;                       // every vector hangs from this line, just above its token
+const BAND_Y = 600, BAND_H = 124, ZERO = 62, HALF = 50;   // score band: zero line and largest bar
+const SIDE_X = ZONES.side.x, SIDE_W = ZONES.side.w, EQ_Y = ZONES.hero.y, MAT_Y = 490;     // equation column, then the S matrix below it
 const PITCH_MAX = 64;                             // widest key pitch, so short sequences stay compact
 const SIM = { seed: 20260611, trials: 60, keys: 16, dims: [4, 8, 16, 32, 64, 128, 256] };
 let simCache = null;
@@ -38,6 +38,7 @@ useStyle('scores', `
 .scr-zero { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--line-strong); }
 .scr-bar { position: absolute; border-radius: 3px; box-shadow: 0 4px 10px rgba(0, 0, 0, .14);
   transition: top .6s cubic-bezier(.65,0,.35,1), height .6s cubic-bezier(.65,0,.35,1), opacity .4s ease, background-color .4s ease; }
+.scr-bar.masked { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c-mask) 55%, transparent) 0 2px, transparent 2px 6px); box-shadow: none; }
 .scr-val { position: absolute; left: 50%; translate: -50% 0; font: 600 12px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap;
   transition: top .6s cubic-bezier(.65,0,.35,1); }
 .scr-prods { position: absolute; top: 0; transition: opacity .4s ease; }
@@ -48,27 +49,28 @@ useStyle('scores', `
 .scr-mat { transition: opacity .6s ease; }
 .scr-mat .k-label { margin-bottom: 4px; }
 .scr-mat .k-mat-body { padding: 6px; }
-.scr-eq { width: 380px; display: grid; gap: 4px; }
+.scr-eq { width: ${SIDE_W}px; display: grid; gap: 4px; }
+.scr-eq > * { min-width: 0; }   /* the column stays 340 wide; an overlong line scrolls in its own box */
 .scr-eq > .k-label { margin-bottom: 0; }
-.scr-eq-main { font-size: 26px; }
+.scr-eq-main { font-size: 24px; }
 .scr-eq .katex-display { margin: .05em 0; }
-.scr-eq-live { font-size: 19px; padding: 6px 14px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); overflow-x: auto; }
+.scr-eq-live { font-size: 18px; padding: 6px 10px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); overflow-x: auto; }
 .scr-eq-check { transition: opacity .4s ease; }
 .scr-eq-note { font-size: 14px; line-height: 1.35; color: var(--fg-2); }
-.scr-ghost { position: absolute; border-radius: 3px; border: 1px dashed var(--fg-2); background: transparent;
+.scr-ghost { position: absolute; border-radius: 3px; border: 1px dashed color-mix(in srgb, var(--fg) 55%, transparent); background: transparent;
   transition: top .6s cubic-bezier(.65,0,.35,1), height .6s cubic-bezier(.65,0,.35,1), opacity .4s ease; }
-.scr-inset { width: 340px; box-sizing: border-box; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent);
+.scr-inset { width: ${SIDE_W}px; box-sizing: border-box; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent);
   border: 1px solid var(--line); box-shadow: 0 10px 26px rgba(0, 0, 0, .12); transition: opacity .5s ease; }
 .scr-plots { display: grid; gap: 8px; }
-.scr-xt { font: 500 12px var(--font-mono); fill: var(--fg-2); }
+.scr-xt { font: 500 13px var(--font-mono); fill: var(--fg-2); }
 .scr-plot-title { font-size: 13px; line-height: 16px; color: var(--fg-2); white-space: nowrap; }
 .scr-plot svg { display: block; overflow: visible; }
-.scr-tick { font: 500 12px var(--font-mono); fill: var(--fg-3); }
+.scr-tick { font: 500 13px var(--font-mono); fill: var(--fg-3); }
 .scr-axis { stroke: var(--line-strong); }
 .scr-grid { stroke: var(--line); }
-.scr-legend { display: flex; gap: 12px; align-items: center; margin-top: 8px; font: 500 12px/14px var(--font-mono); color: var(--fg-2); }
+.scr-legend { display: flex; gap: 12px; align-items: center; margin-top: 8px; font: 500 13px/16px var(--font-mono); color: var(--fg-2); }
 .scr-legend i { display: inline-block; width: 16px; border-top: 2px solid; vertical-align: middle; margin-right: 5px; }
-.scr-sim { margin-top: 4px; font: 500 12px/16px var(--font-body); color: var(--fg-3); }
+.scr-sim { margin-top: 4px; font: 500 13px/16px var(--font-body); color: var(--fg-3); }
 @media (prefers-reduced-motion: reduce) {
   .scr-col, .scr-tok, .scr-bar, .scr-ghost, .scr-val, .scr-prods, .scr-pbar, .scr-sum, .scr-mat, .scr-inset, .scr-eq-check { transition: none !important; }
 }
@@ -79,8 +81,6 @@ function shownIdx(n) {
   if (n <= 17) return Array.from({ length: n }, (_, i) => i);
   return [...Array.from({ length: 12 }, (_, i) => i), -1, ...Array.from({ length: 4 }, (_, i) => n - 4 + i)];
 }
-
-const trim = (x) => String(Number(x.toFixed(2)));
 
 /**
  * The dot product of the strongest key in two lines at most, so the live equation keeps its size:
@@ -102,48 +102,34 @@ function dotLines(dh, tm, value) {
   return `\\begin{gathered} ${rows.join(' \\\\ ')} \\end{gathered}`;
 }
 
-/** Largest softmax weight of the scores sc, each multiplied by f first. */
-function maxWeight(sc, f) {
-  let m = -Infinity;
-  for (let j = 0; j < sc.length; j++) m = Math.max(m, sc[j] * f);
-  const e = new Float64Array(sc.length);
-  let Z = 0, best = 0;
-  for (let j = 0; j < sc.length; j++) { e[j] = Math.exp(sc[j] * f - m); Z += e[j]; }
-  for (let j = 0; j < sc.length; j++) best = Math.max(best, e[j] / Z);
-  return best;
-}
-
 /**
- * SIMULATION, not the model: seeded unit-variance Gaussian queries and keys for each d_h.
- * Returns per d_h: Var(q·k) and the largest softmax weight over 16 keys, with and without 1/√d_h.
+ * SIMULATED ILLUSTRATION, not the model: seeded unit-variance Gaussian queries and keys for each d_h.
+ * Returns per d_h: Var(q·k) over 16 keys, with and without 1/√d_h.
  */
 function simulate(engine) {
   if (simCache) return simCache;
   const g = engine.gaussian(engine.mulberry32(SIM.seed));
   simCache = SIM.dims.map((d) => {
     const f = 1 / Math.sqrt(d);
-    const q = new Float64Array(d), K = new Float64Array(SIM.keys * d), sc = new Float64Array(SIM.keys);
-    let vRaw = 0, vScaled = 0, wRaw = 0, wScaled = 0, n = 0;
+    const q = new Float64Array(d), K = new Float64Array(SIM.keys * d);
+    let vRaw = 0, vScaled = 0, n = 0;
     for (let tr = 0; tr < SIM.trials; tr++) {
       for (let c = 0; c < d; c++) q[c] = g();
       for (let i = 0; i < K.length; i++) K[i] = g();
       for (let j = 0; j < SIM.keys; j++) {
         let a = 0;
         for (let c = 0; c < d; c++) a += q[c] * K[j * d + c];
-        sc[j] = a;
         vRaw += a * a;
         vScaled += (a * f) * (a * f);
         n++;
       }
-      wRaw += maxWeight(sc, 1);
-      wScaled += maxWeight(sc, f);
     }
-    return { dh: d, varRaw: vRaw / n, varScaled: vScaled / n, maxRaw: wRaw / SIM.trials, maxScaled: wScaled / SIM.trials };
+    return { dh: d, varRaw: vRaw / n, varScaled: vScaled / n };
   });
   return simCache;
 }
 
-/** A small line chart in SVG for the inset. x is log2(dₕ) from 2 (dₕ = 4) to 8 (dₕ = 256), named under the ticks. */
+/** A small line chart in SVG for the inset. x is log2(d_h) from 2 (d_h = 4) to 8 (d_h = 256), named under the ticks. */
 function miniPlot(label, series, { yDomain, yTicks, yFmt }) {
   const W = 312, H = 76, m = { l: 28, r: 6, t: 4, b: 28 };
   const X = (x) => m.l + ((x - 2) / 6) * (W - m.l - m.r);
@@ -157,7 +143,7 @@ function miniPlot(label, series, { yDomain, yTicks, yFmt }) {
   for (const [x, t, anchor] of [[2, '4', 'start'], [4, '16', 'middle'], [6, '64', 'middle'], [8, '256', 'end']]) {
     svg.append(s('text', { class: 'scr-tick', x: X(x), y: H - m.b + 14, 'text-anchor': anchor }, t));
   }
-  svg.append(s('text', { class: 'scr-xt', x: (m.l + W - m.r) / 2, y: H - 1, 'text-anchor': 'middle' }, 'dₕ, log2 scale'));
+  svg.append(s('text', { class: 'scr-xt', x: (m.l + W - m.r) / 2, y: H - 1, 'text-anchor': 'middle' }, 'd', s('tspan', { 'baseline-shift': 'sub', 'font-size': '10px' }, 'h'), ', log2 scale'));
   for (const sr of series) {
     const d = sr.pts.map((p, i) => `${i ? 'L' : 'M'}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join('');
     svg.append(s('path', { d, fill: 'none', stroke: sr.color, 'stroke-width': sr.dashed ? 1.6 : 2.2, 'stroke-dasharray': sr.dashed ? '4 3' : null, 'stroke-linejoin': 'round' }));
@@ -166,18 +152,33 @@ function miniPlot(label, series, { yDomain, yTicks, yFmt }) {
   return svg;
 }
 
+/** Counts a number from 0 up to `to` over `ms` (ease-out). Returns a function that stops the count. */
+function countUp(el, to, ms) {
+  if (reducedMotion()) { el.textContent = fmt(to, 2); return () => {}; }
+  const t0 = performance.now();
+  let raf = 0;
+  const tick = (now) => {
+    const p = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - p, 3);
+    el.textContent = fmt(to * e, 2);
+    if (p < 1) raf = requestAnimationFrame(tick);
+  };
+  raf = requestAnimationFrame(tick);
+  return () => cancelAnimationFrame(raf);
+}
+
 export default {
   mount(el, ctx) {
     const st = stage2d(el);
     const { l, h: hd } = ctx.params;
+    const word = (i) => (ctx.label(i) === '␣' ? 'space' : ctx.label(i));   // the space token reads as a word in captions
     let step = 0, D = null, timers = [], disposers = [], dyn = [], pmaxG = 1;
     let keyVecs = [], keyToks = [], bars = [], barVals = [], ghosts = [], pbars = [];
     let qVec = null, prodEl = null, sumEl = null, sumVal = null, matWrap = null, matEl = null, matHm = null;
-    let curFull = null, insetBuilt = false;
+    let curFull = null, insetBuilt = false, stopCount = null;   // stopCount cancels the step-1 count
 
     // ----------------------------------------------------- shared parts and the side column
     const header = sceneHeader(st, { chips: [[`Layer ${l}`, 'resid'], [`Head ${hd}`, 'attn']], title: 'Scores QKᵀ' });
-    const picker = tokenPicker(st, ctx, { label: 'query', kind: 'q' });
+    const picker = tokenPicker(st, ctx, { label: 'query', kind: 'attn' });
     const eqLabel = h('div', { class: 'k-label', style: { textAlign: 'left' } });
     const eqMain = h('div', { class: 'scr-eq-main' });
     const eqLive = h('div', { class: 'scr-eq-live' });
@@ -190,7 +191,7 @@ export default {
 
     const place = (node, o) => { st.add(node, o); dyn.push(node); return node; };
     const at = (ms, fn) => { timers.push(setTimeout(fn, reducedMotion() ? 0 : ms)); };
-    const clearTimers = () => { timers.forEach(clearTimeout); timers = []; };
+    const clearTimers = () => { timers.forEach(clearTimeout); timers = []; stopCount?.(); stopCount = null; };
     function teardown() {
       clearTimers();
       disposers.forEach((f) => f());
@@ -219,7 +220,6 @@ export default {
       const row = Array.from(Sc.data.subarray((hd * T + t) * T, (hd * T + t + 1) * T));
       const full = Sc.data.subarray(hd * T * T, (hd + 1) * T * T);
       const rowS = Sa ? Array.from(Sa.data.subarray((hd * T + t) * T, (hd * T + t + 1) * T)) : null;
-      const fullS = Sa ? Sa.data.subarray(hd * T * T, (hd + 1) * T * T) : null;
       const vis = Array.from({ length: T }, (_, j) => (Mk ? Mk.data[t * T + j] === 1 : true));
       const maskFull = Mk ? Mk.data : null;
       let jstar = -1;
@@ -229,15 +229,19 @@ export default {
       let dotLocal = 0;
       for (const p of prods) dotLocal += p;
       const loc = K.map((kj) => { let a = 0; for (let c = 0; c < dh; c++) a += q[c] * kj[c]; return a; });
-      let rangeS = 0, rowMax = 0, rangeQK = 0;
+      let rangeS = 0, rowMax = 0, rangeQ = 0, rangeK = 0;
       for (const v of full) if (Number.isFinite(v)) rangeS = Math.max(rangeS, Math.abs(v));
       for (const v of row) rowMax = Math.max(rowMax, Math.abs(v));
-      for (const v of Qt.data) rangeQK = Math.max(rangeQK, Math.abs(v));
-      for (const v of Kt.data) rangeQK = Math.max(rangeQK, Math.abs(v));
+      // this head's own Q and K over the columns on screen and all tokens: the scale head.js uses for them
+      const shownCols = shownIdx(dh).filter((c) => c >= 0);
+      for (let r = 0; r < T; r++) for (const c of shownCols) {
+        rangeQ = Math.max(rangeQ, Math.abs(Qt.data[(hd * T + r) * dh + c]));
+        rangeK = Math.max(rangeK, Math.abs(Kt.data[(kvh * T + r) * dh + c]));
+      }
       return {
         T, t, dh, hd, H, Hkv, kvh, rope, alibi: cfg.pos_encoding === 'alibi', Sa: !!Sa,
-        q, K, row, full, rowS, fullS, vis, maskFull, jstar, prods, dotLocal, loc,
-        rangeS: rangeS || 1, rowMax: rowMax || 1, rangeQK: rangeQK || 1,
+        q, K, row, full, rowS, vis, maskFull, jstar, prods, dotLocal, loc,
+        rangeS: rangeS || 1, rowMax: rowMax || 1, rangeQ: rangeQ || 1, rangeK: rangeK || 1,
       };
     }
 
@@ -263,11 +267,11 @@ export default {
       const rot = D.rope ? '^{\\text{rot}}' : '';
       const sKey = `L${l}.attn.scores`;
       curFull = D.full;
-      header.setSub(`Query <b>“${ctx.label(t)}”</b> at position ${t} is compared with every key it may see. A score is one dot product, q·k.`);
+      header.setSub(`Query <b>“${word(t)}”</b> at position ${t} is compared with every key it may see. A score is one dot product, q·k.`);
 
-      // query and keys as columns of dₕ cells: row c of every column is the same dimension.
+      // query and keys as columns of d_h cells: row c of every column is the same dimension.
       // Every column hangs from one line just above its token, so each stack stays with its label at any d_h.
-      qVec = vec(D.q, { orientation: 'v', cell: cellH, gap: 2, kind: 'q', range: D.rangeQK, head: 12, tail: 4,
+      qVec = vec(D.q, { orientation: 'v', cell: cellH, gap: 2, kind: 'q', range: D.rangeQ, head: 12, tail: 4,
         tex: `q_t${rot}`, trace: `L${l}.attn.${D.rope ? 'q_rot' : 'q_heads'}`, cellOf: (i) => `${t},${i},${D.hd}` });
       qVec.classList.add('scr-q');
       qVec.style.setProperty('--cw', `${cellH}px`);
@@ -277,7 +281,7 @@ export default {
       place(h('div', { class: ['scr-tok', T > 32 && 'xs'] }, h('b', null, ctx.label(t)), h('small', null, `t = ${t}`)), { x: QX, y: TOK_Y, anchor: 'tc' });
 
       for (let j = 0; j < T; j++) {
-        const kv = vec(D.K[j], { orientation: 'v', cell: cellH, gap: 2, kind: 'k', range: D.rangeQK, head: 12, tail: 4,
+        const kv = vec(D.K[j], { orientation: 'v', cell: cellH, gap: 2, kind: 'k', range: D.rangeK, head: 12, tail: 4,
           trace: `L${l}.attn.${D.rope ? 'k_rot' : 'k_heads'}`, cellOf: (i) => `${j},${i},${D.kvh}` });
         kv.classList.add('scr-col');
         kv.style.setProperty('--cw', `${cw}px`);
@@ -329,8 +333,8 @@ export default {
       band.append(prodEl, sumEl);
 
       // the full S matrix of this head, row t highlighted (side column, from step 2).
-      // Above 50 tokens a canvas heatmap with 3 px cells is used instead.
-      const cellPx = T <= 50 ? Math.max(4, Math.min(9, Math.floor(170 / T))) : 3;
+      // Cells shrink as T grows (240 units in all, never below 4). Above 50 tokens a canvas heatmap draws it instead.
+      const cellPx = Math.max(4, Math.min(7, Math.floor(240 / T)));
       const mLab = `S^{(${l},${D.hd})}`;
       matWrap = place(h('div', { class: 'scr-mat', style: { opacity: '0', pointerEvents: 'none' } }), { x: SIDE_X, y: MAT_Y });
       if (T <= 50) {
@@ -396,24 +400,26 @@ export default {
         at(tEnd, () => {
           qVec.highlight([]);
           keyVecs[J].highlight([]);
-          countTo(sumVal, D.dotLocal, { digits: 2, duration: 700 });
+          stopCount = countUp(sumVal, D.dotLocal, 700);
         });
         at(tEnd + 700, () => { eqCheck.style.opacity = '1'; });
       }
 
-      // steps 2 and 3: one bar per key on the same scale; step 3 shrinks them by 1/√dₕ
+      // steps 2 and 3: one bar per key on the same scale; step 3 shrinks them by 1/√d_h
       const vals = useScaled ? D.rowS : D.row;
       bars.forEach((b, j) => {
-        const v = vals[j], lab = barVals[j];
+        const v = vals[j], lab = barVals[j], masked = !D.vis[j];
         b.dataset.trace = shownKey;                         // hover and right-click name the tensor on screen
         b.style.pointerEvents = i < 2 ? 'none' : '';
+        b.classList.toggle('masked', masked);   // a key the mask hides is hatched grey, as in S
         if (i < 2) { b.style.opacity = '0'; b.style.top = `${ZERO}px`; b.style.height = '0px'; lab.textContent = ''; return; }
         const hpx = v === 0 ? 0 : Math.max(1.5, Math.abs(v) / D.rowMax * HALF);
-        b.style.opacity = D.vis[j] ? '1' : '0.3';
+        b.style.opacity = '1';
         b.style.top = `${v >= 0 ? ZERO - hpx : ZERO}px`;
         b.style.height = `${hpx}px`;
-        b.style.background = diverging(v / D.rangeS);
-        lab.textContent = T <= 26 || j === J ? fmt(v, 2) : '';
+        b.style.background = masked ? '' : diverging(v / D.rangeS);
+        b.title = `${fmt(v, 4)}${masked ? ' · hidden by the mask' : ''}`;
+        lab.textContent = !masked && (T <= 26 || j === J) ? fmt(v, 2) : '';
         lab.style.top = v >= 0 ? '-17px' : `${hpx + 4}px`;
       });
 
@@ -421,7 +427,7 @@ export default {
       ghosts.forEach((gh, j) => {
         const show = i === 3 && D.Sa, v = D.row[j];
         const hpx = show && v !== 0 ? Math.max(1.5, Math.abs(v) / D.rowMax * HALF) : 0;
-        gh.style.opacity = show ? (D.vis[j] ? '1' : '0.3') : '0';
+        gh.style.opacity = show ? '1' : '0';
         gh.style.top = `${v >= 0 ? ZERO - hpx : ZERO}px`;
         gh.style.height = `${hpx}px`;
       });
@@ -440,11 +446,11 @@ export default {
       // equation, check and caption for this step (numbers come from the trace)
       const Sj = D.row[J];
       const tm = (c) => `(${num(D.q[c], 2)})(${num(D.K[J][c], 2)})`;
-      const qL = ctx.label(D.t), kL = ctx.label(J);
+      const qL = word(D.t), kL = word(J);
       const hidden = D.vis.filter((v) => !v).length;
       const shownCount = shownIdx(dh).filter((x) => x >= 0).length;
       let check = null, note = '';
-      eqLabel.textContent = STEPS[i];
+      eqLabel.textContent = i === 3 && !D.Sa ? 'Scale (off in this config)' : STEPS[i];
       if (i === 0) {
         eqMain.innerHTML = texHTML(`q_t${rot},\\; k_j${rot} \\in \\mathbb{R}^{d_h}`, { display: true });
         eqLive.innerHTML = texHTML(`d_h = ${dh},\\qquad j = 0,\\dots,${T - 1}`, { display: true });
@@ -466,9 +472,9 @@ export default {
         eqLive.innerHTML = texHTML(`S_{${D.t},\\cdot} \\in [${num(mn, 2)},\\ ${num(mx, 2)}]`, { display: true });
         const matches = D.loc.filter((v, j) => Math.abs(v - D.row[j]) <= 1e-6 * Math.max(1, Math.abs(D.row[j]))).length;
         check = checkBadge(matches, T, { label: `all ${T} scores match the trace` });
-        note = hidden ? `${hidden} of ${T} keys are hidden by the mask (hatched in S).` : 'Every key is visible to this query.';
+        note = hidden ? `${hidden} of ${T} keys are hidden by the mask (hatched).` : 'Every key is visible to this query.';
         cap.set(hidden
-          ? `Every key now has a score, so row <b>${D.t}</b> of S is complete. Hatched cells are computed, then set to −∞ before the softmax, so they get weight 0.`
+          ? `Every key now has a score, so row <b>${D.t}</b> of S is complete. Hatched scores are computed first, then set to −∞ before the softmax, so they get weight 0.`
           : `Every key now has a score, so row <b>${D.t}</b> of S is complete. Under this mask every key is visible to the query.`);
       } else if (D.Sa) {
         const scaledHere = D.loc[J] / sqrtD;
@@ -476,39 +482,34 @@ export default {
         eqLive.innerHTML = texHTML(`\\begin{aligned} \\tilde S_{${D.t},${J}} &= ${num(D.loc[J], 2)} \\big/ \\sqrt{${dh}} \\\\ &= ${num(scaledHere, 2)} \\end{aligned}`, { display: true });
         check = checkBadge(scaledHere, D.rowS[J], { label: 'equals the traced scaled score' });
         note = D.alibi ? 'Dashed: before the factor. ALiBi’s bias comes after.' : 'Dashed outlines: the scores before the factor.';
-        cap.set(`Dividing by <b>√d<sub>h</sub> = ${trim(sqrtD)}</b> shrinks every score by the same factor. The inset is a simulation: without this factor, Var(q·k) grows with d<sub>h</sub> and the largest softmax weight saturates.`);
+        cap.set(`Dividing by <b>√d<sub>h</sub> = ${sqrtD.toFixed(2)}</b> shrinks every score by the same factor. The inset is a simulated illustration: without it, Var(q·k) grows with d<sub>h</sub>, and large dot products make the softmax peaked.`);
       } else {
         // attn_scale is off in this config: the model does not divide, so neither does the equation
         eqMain.innerHTML = texHTML('S = \\Q\\K^{\\top}', { display: true });
         eqLive.innerHTML = texHTML(`S_{${D.t},${J}} = ${num(D.loc[J], 2)}`, { display: true });
         check = checkBadge(D.loc[J], Sj, { label: 'equals the traced score' });
         note = 'attn_scale is off in this config, so no 1/√d_h factor is applied.';
-        cap.set('Scaling is off in this config, so the bars keep their size. The inset is a simulation of what the factor does.');
+        cap.set('Scaling is off in this config, so the bars keep their size. The inset is a simulated illustration of what the factor does.');
       }
       eqCheck.replaceChildren(...(check ? [check] : []));
       eqNote.textContent = note;
       eqNote.style.display = note ? '' : 'none';           // an empty note takes no room in the column
     }
 
-    /** The inset: two small charts from the simulation, with and without 1/√d_h. */
+    /** The inset: one chart from the simulation, Var(q·k) against d_h with and without 1/√d_h, and its legend. */
     function buildInset(rows) {
       const x = (r) => Math.log2(r.dh);
-      const vPlot = miniPlot('variance of q·k against dₕ, simulated', [
+      const vPlot = miniPlot('variance of q·k against d_h, simulated illustration', [
         { color: 'var(--fg-2)', dashed: true, pts: rows.map((r) => [x(r), Math.log2(r.varRaw)]) },
         { color: 'var(--c-attn)', pts: rows.map((r) => [x(r), Math.log2(r.varScaled)]) },
       ], { yDomain: [-0.4, 8.4], yTicks: [0, 4, 8], yFmt: (v) => String(2 ** v) });
-      const wPlot = miniPlot('largest softmax weight over 16 keys against dₕ, simulated', [
-        { color: 'var(--fg-2)', dashed: true, pts: rows.map((r) => [x(r), r.maxRaw]) },
-        { color: 'var(--c-attn)', pts: rows.map((r) => [x(r), r.maxScaled]) },
-      ], { yDomain: [0, 1.05], yTicks: [0, 0.5, 1], yFmt: (v) => (v === 0.5 ? '.5' : String(v)) });
       insetEl.replaceChildren(
         h('div', { class: 'scr-plots' },
-          h('div', null, h('div', { class: 'scr-plot-title', html: `${texHTML('\\mathrm{Var}(q\\cdot k)')}, log2 scale` }), vPlot),
-          h('div', null, h('div', { class: 'scr-plot-title', html: `${texHTML('\\max_j\\, w_j')} = largest softmax weight, 16 keys` }), wPlot)),
+          h('div', null, h('div', { class: 'scr-plot-title', html: `${texHTML('\\mathrm{Var}(q\\cdot k)')}, simulated illustration` }), vPlot)),
         h('div', { class: 'scr-legend' },
-          h('span', null, h('i', { style: { borderTopColor: 'var(--c-attn)' } }), 'with 1/√dₕ'),
+          h('span', null, h('i', { style: { borderTopColor: 'var(--c-attn)' } }), 'with 1/√d_h'),
           h('span', null, h('i', { style: { borderTopColor: 'var(--fg-2)', borderTopStyle: 'dashed' } }), 'without')),
-        h('div', { class: 'scr-sim' }, `simulation: ${SIM.trials} trials of ${SIM.keys} random keys, unit-variance Gaussian q and k`));
+        h('div', { class: 'scr-sim' }, `${SIM.keys} keys, unit-variance Gaussian q and k`));
     }
 
     function rebuild() { build(); paint(step); }
@@ -524,6 +525,7 @@ export default {
       if (step < STEPS.length - 1) { ctx.setStep(step + 1); auto = setTimeout(next, MOTION.step); }
     }, 900);
     el.addEventListener('pointerdown', () => clearTimeout(auto), { once: true });
+    el.addEventListener('atlas:interrupt', () => clearTimeout(auto), { once: true });
 
     const offs = [ctx.on('trace', rebuild), ctx.on('select', rebuild)];
     return {

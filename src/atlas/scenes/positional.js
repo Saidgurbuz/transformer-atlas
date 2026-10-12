@@ -1,25 +1,34 @@
 // Positional encoding: how the model knows where each token is.
 //
-// The scheme in use (cfg.pos_encoding) is the hero. Its numbers come from this model's own
-// forward pass (ctx.state.trace) or from engine functions applied to its weights. The segmented
-// control previews the other schemes with the same formulas: previews are illustrations and say
-// so, except None, which is a real run of a clone with positions removed. Three steps per scheme.
-// Maths: src/core/math/positions.js and embed.js. model.py: sinusoidal_table, rope_angles,
-// apply_rope, alibi_bias.
-import { stage2d, sceneHeader, sceneCaption, tokenPicker, headPicker, checkBadge, vec, mat, op, fly, pulse, useStyle, ZONES, MOTION } from '../kit.js';
-import { h, s, fmt, texHTML, num, heatmap, barChart, segmented, button, reducedMotion, clamp } from '../../ui/index.js';
-import { infer, cloneModel, createModel, sinusoidalTable, ropeAngles, alibiSlopes, alibiBias, rope, Tensor, noGrad, mulberry32 } from '../../engine/index.js';
+// The scheme in use (cfg.pos_encoding) is the hero. Its numbers come from this model's own forward
+// pass (ctx.state.trace) or from engine functions applied to its weights. The segmented control
+// previews the other schemes with the same formulas: previews are illustrations and say so, except
+// None, which is a real run of a clone with positions removed. Three steps per scheme.
+// Layout: the controls band (y 196) holds the query tokens on the left and the scheme on the right.
+// The side column holds the head chips (RoPE and ALiBi), the step name, one equation, the status and
+// one or two sentences. Maths: src/core/math/positions.js and embed.js. model.py: sinusoidal_table,
+// rope_angles, apply_rope, alibi_bias.
+import { stage2d, sceneHeader, sceneCaption, tokenPicker, checkBadge, vec, mat, op, fly, pulse, useStyle, ZONES, MOTION } from '../kit.js';
+import { h, s, fmt, texHTML, num, heatmap, barChart, segmented, button, reducedMotion, clamp, diverging, onThemeChange } from '../../ui/index.js';
+import { infer, cloneModel, createModel, ropeAngles, alibiSlopes, alibiBias, maskAllows, rope, Tensor, noGrad, mulberry32 } from '../../engine/index.js';
 
 useStyle('positional', `
-.sp-hero { width: 1030px; height: 510px; }
+.sp-hero { position: relative; width: 1030px; height: 500px; }
 .sp-layer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 .sp-layer.sp-out { pointer-events: none; }
+.sp-picker { width: 1032px; }
+.sp-picker .k-picker { flex-wrap: wrap; row-gap: 4px; max-width: 960px; }
+.sp-picker.dense .k-pick { height: 28px; }
+.sp-scheme { width: 336px; display: flex; justify-content: flex-end; }
+.sp-seg { width: max-content; max-width: none; flex-wrap: nowrap; }
+.sp-seg button { white-space: nowrap; }
 .sp-side { width: 340px; display: grid; gap: 12px; align-content: start; }
 .sp-side > * { min-width: 0; max-width: 340px; }
-.sp-side.pad { padding-top: 46px; }
-.sp-top { display: flex; align-items: center; gap: 12px; justify-content: flex-end; width: max-content; }
-.sp-status { display: flex; align-items: center; gap: 10px; }
-.sp-seg { width: max-content; max-width: none; flex-wrap: nowrap; }
+.sp-side-body { display: grid; gap: 12px; align-content: start; }
+.sp-heads { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.sp-heads-label { flex-basis: 100%; font: 600 13px/1 var(--font-mono); color: var(--fg-3); text-transform: uppercase; letter-spacing: .08em; margin-bottom: 4px; }
+.sp-heads .k-pick-head { width: 36px; height: 26px; font-size: 12px; }
+.sp-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .sp-flag { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; font: 600 13px/1 var(--font-mono); color: var(--fg-3); border: 1px dashed var(--line-strong); white-space: nowrap; }
 .sp-flag.live { color: var(--c-pos); border: 1px solid color-mix(in srgb, var(--c-pos) 55%, transparent); background: color-mix(in srgb, var(--c-pos) 10%, transparent); }
 .sp-eq { display: grid; gap: 10px; align-content: start; }
@@ -28,12 +37,17 @@ useStyle('positional', `
 .sp-eq-live { display: grid; gap: 6px; font-size: 16px; padding: 12px 14px; border-radius: 14px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); }
 .sp-note { font-size: 15px; line-height: 1.5; color: var(--fg-3); }
 .sp-plate { position: relative; padding: 12px 14px 14px; border-radius: 14px; background: color-mix(in srgb, var(--surface) 74%, transparent); border: 1px solid color-mix(in srgb, var(--c-pos) 26%, var(--line)); box-shadow: 0 16px 36px rgba(0, 0, 0, .14); }
-.sp-plate-t { font: 600 14px/1.2 var(--font-mono); color: var(--fg-2); margin-bottom: 8px; white-space: nowrap; }
+.sp-plate-t { font: 600 15px/1.2 var(--font-mono); color: var(--fg-2); margin-bottom: 8px; white-space: nowrap; }
+.sp-thumbs { display: grid; gap: 12px 14px; justify-items: center; align-content: center; }
+.sp-thumb { display: grid; justify-items: center; gap: 6px; padding: 6px; border-radius: 12px; border: 1px solid transparent; background: transparent; cursor: pointer; font: 600 15px/1 var(--font-mono); color: var(--fg-3); transition: border-color .25s, background-color .25s, color .25s; }
+.sp-thumb:hover { background: color-mix(in srgb, var(--surface) 70%, transparent); color: var(--fg-2); }
+.sp-thumb.on { border-color: var(--accent); color: var(--fg); }
+.sp-thumb canvas { display: block; border-radius: 4px; }
 .sp-abs { position: absolute; }
 .sp-fig { position: absolute; left: 0; top: 0; overflow: visible; }
 .sp-rowlab { position: absolute; left: 0; text-align: right; transform: translateY(-50%); font-size: 16px; color: var(--fg-2); white-space: nowrap; }
-.sp-tick { position: absolute; transform: translateX(-50%); font: 500 12px/1 var(--font-mono); color: var(--fg-3); }
-.sp-legend { position: absolute; left: 0; top: 0; display: flex; gap: 16px; font: 600 14px/1 var(--font-mono); }
+.sp-tick { position: absolute; transform: translateX(-50%); font: 500 15px/1 var(--font-mono); color: var(--fg-3); }
+.sp-legend { position: absolute; left: 0; top: 0; display: flex; gap: 16px; font: 600 15px/1 var(--font-mono); }
 .sp-scan, .sp-dot, .sp-hand { transition: transform .32s cubic-bezier(.65,0,.35,1); }
 .sp-arc { fill: none; stroke: var(--c-pos); stroke-width: 2; opacity: .85; }
 .sp-read { display: grid; gap: 10px; font-size: 20px; color: var(--fg-2); }
@@ -41,21 +55,25 @@ useStyle('positional', `
 .sp-col { display: grid; justify-items: center; gap: 12px; }
 .sp-stack { position: absolute; left: 0; right: 0; top: 96px; display: grid; justify-items: center; gap: 4px; }
 .sp-table { width: 100%; border-collapse: collapse; font: 500 18px/1.2 var(--font-mono); color: var(--fg); }
-.sp-table th { font: 600 13px/1.2 var(--font-mono); color: var(--fg-3); text-align: right; padding: 8px 12px; border-bottom: 1px solid var(--line-strong); }
+.sp-table th { font: 600 14px/1.2 var(--font-mono); color: var(--fg-3); text-align: right; padding: 8px 12px; border-bottom: 1px solid var(--line-strong); }
 .sp-table td { text-align: right; padding: 11px 12px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; transition: background .3s; }
 .sp-table tbody tr { cursor: pointer; }
 .sp-table tr.on td { background: var(--accent-soft); }
 .sp-bars { position: absolute; left: 0; right: 0; bottom: 36px; display: flex; justify-content: center; align-items: flex-end; }
-.sp-slope { display: grid; justify-items: center; gap: 8px; }
+.sp-slope { display: grid; justify-items: center; gap: 6px; }
+.sp-slope-m { font-size: 16px; line-height: 1.2; }
+.sp-slope-v { font: 500 14px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap; }
 .sp-bar { width: 84px; border-radius: 12px 12px 5px 5px; background: linear-gradient(180deg, color-mix(in srgb, var(--c-attn) 90%, white), var(--c-attn)); box-shadow: 0 12px 24px rgba(0, 0, 0, .18); transition: height .6s cubic-bezier(.65,0,.35,1); }
 .sp-tile { position: absolute; box-sizing: border-box; display: grid; place-items: center; align-content: center; gap: 4px; height: 50px; border-radius: 10px; background: var(--surface); border: 1px solid color-mix(in srgb, var(--c-pos) 40%, var(--line)); box-shadow: 0 6px 14px rgba(0, 0, 0, .12); font: 600 16px/1 var(--font-mono); color: var(--fg); }
-.sp-tile small { font: 500 11px/1 var(--font-mono); color: var(--fg-3); }
-.sp-tag { position: absolute; font: 600 12px/1 var(--font-mono); color: var(--fg-3); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
+.sp-tile small { font: 500 12px/1 var(--font-mono); color: var(--fg-3); }
+.sp-tag { position: absolute; font: 600 13px/1 var(--font-mono); color: var(--fg-3); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; }
 `);
 
 // ------------------------------------------------------------------ layout (design units)
-const HERO = { x: 110, y: 250, w: 1030, h: 510 };     // the one visual; ZONES.side is the column to its right
-const XR = 1490;                                      // right edge of the scheme control row
+const HERO = { x: 110, y: 260, w: 1030, h: 500 };     // the one visual; ZONES.side is the column to its right
+const CTRL_Y = 196;                                   // controls band: query tokens on the left, the scheme on the right
+const XR = 1490;                                      // right edge of the controls band and of the side column
+const DENSE_T = 48;                                   // above this many tokens the tile row wraps to two rows
 const SCHEMES = ['learned', 'sinusoidal', 'rope', 'alibi', 'none'];
 const NAME = { learned: 'Learned', sinusoidal: 'Sinusoidal', rope: 'RoPE', alibi: 'ALiBi', none: 'None' };
 
@@ -65,7 +83,7 @@ const ONE = {
   sinusoidal: 'adds fixed sines and cosines of the position to each token embedding.',
   rope: 'turns each query and key by an angle that grows with the position, inside attention.',
   alibi: 'subtracts a penalty proportional to distance from the attention scores.',
-  none: 'gives the model no position signal. Attention without a mask cannot see order.',
+  none: 'removes the position signal, so attention alone cannot see order.',
 };
 const NOTE = {
   learned: 'Illustration: a fresh random table, not this model’s trained rows.',
@@ -76,7 +94,7 @@ const NOTE = {
 };
 const STEPS = {
   learned: ['The table', 'Added to a token', 'Compared pairwise'],
-  sinusoidal: ['The waves', 'Read one position', 'Distance decays'],
+  sinusoidal: ['The waves', 'Read one position', 'Similarity by distance'],
   rope: ['One pair, one clock', 'Fast and slow pairs', 'Only the offset counts'],
   alibi: ['One slope per head', 'A distance penalty', 'Added to the scores'],
   none: ['Shuffle the input', 'Same rows, moved', 'The causal mask sees order'],
@@ -97,7 +115,7 @@ const CAPS = {
   sinusoidal: [
     'Each pair of dimensions (2p, 2p+1) holds a sine and a cosine of t·ω_p. Fast pairs wrap every few tokens; slow pairs barely move across this input.',
     'The scan line reads the whole vector PE[t] at each position: one sine and one cosine per pair. That vector is added to the token embedding.',
-    'PE[s]·PE[t] is a sum of cosines of (s − t)·ω_p. It depends only on the distance, so the similarity fades as the distance grows.',
+    'PE[s]·PE[t] is a sum of cosines of (s − t)·ω_p. It depends only on the distance: it falls off overall, with ripples from the fast pairs.',
   ],
   rope: [
     'The query pair (q₀, q₁) of this token is a 2-D vector. At position t it is turned by t·θ₀; with θ₀ = 1 the hand turns one radian per token.',
@@ -107,7 +125,7 @@ const CAPS = {
   alibi: [
     'Head h has slope m_h = 2^(−8(h+1)/H). Each slope is a fixed fraction of the previous one, so head 0 is the steepest.',
     'The bias −m_h·|i − j| is zero on the diagonal and falls linearly with distance. Each head has its own slope, so its own range.',
-    'The bias is added to the scores (scaled when attn_scale is on), before the mask and softmax. Nearby keys keep their weight; distant keys lose it in proportion to distance.',
+    'The bias is added to the scores (scaled when attn_scale is on), before the mask and softmax. The penalty is linear in the score, so each extra token of distance multiplies the unnormalised weight by e^(−m_h): distant keys fall off exponentially.',
   ],
   none: [
     'Shuffle the input tokens. Without a position signal the model records only which token each one is, not where it was.',
@@ -123,6 +141,7 @@ const labelsOf = (T) => Array.from({ length: T }, (_, i) => String(i));
 const every = (T, max) => Math.max(1, Math.ceil(T / max));
 const sparseLabels = (T, max = 16) => { const k = every(T, max); return Array.from({ length: T }, (_, i) => (i % k === 0 ? String(i) : '')); };
 const absMax = (arrs) => { let m = 0; for (const a of arrs) for (let i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i])); return m || 1; };
+const maxAbsOf = (a) => { let m = 0; for (let i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i])); return m; };
 const maxDiff = (a, b) => { let m = 0; const n = Math.min(a.length, b.length); for (let i = 0; i < n; i++) m = Math.max(m, Math.abs(a[i] - b[i])); return m; };
 const omega = (p, d) => Math.pow(10000, (-2 * p) / d);                // sinusoidal ω_p = 10000^(−2p/d)
 const thetaOf = (p, dh, base) => Math.pow(base, (-2 * p) / dh);        // RoPE θ_p = base^(−2p/dh)
@@ -135,6 +154,8 @@ const dotOf = (a, b) => { let acc = 0; for (let i = 0; i < a.length; i++) acc +=
 const vals3 = (arr) => Array.from(arr.slice(0, 3), (v) => num(v, 3)).join(',\\,');
 const pairNorm = (v, p) => Math.hypot(v[2 * p], v[2 * p + 1]);
 const maxPairNorm = (v) => { let m = 0; for (let p = 0; p < v.length / 2; p++) m = Math.max(m, pairNorm(v, p)); return m || 1; };
+// Values under 1e-9 are rounding noise: they read as below 10^-9, never as a result (TeX and plain text).
+const nz = (v, digits = 2) => (Math.abs(v) < 1e-9 ? '< 10^{-9}' : num(v, digits));
 
 // The pairs of dimensions drawn as waves: pair 0, then about 3/32, 1/4 and 1/2 of the way up.
 function pairsShown(d) {
@@ -180,6 +201,25 @@ function ropeAt(v, pos, base) {
   return noGrad(() => rope(Tensor.from(v, [1, dh]), cos, sin)).data;
 }
 
+// Sine and cosine of one position, computed here from omega_p. The engine's table is checked against it.
+function sinRow(t, d) {
+  const out = new Float64Array(d);
+  for (let p = 0; p < d / 2; p++) { const a = t * omega(p, d); out[2 * p] = Math.sin(a); out[2 * p + 1] = Math.cos(a); }
+  return out;
+}
+function sinOwn(T, d) {
+  const P = new Float64Array(T * d);
+  for (let t = 0; t < T; t++) P.set(sinRow(t, d), t * d);
+  return P;
+}
+
+// −m_h·|i − j| for one head, from the formula in this scene (not from the engine's alibiBias).
+function ownBias(T, H, hd) {
+  const mm = Math.pow(2, (-8 * (hd + 1)) / H), B = new Float64Array(T * T);
+  for (let i = 0; i < T; i++) for (let j = 0; j < T; j++) B[i * T + j] = -mm * Math.abs(i - j);
+  return B;
+}
+
 // What a fresh learned table looks like before training (the engine's own initialisation).
 let freshKey = '', freshData = null;
 function freshLearned(S) {
@@ -191,28 +231,16 @@ function freshLearned(S) {
   return freshData;
 }
 const learnedTable = (S) => (S.live ? S.trace['emb.pos'].data : freshLearned(S).subarray(0, S.T * S.d));
-const sinTable = (S) => sinusoidalTable(S.T, S.d);
+const sinTable = (S) => (S.live ? S.trace['emb.pos'].data : sinOwn(S.T, S.d));
 
-// Sizes: matrices shrink with the sequence. Hero matrices stay inside 430 units of height.
+// Sizes: matrices shrink with the sequence. Hero matrices stay inside the hero's 500 units of height.
 const cellW = (d) => clamp(Math.floor(Math.min(13, 900 / d)), 4, 13);
-const cellH = (T) => clamp(Math.floor(Math.min(13, 420 / T)), 4, 13);
+const cellH = (T) => clamp(Math.floor(Math.min(13, 380 / T)), 4, 13);
 const cellHero = (T) => clamp(Math.floor(430 / T), 6, 26);
 // Centre one visual across the hero.
 const centred = (node, top = 0) => h('div', { class: 'sp-abs', style: { left: '0', top: `${top}px`, width: `${HERO.w}px`, display: 'flex', justifyContent: 'center' } }, node);
 // Two visuals side by side, centred in the hero.
 const pair = (...nodes) => h('div', { class: 'sp-abs', style: { left: '0', top: '0', width: `${HERO.w}px`, height: `${HERO.h}px`, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '36px' } }, ...nodes);
-// Square maps of side T in a grid inside W × H: the widest cell that fits, at least 3 px.
-function mapGrid(n, T, W, H, { gap = 16, pad = 28, title = 30 } = {}) {
-  let best = { cols: n, rows: 1, cell: 0 };
-  for (let cols = 1; cols <= n; cols++) {
-    const rows = Math.ceil(n / cols);
-    const cw = Math.floor(((W - (cols - 1) * gap) / cols - pad) / T);
-    const ch = Math.floor(((H - (rows - 1) * gap) / rows - pad - title) / T);
-    const cell = Math.min(cw, ch, 16);
-    if (cell > best.cell || (cell === best.cell && cols > best.cols)) best = { cols, rows, cell };
-  }
-  return { ...best, cell: Math.max(3, best.cell) };
-}
 
 // ------------------------------------------------------------------ motion helpers
 // Walks the scan from position 0 to the selected token, one integer position at a time.
@@ -259,6 +287,29 @@ function heat(S, o, { trace = null, band = 0 } = {}) {
   canvas = hm.canvas;
   S.cleanup(() => hm.destroy());
   return hm;
+}
+
+// A small multiple: the whole T × T matrix drawn into a square of `size` units. It is a shrunk copy of
+// the real matrix on the focus plate's colour scale, so it stays readable at any sequence length.
+function thumbMap(M, T, range, size) {
+  const dpr = window.devicePixelRatio || 1;
+  const cv = h('canvas', { 'aria-hidden': 'true' });
+  cv.width = Math.round(size * dpr);
+  cv.height = Math.round(size * dpr);
+  cv.style.width = `${size}px`;
+  cv.style.height = `${size}px`;
+  const paint = () => {
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, size, size);
+    const c = size / T;
+    for (let i = 0; i < T; i++) for (let j = 0; j < T; j++) {
+      g.fillStyle = diverging(M[i * T + j] / range);
+      g.fillRect(j * c, i * c, c + 0.5, c + 0.5);
+    }
+  };
+  paint();
+  return { canvas: cv, paint };
 }
 
 // A matrix as mat (DOM cells, up to ~1600) or heatmap (canvas, larger). Both can highlight a row.
@@ -330,7 +381,7 @@ function learned0(S) {
     `\\Pe_{${q}} = \\big(${vals3(row)},\\ \\dots\\big)`,
     `t = ${q}, \\quad d = ${d}`,
   ], check));
-  S.side.append(h('div', { class: 'sp-note', text: `Query “${S.label(q)}” at position ${q}: row ${q} of the table.` }));
+  S.note(`Query “${S.label(q)}” at position ${q}: row ${q} of the table.`);
 }
 
 function learned1(S) {
@@ -351,8 +402,8 @@ function learned1(S) {
   const sP = strip(pos, '\\Pe_t', S.live ? 'emb.pos' : null);
   const sX = strip(x, 'x_t', S.live ? 'emb.out' : null);
   S.hero.append(h('div', { class: 'sp-stack' },
-    sT, op('+', { size: 36, tex: false, kind: 'pos' }),
-    sP, op('=', { size: 36, tex: false, kind: 'pos' }),
+    sT, op('+', { size: 48, tex: false, kind: 'pos' }),
+    sP, op('=', { size: 48, tex: false, kind: 'pos' }),
     sX));
   // The token row and the position row fly into the sum, which is revealed when they arrive.
   if (!reducedMotion() && S.st) {
@@ -373,7 +424,7 @@ function learned1(S) {
     `x_{${q},0} = ${num(tok[0], 3)} + ${num(pos[0], 3)} = ${num(x[0], 3)}`,
     `x_{${q},${d - 1}} = ${num(tok[d - 1], 3)} + ${num(pos[d - 1], 3)} = ${num(x[d - 1], 3)}`,
   ], check));
-  S.side.append(h('div', { class: 'sp-note', text: `Query “${S.label(q)}” at position ${q}. The position row is added to the token row, so both are needed.` }));
+  S.note(`Query “${S.label(q)}” at position ${q}: the position row is added to the token row.`);
 }
 
 function learned2(S) {
@@ -395,7 +446,7 @@ function learned2(S) {
     `\\cos(\\Pe_{${q}},\\Pe_{${q}}) = ${num(C[q * T + q], 3)}`,
     nearest >= 0 ? `\\text{nearest other: } t = ${nearest},\\ \\cos = ${num(C[q * T + nearest], 3)}` : '\\text{one position: nothing to compare}',
   ]));
-  S.side.append(h('div', { class: 'sp-note', text: `The bar chart is row ${q} of the matrix: how alike each position is to position ${q}.` }));
+  S.note(`The bar chart is row ${q} of the matrix: how alike each position is to position ${q}.`);
 }
 
 // ------------------------------------------------------------------ sinusoidal
@@ -461,14 +512,14 @@ function sin0(S) {
   fig.reveal();
   walk(S, (t) => fig.setPos(t));
   const ps = fig.rows, a = ps[1] ?? ps[0], b = ps[ps.length - 1];
-  const P = sinTable(S);
-  const check = S.live ? checkBadge(maxDiff(P, S.trace['emb.pos'].data), 0, { label: 'equals the traced emb.pos' }) : null;
+  // Live: the engine's table (the trace) against this scene's own sines and cosines.
+  const check = S.live ? checkBadge(maxDiff(sinOwn(S.T, S.d), S.trace['emb.pos'].data), 0, { label: 'equals the traced emb.pos' }) : null;
   S.side.append(eqBlock('\\Pe_{t,2p} = \\sin(t\\,\\omega_p)', [
     '\\Pe_{t,2p+1} = \\cos(t\\,\\omega_p), \\quad \\omega_p = 10000^{-2p/d}',
     `\\omega_{0} = ${num(ps[0].w, 3)}, \\quad \\omega_{${a.p}} = ${num(a.w, 3)}`,
     `\\text{pair } ${b.p} \\text{ turns once every } ${num(2 * Math.PI / b.w, 0)} \\text{ tokens}`,
   ], check));
-  S.side.append(h('div', { class: 'sp-note', text: `Scan position: “${S.label(S.q)}” at position ${S.q}. Fast pairs repeat every few tokens; the slowest barely moves here.` }));
+  S.note(`Scan position: “${S.label(S.q)}” at position ${S.q}. Fast pairs repeat every few tokens.`);
 }
 
 function sin1(S) {
@@ -499,7 +550,7 @@ function sin1(S) {
       h('div', { html: texHTML(`\\Pe_{${t},0} = \\sin(${t}\\,\\omega_0) = ${num(row[0], 3)}`) }),
       h('div', { html: texHTML(`\\Pe_{${t},1} = \\cos(${t}\\,\\omega_0) = ${num(row[1], 3)}`) }));
     checkHost.replaceChildren(S.live
-      ? checkBadge(maxDiff(row, S.trace['emb.pos'].data.subarray(t * d, (t + 1) * d)), 0, { label: `equals traced emb.pos[${t}]` })
+      ? checkBadge(maxDiff(sinRow(t, d), row), 0, { label: `equals traced emb.pos[${t}]` })
       : h('span', { class: 'sp-note', text: `${T} positions; the scan reads PE[t] for each one.` }));
   });
 }
@@ -528,7 +579,7 @@ function sin2(S) {
     `s = ${q},\\ t = ${j}:\\quad \\Pe_s\\cdot\\Pe_t = ${num(direct, 3)}`,
     `\\sum_{p}\\cos\\big(${off}\\,\\omega_p\\big) = ${num(formula, 3)}`,
   ], verdict(dd < 1e-9, dd < 1e-9 ? 'cosine sum = dot product' : `differs by ${num(dd, 3)}`)));
-  S.side.append(h('div', { class: 'sp-note', text: `The bar chart is row ${q}: the similarity of position ${q} with every position, “${S.label(q)}” included.` }));
+  S.note(`The bar chart is row ${q}: the similarity of position ${q} with every position, “${S.label(q)}” included.`);
 }
 
 // ------------------------------------------------------------------ rope
@@ -583,7 +634,7 @@ function rope0(S) {
     `\\theta_p = \\text{base}^{-2p/d_h}`,
     `\\theta_0 = ${num(theta0, 3)},\\ \\text{base} = ${base},\\ d_h = ${dh}`,
   ], check));
-  S.side.append(h('div', { class: 'sp-note', text: `Each pair of dimensions turns by its own angle. This clock shows the first pair of the query of “${S.label(q)}”.` }));
+  S.note(`The clock shows the first pair of the query of “${S.label(q)}”; each pair turns by its own angle.`);
 }
 
 function rope1(S) {
@@ -633,7 +684,7 @@ function rope1(S) {
     `\\theta_{${ps}} = ${num(thetaOf(ps, dh, base), 4)} \\quad \\text{(the slow pair)}`,
     '\\text{same direction, different speeds}',
   ]));
-  S.side.append(h('div', { class: 'sp-note', text: `Both clocks show the query of “${S.label(q)}” at position ${q}, before and after the turn.` }));
+  S.note(`Both clocks show the query of “${S.label(q)}” at position ${q}, before and after the turn.`);
 }
 
 function rope2(S) {
@@ -672,7 +723,7 @@ function rope2(S) {
   S.hero.append(h('div', { class: 'sp-abs', style: { left: '30px', top: '70px' } }, clk.el));
   const tbody = h('tbody');
   const trs = rowsData.map((r) => {
-    const tr = h('tr', null, h('td', null, String(r.m)), h('td', null, String(r.n)), h('td', null, r.dot.toFixed(6)));
+    const tr = h('tr', null, h('td', null, String(r.m)), h('td', null, String(r.n)), h('td', null, fmt(r.dot, 3)));
     tbody.append(tr);
     return tr;
   });
@@ -681,7 +732,8 @@ function rope2(S) {
     tbody);
   const readout = h('div', { class: 'sp-read', style: { fontSize: '18px' } });
   S.hero.append(h('div', { class: 'sp-abs', style: { left: '430px', top: '80px', width: '560px' } }, tableEl,
-    h('div', { class: 'sp-note', style: { marginTop: '14px' }, text: `Without RoPE the same two vectors give q·k = ${plain.toFixed(6)}: one number, with no position in it. Illustration: the model’s own q and k, turned to other positions.` })));
+    h('div', { class: 'sp-note', style: { marginTop: '14px' }, text: `Without RoPE, the same two vectors give q·k = ${fmt(plain, 3)}: one number, with no position in it.` }),
+    h('div', { class: 'sp-note', style: { marginTop: '6px' }, text: 'Illustration: the model’s own q and k, turned to other positions.' })));
   S.hero.append(h('div', { class: 'sp-abs', style: { left: '30px', top: '372px', width: '380px' } }, readout));
   const show = (i) => {
     const r = rowsData[i];
@@ -689,8 +741,8 @@ function rope2(S) {
     trs.forEach((tr, k) => tr.classList.toggle('on', k === i));
     readout.replaceChildren(
       h('div', { html: texHTML(`m = ${r.m}, \\quad n = m + ${off} = ${r.n}`) }),
-      h('div', { html: texHTML(`q'_m \\cdot k'_n = ${num(r.dot, 6)}`) }),
-      h('div', { class: 'sp-note', text: `The angle from the query hand to the key hand: ${num(wedges[0], 3)} rad, the same in every row.` }));
+      h('div', { html: texHTML(`q'_m \\cdot k'_n = ${num(r.dot, 3)}`) }),
+      h('div', { class: 'sp-note', text: `The angle from the query hand to the key hand: ${fmt(wedges[0], 3)} rad, the same in every row.` }));
   };
   // One pass through the rows, then rest on the first. Hovering or clicking a row stops the pass.
   let pass = null;
@@ -715,24 +767,27 @@ function rope2(S) {
   }
   S.side.append(eqBlock('\\langle R_m q,\\ R_n k\\rangle = \\langle q,\\ R_{n-m} k\\rangle', [
     `n - m = ${off} \\quad \\text{in every row}`,
-    `\\max_m - \\min_m\\ q'_m\\cdot k'_{m+${off}} = ${num(spread, 2)}`,
-    `\\text{angle } \\angle(k'_n, q'_m) \\text{ spread } = ${num(wSpread, 2)}`,
+    `\\max_m - \\min_m\\ q'_m\\cdot k'_{m+${off}} = ${nz(spread)}`,
+    `\\text{angle spread } = ${nz(wSpread)}`,
   ], verdict(spread < 1e-9, spread < 1e-9 ? 'equal in every row' : 'the rows differ')));
 }
 
 // ------------------------------------------------------------------ alibi
 function alibi0(S) {
-  const { H } = S, m = alibiSlopes(H), top = 300;
-  const colW = Math.min(120, Math.floor((HERO.w - (H - 1) * 16) / H));
-  const gap = H > 1 ? Math.max(8, Math.min(44, Math.floor((HERO.w - H * colW) / (H - 1)))) : 0;
+  const { H } = S, m = alibiSlopes(H), top = 280;
+  const colW = Math.min(120, Math.floor(HERO.w / H));
   const bars = m.map((mh, hh) => {
-    const bar = h('div', { class: 'sp-bar', style: { height: '0px', width: `${Math.min(84, colW - 16)}px` } });
+    const bar = h('div', { class: 'sp-bar', style: { height: '0px', width: `${Math.min(84, colW - 22)}px` } });
     return {
       bar, target: Math.max(3, (mh / m[0]) * top),
-      col: h('div', { class: 'sp-slope', style: { width: `${colW}px` } }, h('div', { html: texHTML(`m_{${hh}} = ${num(mh, 4)}`) }), bar, h('div', { class: 'sp-note', text: `head ${hh}` })),
+      col: h('div', { class: 'sp-slope', style: { width: `${colW}px` } },
+        h('div', { class: 'sp-slope-m', html: texHTML(`m_{${hh}}`) }),
+        h('div', { class: 'sp-slope-v', text: fmt(mh, 4) }),
+        bar,
+        h('div', { class: 'sp-note', text: `head ${hh}` })),
     };
   });
-  S.hero.append(h('div', { class: 'sp-bars', style: { gap: `${gap}px` } }, bars.map((b) => b.col)));
+  S.hero.append(h('div', { class: 'sp-bars' }, bars.map((b) => b.col)));
   if (reducedMotion()) bars.forEach((b) => { b.bar.style.height = `${b.target}px`; });
   else requestAnimationFrame(() => requestAnimationFrame(() => bars.forEach((b) => { b.bar.style.height = `${b.target}px`; })));
   S.side.append(eqBlock('m_h = 2^{-8(h+1)/H}', [
@@ -744,46 +799,72 @@ function alibi0(S) {
 }
 
 function alibi1(S) {
-  const { T, H, q, cfg } = S, B = alibiBias(cfg, T), m = alibiSlopes(H);
-  const range = Math.max(...m) * Math.max(1, T - 1);
-  // The maps share one grid sized from the hero box, so long sequences shrink instead of wrapping.
-  const g = mapGrid(H, T, HERO.w, HERO.h - 12);
-  const grid = h('div', { class: 'sp-abs', style: {
-    left: '0', top: '6px', width: `${HERO.w}px`, height: `${HERO.h - 12}px`,
-    display: 'grid', gridTemplateColumns: `repeat(${g.cols}, auto)`, gap: '16px', justifyContent: 'center', alignContent: 'center',
-  } });
-  B.forEach((b, hh) => {
-    const hm = heat(S, {
-      data: b, rows: T, cols: T, mode: 'diverging', range, cell: g.cell, cellH: g.cell, gap: g.cell <= 4 ? 0 : 1,
-      highlight: { rows: [q] }, maxWidth: 300, ariaLabel: `ALiBi bias, head ${hh}`,
-    }, { trace: S.live ? 'alibi' : null, band: hh });
-    grid.append(plate(hm.el, texHTML(`b_{${hh}}, \\; m = ${num(m[hh], 4)}`)));
-  });
-  S.hero.append(grid);
-  const dd = Math.min(4, q);
-  const lines = dd > 0
-    ? [`b_{0,${q},${q - dd}} = -${num(m[0], 4)} \\cdot ${dd} = ${num(B[0][q * T + q - dd], 3)}`,
-      `b_{${H - 1},${q},${q - dd}} = -${num(m[H - 1], 4)} \\cdot ${dd} = ${num(B[H - 1][q * T + q - dd], 4)}`]
-    : ['b_{h,i,i} = 0 \\quad \\text{on the diagonal}'];
+  const { T, H, q, hd, cfg } = S;
+  const m = alibiSlopes(H);
+  const Bs = S.live ? null : alibiBias(cfg, T);                       // the formula, for previews only
+  const bOf = (hh) => (S.live ? headMat(S.trace.alibi, hh, T) : Bs[hh]);  // the traced tensor when live
+  // The colour scale is shared by every head: the steepest head (h = 0) at the largest distance.
+  const range = Math.pow(2, -8 / H) * Math.max(1, T - 1);
+  // Live cross-check against the formula, recomputed here cell by cell: the traced alibi tensor, and the
+  // traced bias (biased minus the scores before it) for every head.
   let check = null;
   if (S.live) {
+    const pre = S.trace[cfg.attn_scale ? 'L0.attn.scaled' : 'L0.attn.scores'], biased = S.trace['L0.attn.biased'];
     let e = 0;
-    for (let hh = 0; hh < H; hh++) e = Math.max(e, maxDiff(headMat(S.trace.alibi, hh, T), B[hh]));
-    check = checkBadge(e, 0, { label: 'every head = traced alibi' });
+    for (let hh = 0; hh < H; hh++) {
+      const A = headMat(S.trace.alibi, hh, T), P0 = headMat(pre, hh, T), P1 = headMat(biased, hh, T);
+      const mm = Math.pow(2, (-8 * (hh + 1)) / H);
+      for (let i = 0; i < T; i++) for (let j = 0; j < T; j++) {
+        const own = -mm * Math.abs(i - j), k = i * T + j;
+        e = Math.max(e, Math.abs(A[k] - own), Math.abs((P1[k] - P0[k]) - own));
+      }
+    }
+    check = checkBadge(e, 0, { label: 'traced bias = −m_h·|i − j|' });
   }
+  // The focus: the selected head at full size, with the query row outlined.
+  const cf = clamp(Math.floor(430 / T), 4, 14);
+  const focus = heat(S, {
+    data: bOf(hd), rows: T, cols: T, mode: 'diverging', range, cell: cf, cellH: cf, highlight: { rows: [q] }, maxWidth: 480,
+    ariaLabel: `ALiBi bias, head ${hd}`,
+  }, { trace: S.live ? 'alibi' : null, band: hd });
+  // The context: every head as a small multiple, on the same colour scale. Clicking one selects that head.
+  const cols = Math.min(H, 4), rows = Math.ceil(H / cols);
+  const size = clamp(Math.floor((HERO.h - rows * 46) / rows), 56, 100);
+  const thumbs = [];
+  for (let hh = 0; hh < H; hh++) {
+    const { canvas, paint } = thumbMap(bOf(hh), T, range, size);
+    S.cleanup(onThemeChange(paint));
+    thumbs.push(h('button', {
+      type: 'button', class: ['sp-thumb', hh === hd && 'on'], title: `head ${hh}: m = ${fmt(m[hh], 4)}`, 'aria-pressed': String(hh === hd),
+      onClick: () => S.select(hh),
+    }, canvas, h('span', { text: `h${hh}` })));
+  }
+  const grid = h('div', { class: 'sp-thumbs', style: { gridTemplateColumns: `repeat(${cols}, auto)` } }, ...thumbs);
+  S.hero.append(h('div', { class: 'sp-abs', style: { left: '0', top: '0', width: `${HERO.w}px`, height: `${HERO.h}px`, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '48px' } },
+    plate(focus.el, texHTML(`b_{${hd}}, \\; m_{${hd}} = ${num(m[hd], 4)}`)), grid));
+  const dd = Math.min(4, q);
+  const lines = dd > 0
+    ? [`b_{0,${q},${q - dd}} = -${num(m[0], 4)} \\cdot ${dd} = ${num(bOf(0)[q * T + q - dd], 3)}`,
+      `b_{${H - 1},${q},${q - dd}} = -${num(m[H - 1], 4)} \\cdot ${dd} = ${num(bOf(H - 1)[q * T + q - dd], 4)}`]
+    : ['b_{h,i,i} = 0 \\quad \\text{on the diagonal}'];
   S.side.append(eqBlock('b_{h,ij} = -m_h\\,\\lvert i-j\\rvert', lines, check));
+  S.note('Every head on one colour scale. The outlined head is the selected one; click a head to select it.');
 }
 
 function alibi2(S) {
-  const { T, hd, q, cfg } = S, B = alibiBias(cfg, T)[hd];
+  const { T, hd, q, cfg } = S;
+  const Bown = ownBias(T, S.H, hd);
   const key = cfg.attn_scale ? 'L0.attn.scaled' : 'L0.attn.scores';
   const Sc = headMat(S.trace[key], hd, T);
-  // S + b is computed here from the scores and the bias. When live, the traced biased tensor is the displayed one and the check.
-  const Sbc = Float64Array.from(Sc, (v, k) => v + B[k]);
+  // S + b is computed here from the scores and the formula. When live, the traced biased tensor is the one shown.
+  const Sbc = Float64Array.from(Sc, (v, k) => v + Bown[k]);
   const Sb = S.live ? headMat(S.trace['L0.attn.biased'], hd, T) : Sbc;
-  let j = 0;
-  for (let k = 0; k <= q; k++) if (Sb[q * T + k] > Sb[q * T + j]) j = k;
-  const range = absMax([Sc, Sb]), bRange = absMax([B]), c = clamp(Math.floor(200 / T), 4, 12), lab = sparseLabels(T, 16);
+  const Bd = S.live ? headMat(S.trace.alibi, hd, T) : Bown;
+  // The highlighted key: the best score after the bias among the keys the mask allows for this query.
+  let j = -1;
+  for (let k = 0; k < T; k++) if (maskAllows(cfg, q, k) && (j < 0 || Sb[q * T + k] > Sb[q * T + j])) j = k;
+  if (j < 0) j = q;
+  const range = absMax([Sc, Sb]), bRange = absMax([Bd]), c = clamp(Math.floor(240 / T), 3, 12), lab = sparseLabels(T, 16);
   const plateOf = (data, rng, title, aria, trace) => {
     const hm = heat(S, {
       data, rows: T, cols: T, mode: 'diverging', range: rng, cell: c, highlight: { rows: [q], cells: [[q, j]] }, maxWidth: 300,
@@ -792,19 +873,22 @@ function alibi2(S) {
     return plate(hm.el, texHTML(title));
   };
   const plateS = plateOf(Sc, range, cfg.attn_scale ? '\\tilde S_h' : 'S_h', 'scores', key);
-  const plateB = plateOf(B, bRange, 'b_h', 'ALiBi bias', S.live ? 'alibi' : null);
+  const plateB = plateOf(Bd, bRange, 'b_h', 'ALiBi bias', S.live ? 'alibi' : null);
   const plateSb = plateOf(Sb, range, 'S^{b}_h', 'scores with bias', S.live ? 'L0.attn.biased' : null);
-  S.hero.append(h('div', { class: 'sp-abs', style: { left: '0', top: '130px', width: `${HERO.w}px`, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '14px' } },
-    plateS, op('+', { size: 40, tex: false, kind: 'pos' }), plateB, op('=', { size: 40, tex: false, kind: 'pos' }), plateSb));
+  S.hero.append(h('div', { class: 'sp-abs', style: { left: '0', top: '0', width: `${HERO.w}px`, height: `${HERO.h}px`, display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '14px' } },
+    plateS, op('+', { size: 48, tex: false, kind: 'pos' }), plateB, op('=', { size: 48, tex: false, kind: 'pos' }), plateSb));
   let check = null;
-  if (S.live) check = checkBadge(maxDiff(Sbc, headMat(S.trace['L0.attn.biased'], hd, T)), 0, { label: 'S + b equals traced biased' });
+  if (S.live) {
+    const e = Math.max(maxDiff(Sbc, headMat(S.trace['L0.attn.biased'], hd, T)), maxDiff(Bown, headMat(S.trace.alibi, hd, T)));
+    check = checkBadge(e, 0, { label: 'S + b equals traced biased' });
+  }
   const lhs = cfg.attn_scale ? '\\frac{q_i\\cdot k_j}{\\sqrt{d_h}}' : 'q_i\\cdot k_j';
   S.side.append(eqBlock(`S^{b}_{h,ij} = ${lhs} - m_h\\lvert i-j\\rvert`, [
     `(i,j) = (${q}, ${j})`,
-    `${num(Sc[q * T + j], 3)} + (${num(B[q * T + j], 3)}) = ${num(Sb[q * T + j], 3)}`,
+    `${num(Sc[q * T + j], 3)} + (${num(Bd[q * T + j], 3)}) = ${num(Sb[q * T + j], 3)}`,
     '\\text{the attention mask comes next}',
   ], check));
-  S.side.append(h('div', { class: 'sp-note', text: `Head ${hd}, query “${S.label(q)}” at position ${q}. The highlighted key is the best one after the bias.` }));
+  S.note(`Head ${hd}, query “${S.label(q)}” at position ${q}. The outlined key has the highest score the mask allows after the bias.`);
 }
 
 // ------------------------------------------------------------------ none
@@ -852,7 +936,10 @@ function none1(S) {
   const { perm, V, a, b } = noneRuns(S, 'none');
   let maxD = 0;
   for (let r = 0; r < T; r++) for (let c = 0; c < V; c++) maxD = Math.max(maxD, Math.abs(b[r * V + c] - a[perm[r] * V + c]));
-  const range = absMax([a, b]), lab = labelsOf(T), cell = clamp(Math.floor(360 / T), 4, 14);
+  // The change is judged against the output's own scale. A (near-)zero output does not depend on the input.
+  const scale = maxAbsOf(a), flat = scale < 1e-9;
+  const range = absMax([a, b]), lab = labelsOf(T);
+  const cell = clamp(Math.min(Math.floor(360 / T), Math.floor(440 / V)), 3, 14);   // the plates fit the hero's width too
   const at = (tok) => perm.indexOf(tok);                   // the shuffled row that holds token tok
   let hA = null, hB = null;
   // The query's row lights up on both sides; hovering any row moves the light to that token.
@@ -868,11 +955,13 @@ function none1(S) {
   S.hero.append(h('div', { class: 'sp-abs', style: { left: '0', top: '0', width: '1030px', display: 'flex', justifyContent: 'center', gap: '36px', alignItems: 'flex-start' } },
     plate(hA.el, texHTML('\\text{original input, row = token}')),
     plate(hB.el, texHTML('\\text{shuffled input, row = original index}'))));
-  const check = checkBadge(maxD, 0, { label: 'the same rows, moved' });
+  const check = flat ? null : checkBadge(maxD / scale, 0, { label: 'the same rows, moved', tol: 1e-6 });
   S.side.append(eqBlock('\\mathrm{out}_{r} = \\mathrm{out}_{\\pi(r)}', [
-    `\\Delta = \\max_{r,c}\\big|\\mathrm{out}_{r,c}-\\mathrm{out}_{\\pi(r),c}\\big| = ${maxD === 0 ? '0' : num(maxD, 2)}`,
+    `\\Delta = \\max_{r,c}\\big|\\mathrm{out}_{r,c}-\\mathrm{out}_{\\pi(r),c}\\big| = ${nz(maxD)}`,
   ], check));
-  S.side.append(h('div', { class: 'sp-note', text: 'Hover a row on either side: the same token lights up on both sides.' }));
+  S.note(flat
+    ? 'This configuration’s output does not depend on the input: every value is zero to within rounding.'
+    : 'Hover a row on either side: the same token lights up on both sides.');
 }
 
 function none2(S) {
@@ -889,15 +978,16 @@ function none2(S) {
     for (let c = 0; c < V; c++) mx = Math.max(mx, Math.abs(b[r * V + c] - a[perm[r] * V + c]));
     vals.push(mx);
   }
-  const mx = Math.max(...vals);
-  const bc = barChart({ values: vals, labels: labelsOf(T), kind: 'pos', format: (v) => fmt(v, 3), width: 900, height: 330, ariaLabel: 'change per row, causal mask kept' });
+  const mx = Math.max(...vals), scale = maxAbsOf(a), flat = scale < 1e-9;
+  const bc = barChart({ values: vals, labels: labelsOf(T), kind: 'pos', format: (v) => (v < 1e-9 ? '0' : fmt(v, 3)), width: 900, height: 330, ariaLabel: 'change per row, causal mask kept' });
   S.hero.append(h('div', { class: 'sp-abs', style: { left: '50px', top: '0' } }, plate(bc.el,
     texHTML('\\max_c \\big|\\mathrm{out}_{r,c} - \\mathrm{out}_{\\pi(r),c}\\big| \\text{ per row } r, \\text{ causal mask kept}'))));
-  const changed = mx > 1e-6;
+  const changed = !flat && mx > 1e-6 * scale;
   S.side.append(eqBlock('\\mathrm{keys}(r) = \\{0,\\dots,r\\}', [
-    `\\max_{r}\\big|\\mathrm{out}_{r} - \\mathrm{out}_{\\pi(r)}\\big| = ${num(mx, 2)}`,
+    `\\max_{r}\\big|\\mathrm{out}_{r} - \\mathrm{out}_{\\pi(r)}\\big| = ${nz(mx)}`,
     '\\text{shuffled: } \\{\\pi(0),\\dots,\\pi(r)\\}',
-  ], verdict(changed, changed ? 'rows change under the mask' : 'no change: try a longer text')));
+  ], flat ? null : verdict(changed, changed ? 'rows change under the mask' : 'no change at this length: try a longer text')));
+  S.note(flat ? 'This configuration’s output does not depend on the input, so the mask has nothing to show.' : 'Rows after the first see a different set of earlier tokens once the input is shuffled.');
 }
 
 // ------------------------------------------------------------------ tables
@@ -909,22 +999,17 @@ const STEP_FN = {
   none: [none0, none1, none2],
 };
 
-// The side note for a preview: what it is, and what "Use this" does to the weights.
-function previewNote(S) {
-  const shapesChange = (S.cfg.pos_encoding === 'learned') !== (S.shown === 'learned');
-  const reinit = !shapesChange
-    ? 'Using it keeps the current weights: no shape changes.'
-    : S.preset
-      ? 'Using it replaces the trained weights with random ones: the learned table is added or removed.'
-      : 'Using it re-initialises the weights: the learned table is added or removed.';
-  return `${NOTE[S.shown]} ${reinit}`;
-}
+// Whether "Use this" changes a parameter shape (only the learned table appears or disappears). When it does, the store
+// re-initialises every weight; when it does not, the current weights are kept.
+const reinitText = (S) => ((S.cfg.pos_encoding === 'learned') !== (S.shown === 'learned')
+  ? 'Using it re-initialises all weights with random values, because the parameter shapes change.'
+  : 'Using it keeps the current weights: no parameter shape changes.');
 
 export default {
   mount(el, ctx) {
     const st = stage2d(el);
     let alive = true, paused = false, step = 0, preview = null, lastCurrent = ctx.cfg.pos_encoding;
-    let shuffleN = 0, nSteps = 3, autoOn = true, auto = null, programmatic = false, cleanups = [];
+    let shuffleN = 0, nSteps = 3, autoOn = true, auto = null, programmatic = false, cleanups = [], notes = [];
 
     // ---------------------------------------------------------------- frame (shared kit parts)
     const header = sceneHeader(st, { chips: [['Embedding', 'embed'], ['pos_encoding', 'pos']], title: 'Positional encoding' });
@@ -936,14 +1021,17 @@ export default {
       onChange: (v) => { stopAuto(); preview = v === ctx.cfg.pos_encoding ? null : v; step = 0; rebuild(); },
     });
     seg.el.classList.add('sp-seg');
-    const status = h('div', { class: 'sp-status' });
-    const top = h('div', { class: 'sp-top' }, seg.el, status);
-    const picker = tokenPicker(st, ctx, { label: 'query', kind: 'pos' });
-    const heads = headPicker(st, ctx, { x: ZONES.side.x, y: HERO.y, kind: 'attn' });
+    // Controls band: the query tokens on the left (wrapping for long inputs), the scheme on the right.
+    const picker = tokenPicker(st, ctx, { label: 'query', kind: 'pos', maxWidth: 1010 });
+    picker.el.classList.add('sp-picker');
+    const schemeBox = h('div', { class: 'sp-scheme' }, seg.el);
+    st.add(schemeBox, { x: XR, y: CTRL_Y, anchor: 'tr' });
+    // Side column: the head chips (RoPE and ALiBi, for the whole scheme), then the step's own content.
+    const sideHead = h('div', { class: 'sp-heads' });
+    const sideBody = h('div', { class: 'sp-side-body' });
+    const side = h('div', { class: 'sp-side', style: { width: `${ZONES.side.w}px` } }, sideHead, sideBody);
     const hero = h('div', { class: 'sp-hero', style: { width: `${HERO.w}px`, height: `${HERO.h}px` } });
-    const side = h('div', { class: 'sp-side', style: { width: `${ZONES.side.w}px` } });
     const cap = sceneCaption(st, {});
-    st.add(top, { x: XR, y: 74, anchor: 'tr' });
     st.add(hero, { x: HERO.x, y: HERO.y });
     st.add(side, { x: ZONES.side.x, y: HERO.y });
 
@@ -956,7 +1044,9 @@ export default {
         st, T, d, H, dh: d / H, cfg: c, ids: S0.ids, trace: S0.trace, model: S0.model, seed: S0.seed, preset: !!S0.preset,
         q: clamp(S0.sel.token ?? T - 1, 0, T - 1), hd: clamp(S0.sel.head ?? 0, 0, H - 1),
         shown, live: shown === c.pos_encoding, shuffleN,
-        hero: layer, side, label: (i) => ctx.label(i),
+        hero: layer, side: sideBody, label: (i) => ctx.label(i),
+        note: (text) => notes.push(text),
+        select: (head) => ctx.store.select({ head }),
         cleanup: (fn) => cleanups.push(fn),
         reshuffle: () => { shuffleN++; renderStep(step); },
       };
@@ -988,14 +1078,21 @@ export default {
       ctx.store.setConfig({ pos_encoding: v });    // re-initialises the weights when a parameter shape changes
     }
 
-    function renderStatus(S) {
-      if (S.live) {
-        status.replaceChildren(h('span', { class: 'sp-flag live' }, `in use · ${NAME[S.shown]}`));
-      } else {
-        status.replaceChildren(
-          h('span', { class: 'sp-flag' }, S.shown === 'none' ? 'preview · clone' : 'preview · illustration'),
-          button('Use this', () => useScheme(S.shown), { variant: 'primary', title: `Set pos_encoding to ${S.shown}` }));
-      }
+    // The status of the scheme, under the equation: live, or a preview with its one action.
+    function statusRow(S) {
+      if (S.live) return h('div', { class: 'sp-status' }, h('span', { class: 'sp-flag live' }, `in use · ${NAME[S.shown]}`));
+      return h('div', { class: 'sp-status' },
+        h('span', { class: 'sp-flag' }, S.shown === 'none' ? 'preview · clone' : 'preview · illustration'),
+        button('Use this', () => useScheme(S.shown), { variant: 'primary', title: reinitText(S) }));
+    }
+
+    // Head chips for RoPE and ALiBi: one wrapping row, rebuilt whenever the trace or the selection changes.
+    function renderHeads(S) {
+      sideHead.replaceChildren(h('div', { class: 'sp-heads-label' }, 'head'), ...Array.from({ length: S.H }, (_, i) => {
+        const b = h('button', { type: 'button', class: ['k-pick', 'k-pick-head', i === S.hd && 'sel'], title: `head ${i}`, style: { '--kind': 'var(--c-attn)' } }, h('b', null, `h${i}`));
+        b.addEventListener('click', () => ctx.store.select({ head: i }));
+        return b;
+      }));
     }
 
     function renderStep(i) {
@@ -1003,20 +1100,19 @@ export default {
       cleanupAll();
       const layer = newLayer();
       const S = snapshot(layer);
-      side.replaceChildren();
-      const needHead = S.shown === 'rope' || (S.shown === 'alibi' && i === 2);
-      heads.el.style.display = needHead ? '' : 'none';
-      side.classList.toggle('pad', needHead);
-      renderStatus(S);
+      notes = [];
+      sideBody.replaceChildren(h('div', { class: 'k-label', style: { textAlign: 'left' } }, STEPS[S.shown][i]));
       try {
         STEP_FN[S.shown][i](S);
       } catch (err) {
         console.error('[positional] step failed', err);
         layer.replaceChildren(h('div', { class: 'callout warn' }, `This step could not be drawn: ${err.message}`));
       }
-      if (!S.live) side.append(h('div', { class: 'sp-note' }, previewNote(S)));
+      sideBody.append(statusRow(S));
+      if (!S.live) notes.unshift(NOTE[S.shown]);
+      for (const t of notes) sideBody.append(h('div', { class: 'sp-note', text: t }));
       cap.set(capText(S, i));
-      if (!reducedMotion()) side.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 360, easing: MOTION.easeOut });
+      if (!reducedMotion()) sideBody.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 360, easing: MOTION.easeOut });
     }
 
     function stopAuto() { autoOn = false; clearTimeout(auto); }
@@ -1039,6 +1135,12 @@ export default {
       renderStep(i);
     }
 
+    // The header line: the question and the scheme in one sentence. None is stated, not asked.
+    function subFor(S) {
+      if (S.shown === 'none') return `<b>${NAME.none}</b> ${ONE.none}`;
+      return `How does the model know where each token is? <b>${NAME[S.shown]}</b> ${ONE[S.shown]}`;
+    }
+
     function rebuild() {
       if (!alive || paused || !ctx.state.trace) return;
       const c = ctx.cfg;
@@ -1046,8 +1148,12 @@ export default {
       const S = snapshot(hero);
       nSteps = STEPS[S.shown].length;
       chipPos.textContent = `pos_encoding: ${c.pos_encoding}`;
-      header.setSub(`How does the model know where each token is? <b>${NAME[S.shown]}</b> ${ONE[S.shown]}`);
+      header.setSub(subFor(S));
       seg.set(S.shown);
+      picker.el.classList.toggle('dense', ctx.state.ids.length > DENSE_T);
+      const needHeads = S.shown === 'rope' || S.shown === 'alibi';
+      sideHead.style.display = needHeads ? '' : 'none';
+      if (needHeads) renderHeads(S); else sideHead.replaceChildren();
       ctx.setSteps(STEPS[S.shown], onStep);
       step = clamp(step, 0, nSteps - 1);
       programmatic = true;
