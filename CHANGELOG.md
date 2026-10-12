@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.1.0 (2026-10-12)
+
+- **Subword model, now the default:** a GPT-2-style model trained on TinyStories with a
+  4,096-token byte-level BPE vocabulary, so most words are one token (held-out loss 1.98
+  nats/token). The browser tokenizer matches the Python one exactly. Every level handles the
+  large vocabulary: top-k views for the LM head and sampling, word-sized tiles everywhere.
+  The character models remain one click away; `?preset=<id>` links to any model.
+- **Tokens, for real:** with the subword model the Tokens level shows the actual tokenizer:
+  the word split, a ladder of each word's real merges from its bytes (type any word), the
+  ids, and the composition of the vocabulary.
+- **Read the code, zoom the model:** click, select or right-click any line of
+  `reference/model.py` to fly to the part of the model it computes.
+- **A new 3D overview** built on the logic of the original paper's figure: inputs at the
+  bottom, a label rail, residual loops, one open layer with the others stacked as wafers, the
+  real attention patterns, residual vectors and output distribution, and a forward-pass
+  animation in which the predicted token flies back into the input.
+- Verified: parity 549/549, every equation on every model (10,249 live checks), tokenizer
+  parity on 204 texts, preset logits against PyTorch.
+
 ## 1.0.0 (2026-10-12)
 
 First public release of **Transformer Atlas**.
