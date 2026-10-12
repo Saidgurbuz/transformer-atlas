@@ -125,6 +125,8 @@ export function validFor(id, cfg) {
   if (params.h !== undefined && !(Number(params.h) >= 0 && Number(params.h) < cfg.n_head)) return false;
   if (def.pattern === 'gqa.:l' && cfg.n_kv_head === cfg.n_head) return false;
   if (def.pattern === 'final-norm' && cfg.norm_placement !== 'pre') return false;
+  // post-LN has no norm in front of a sub-layer; its norms follow the adds (residual nodes)
+  if (def.pattern === 'norm.:l.:n' && cfg.norm_placement !== 'pre') return false;
   return true;
 }
 
