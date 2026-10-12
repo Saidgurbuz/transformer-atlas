@@ -24,6 +24,20 @@ function byteMaps() {
 const { enc: BYTE_ENC, dec: BYTE_DEC } = byteMaps();
 const utf8 = new TextEncoder();
 const utf8dec = new TextDecoder('utf-8', { fatal: false });
+const strict = new TextDecoder('utf-8', { fatal: true });
+const hex = (b) => `⟨${b.toString(16).padStart(2, '0')}⟩`;
+
+/**
+ * Display form of some bytes: text where they are complete UTF-8, newline and tab as ↵ and ⇥, and any
+ * byte that is not readable on its own (part of a multi-byte character, or a control code) as ⟨hex⟩.
+ * So "café" splits into c a f ⟨c3⟩ ⟨a9⟩ before its last two bytes merge into é.
+ */
+function display(bytes) {
+  let text;
+  try { text = strict.decode(bytes); } catch { text = null; }
+  if (text === null) return Array.from(bytes, (b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : b === 10 ? '\n' : b === 9 ? '\t' : hex(b))).join('');
+  return Array.from(text, (c) => { const k = c.codePointAt(0); return (k < 0x20 && k !== 10 && k !== 9) || k === 0x7f ? hex(k) : c; }).join('');
+}
 
 /** Raw text of a byte-level token string (may be a partial UTF-8 sequence). */
 export function bytesOf(tok) { return Uint8Array.from(Array.from(tok), (c) => BYTE_DEC.get(c) ?? 63); }
@@ -68,7 +82,7 @@ export function makeBPETokenizer(spec) {
     const t = vocab[id];
     if (t === undefined) return '?';
     if (special.has(t)) return '⟨eot⟩';
-    const s = utf8dec.decode(bytesOf(t));
+    const s = display(bytesOf(t));
     return s.replace(/^ /, '␣').replace(/\n/g, '↵').replace(/\t/g, '⇥') || '␣';
   }
 
@@ -95,7 +109,7 @@ export function makeBPETokenizer(spec) {
      * The first state is the raw bytes; each later state applies the next lowest-rank merge.
      */
     explain(word) {
-      const show = (s) => utf8dec.decode(bytesOf(s)).replace(/^ /, '␣') || '·';
+      const show = (s) => display(bytesOf(s)).replace(/^ /, '␣').replace(/\n/g, '↵').replace(/\t/g, '⇥') || '·';
       let syms = Array.from(toByteChars(word));
       const states = [{ pieces: syms.map(show), merge: null, rank: null }];
       while (syms.length > 1) {
