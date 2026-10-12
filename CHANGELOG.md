@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.2.0 (2026-10-12)
+
+- **A new 3D overview**, chosen over an independent alternative in a blind design review and
+  refined over two more rounds. Every layer is an attention + MLP pair on a glass plate (the MLP
+  raised: it runs second); the residual stream is a thick, labelled rod with a ⊕ where each
+  sub-layer adds back. Live data drawn as geometry: each head's real attention pattern on its own
+  screen, the MLP's most active units as sign-coloured bars, the real next-token distribution
+  under a headline prediction. Saturated colour in both themes; in dark mode only data glows.
+- **No flicker:** hover changes colour only, the camera never moves on its own, and a still scene
+  measures 0 changed pixels (new `tools/frames.sh` checks this). One calm forward-pass animation:
+  a light rises up the stream, each layer lights up and its units grow, the prediction appears.
+- Phone layout with a colour legend; the alternative design stays viewable with `?root=b`.
+
 ## 1.1.0 (2026-10-12)
 
 - **Subword model, now the default:** a GPT-2-style model trained on TinyStories with a
