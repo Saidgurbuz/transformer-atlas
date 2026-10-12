@@ -3,7 +3,7 @@
 //   ← → (or the story bar) to walk the forward pass · right-click anything for maths and code.
 // Scenes live in src/atlas/scenes/*.js and default-export {mount(el, ctx) -> {destroy, pause?, resume?, step?}}.
 import { store } from '../core/store.js';
-import { PATTERNS, nodeInfo, pathTo, storyOrder, validFor, nodeForKey, EXTRAS, resolve } from './nodes.js';
+import { PATTERNS, nodeInfo, pathTo, storyOrder, validFor, nodeForKey, nodeForLine, EXTRAS, resolve } from './nodes.js';
 import { renderInspector, renderSettings, cycleTheme, loadTheme, currentTheme, mountNotices, infoFor, lineForKey, codeLines } from '../core/panels.js';
 import { mathCard, mathTipHTML, mathFor } from '../core/mathview.js';
 import { h, clear, fmt, codeView, openContextMenu, reducedMotion, kindVar, texHTML } from '../ui/index.js';
@@ -300,11 +300,12 @@ export function startAtlas(root) {
   function openRight(mode, arg = {}) {
     if (rightDrawer.classList.contains('open') && rightMode === mode && !arg.key && !arg.keys) { closeRight(); return; }
     rightMode = mode; rightArg = arg;
+    app.classList.add('right-open');
     rightDrawer.classList.add('open');
     rightDrawer.setAttribute('aria-hidden', 'false');
     renderRight();
   }
-  function closeRight() { rightDrawer.classList.remove('open'); rightDrawer.setAttribute('aria-hidden', 'true'); rightMode = null; }
+  function closeRight() { rightDrawer.classList.remove('open'); app.classList.remove('right-open'); rightDrawer.setAttribute('aria-hidden', 'true'); rightMode = null; }
   function renderRight() {
     const top = stack[stack.length - 1];
     const body = h('div', { class: 'atlas-drawer-body' });
@@ -349,12 +350,82 @@ export function startAtlas(root) {
     } else if (rightMode === 'code') {
       const keys = rightArg.keys || (rightArg.key ? [rightArg.key] : top?.info.keys || []);
       const lines = keys.map((k) => lineForKey(k, st.config)).filter(Boolean);
-      body.append(h('p', { class: 'small muted' }, lines.length ? `reference/model.py · the lines that compute this view’s tensors are highlighted.` : 'reference/model.py'));
+      body.append(h('p', { class: 'small muted' }, lines.length
+        ? 'reference/model.py · highlighted: the lines behind this view. Click any line (or select a few) to zoom to the part of the model it computes.'
+        : 'reference/model.py · click any line (or select a few) to zoom to the part of the model it computes.'));
       const cv = codeView({ lines: codeLines, highlight: lines, maxHeight: 4000, kindOf: (k) => infoFor(k).kind,
-        onTraceClick: (k) => { const key = k.replace('{i}', String(top?.info.params.l ?? store.state.sel.layer)); go(nodeForKey(key, store.state.sel)); } });
+        onTraceClick: (k) => { const key = k.replace('{i}', String(lineCtx().layer)); go(nodeForKey(key, store.state.sel)); },
+        onLineClick: (n) => { if (!window.getSelection()?.toString()) zoomToLine(n, cv.rows.get(n)); } });
+      cv.el.classList.add('code-nav');
+      wireCodeNav(cv);
       body.append(cv.el);
-      requestAnimationFrame(() => cv.setHighlight(lines));
+      requestAnimationFrame(() => {
+        cv.setHighlight(lines, { scroll: false });
+        // the drawer body is the scroller: bring this view's lines (or the clicked line) into view
+        const n = rightArg.line ?? lines[0];
+        rightArg.line = undefined;                 // only the navigation that the click caused keeps it
+        cv.rows.get(n)?.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
+      });
     }
+  }
+
+  // ---------------------------------------------------- code -> architecture
+  function lineCtx() {
+    const top = stack[stack.length - 1], p = top?.info.params || {};
+    return { layer: Number(p.l ?? store.state.sel.layer) || 0, head: Number(p.h ?? store.state.sel.head) || 0 };
+  }
+  function zoomToLine(n, fromEl) {
+    const target = nodeForLine(n, cfg(), lineCtx());
+    if (!target) { store.notice('This line is plumbing; it does not compute a part of the model.'); return; }
+    if (target === stack[stack.length - 1]?.id) { pulseStage(); return; }
+    rightArg = { ...rightArg, keys: undefined, key: undefined, line: n };     // keep the clicked line in view after the zoom
+    go(target, { origin: fromEl || null });
+  }
+  function pulseStage() {
+    const el = stack[stack.length - 1]?.el;
+    el?.animate([{ filter: 'brightness(1)' }, { filter: 'brightness(1.25)' }, { filter: 'brightness(1)' }], { duration: 500 });
+  }
+  function wireCodeNav(cv) {
+    // hover: tag the line with where it leads
+    let tagged = null;
+    const tag = h('span', { class: 'line-goto' });
+    cv.el.addEventListener('pointermove', (e) => {
+      const row = e.target.closest?.('.ln[data-line]');
+      if (row === tagged) return;
+      tagged = row;
+      tag.remove();
+      if (!row) return;
+      const target = nodeForLine(Number(row.dataset.line), cfg(), lineCtx());
+      if (!target) return;
+      tag.textContent = target === stack[stack.length - 1]?.id ? '● here' : `→ ${nodeInfo(target, cfg())?.title}`;
+      row.append(tag);
+    });
+    cv.el.addEventListener('pointerleave', () => { tag.remove(); tagged = null; });
+    // a selection of several lines zooms to the first line that maps somewhere
+    cv.el.addEventListener('mouseup', () => {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || !cv.el.contains(sel.anchorNode)) return;
+      const lineOf = (node) => Number((node.nodeType === 1 ? node : node.parentElement)?.closest?.('.ln[data-line]')?.dataset.line);
+      const a = lineOf(sel.anchorNode), b = lineOf(sel.focusNode);
+      if (!a || !b) return;
+      for (let n = Math.min(a, b); n <= Math.max(a, b); n++) {
+        if (nodeForLine(n, cfg(), lineCtx())) { zoomToLine(n, cv.rows.get(n)); break; }
+      }
+    });
+    // right-click: zoom, maths, inspect
+    cv.el.addEventListener('contextmenu', (e) => {
+      const row = e.target.closest?.('.ln[data-line]');
+      if (!row) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const n = Number(row.dataset.line), target = nodeForLine(n, cfg(), lineCtx());
+      const key = codeLines[n - 1]?.keys[0]?.replace('{i}', String(lineCtx().layer));
+      openContextMenu(e.clientX, e.clientY, [
+        target && { label: `Zoom to “${nodeInfo(target, cfg())?.title}”`, run: () => zoomToLine(n, row) },
+        key && store.state.trace[key] && mathFor(key) && { label: 'Show the maths', run: () => openRight('maths', { key }) },
+        key && store.state.trace[key] && { label: 'Inspect every value', run: () => openRight('inspect', { key }) },
+      ].filter(Boolean), { title: `model.py:${n}` });
+    });
   }
 
   function openLeft() { renderMenu(); leftDrawer.classList.add('open'); leftDrawer.setAttribute('aria-hidden', 'false'); }
@@ -436,6 +507,19 @@ export function startAtlas(root) {
     if (nodeEl && !e.defaultPrevented) { e.preventDefault(); go(nodeEl.dataset.node, { origin: nodeEl }); }
   });
   stageEl.addEventListener('contextmenu', (e) => {
+    // a line of model.py shown inside a scene (e.g. the code stepper)
+    const codeRow = e.target.closest?.('.code .ln[data-line]');
+    if (codeRow) {
+      e.preventDefault();
+      const n = Number(codeRow.dataset.line), target = nodeForLine(n, cfg(), lineCtx());
+      const key = codeLines[n - 1]?.keys[0]?.replace('{i}', String(lineCtx().layer));
+      openContextMenu(e.clientX, e.clientY, [
+        target && { label: `Zoom to “${nodeInfo(target, cfg())?.title}” in the model`, run: () => zoomToLine(n, codeRow) },
+        key && store.state.trace[key] && mathFor(key) && { label: 'Show the maths', run: () => openRight('maths', { key }) },
+        key && store.state.trace[key] && { label: 'Inspect every value', run: () => openRight('inspect', { key }) },
+      ].filter(Boolean), { title: `model.py:${n}` });
+      return;
+    }
     const traceEl = e.target.closest?.('[data-trace]');
     const nodeEl = e.target.closest?.('[data-node]');
     const top = stack[stack.length - 1];

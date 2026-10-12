@@ -50,7 +50,16 @@ export default {
     el.append(root);
     const codeHead = h('div', { class: 'sp-code-head' }, h('span', null, 'reference/model.py'), h('span', { class: 'sp-line' }));
     const cv = codeView({ lines: codeLines, maxHeight: 99999, kindOf: (k) => infoFor(k).kind,
-      onTraceClick: (k) => { const key = k.replace('{i}', String(layerOf(steps[idx]) ?? 0)); const n = steps.indexOf(key); if (n >= 0) go(n); } });
+      onTraceClick: (k) => { const key = k.replace('{i}', String(layerOf(steps[idx]) ?? 0)); const n = steps.indexOf(key); if (n >= 0) go(n); },
+      // clicking a line jumps to the tensor it computes (same layer as now); right-click zooms the atlas there
+      onLineClick: (line) => {
+        const pat = codeLines[line - 1]?.keys[0];
+        if (!pat) return;
+        const key = pat.replace('{i}', String(layerOf(steps[idx]) ?? 0));
+        const n = steps.indexOf(key);
+        if (n >= 0) { stop(); go(n); }
+      } });
+    cv.el.classList.add('code-nav');
     root.append(h('section', { class: 'sp-code' }, codeHead, cv.el));
     const side = h('section', { class: 'sp-side' });
     root.append(side);
@@ -63,7 +72,7 @@ export default {
     const counter = h('span', { class: 'sp-count' });
     const timeline = h('div', { class: 'sp-timeline' });
     root.append(h('div', { class: 'sp-bar' }, h('div', { class: 'sp-controls' }, prev, play, next, speedSeg.el, counter,
-      h('span', { class: 'muted small', style: { marginLeft: 'auto' } }, '← → step · Space plays · click a cell to jump')), timeline));
+      h('span', { class: 'muted small', style: { marginLeft: 'auto' } }, '← → step · Space plays · click a line or a cell to jump · right-click a line to zoom the model there')), timeline));
 
     let steps = [], idx = 0, timer = null, hm = null, slice = 0;
     const layerOf = (key) => parseKey(key ?? '').layer;
