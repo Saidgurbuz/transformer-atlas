@@ -193,6 +193,8 @@ export function mat(data, rows, cols, opts = {}) {
   el.cellEl = (r, c) => cells[r * cols + c];
   // one band over the row (reads better than outlining many small cells)
   el.highlightRow = (r) => {
+    // not laid out yet (called before the matrix is in the page): measure on the next frame
+    if (!el.isConnected) { requestAnimationFrame(() => { if (el.isConnected) el.highlightRow(r); }); return; }
     const c0 = cells[r * cols], cN = cells[r * cols + cols - 1];
     if (!c0) { rowBand.hidden = true; return; }
     rowBand.hidden = false;
