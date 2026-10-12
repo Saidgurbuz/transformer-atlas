@@ -1,3 +1,4 @@
+import { codeLines, codeRegions } from '../core/codemap.js';
 // The zoom hierarchy. A node id is dot-separated so it can live in the URL hash:
 //   model · embedding · block.2 · attention.2 · head.2.1 · softmax.2.1 · mlp.2 ...
 // Each pattern names its parameters (:l layer, :h head, :n which norm/residual).
@@ -206,4 +207,57 @@ export function allIds(cfg) {
 /** Direct children of a node (not extras). */
 export function childrenOf(id, cfg) {
   return allIds(cfg).filter((x) => { const n = nodeInfo(x, cfg); return n.parent === id && !n.extra; });
+}
+
+/**
+ * The atlas node that best explains one line of reference/model.py.
+ * Lines that produce a traced tensor map through that tensor; other lines map through
+ * their class or function. `ctx` gives the layer/head to use for per-layer code.
+ */
+export function nodeForLine(n, cfg, { layer = 0, head = 0 } = {}) {
+  const ln = codeLines[n - 1];
+  if (!ln) return null;
+  const l = Math.min(layer, cfg.n_layer - 1), hh = Math.min(head, cfg.n_head - 1);
+  const pre = cfg.norm_placement === 'pre';
+  if (ln.keys.length) {
+    const key = ln.keys[0].replace('{i}', String(l));
+    return nodeForKey(key, { head: hh });
+  }
+  const region = Object.entries(codeRegions).find(([, r]) => n >= r.from && n <= r.to)?.[0];
+  const raw = ln.raw;
+  const pick = (id) => (validFor(id, cfg) ? id : null);
+  switch (region) {
+    case 'LayerNorm': case 'RMSNorm': case 'make_norm':
+      return pick(pre ? `norm.${l}.1` : `residual.${l}.1`) ?? `block.${l}`;
+    case 'sinusoidal_table': case 'rope_angles': case 'apply_rope': case 'alibi_bias':
+      return 'positional';
+    case 'build_mask':
+      return `mask.${l}.${hh}`;
+    case 'Attention':
+      if (/q_proj|k_proj|v_proj/.test(raw)) return `qkv.${l}`;
+      if (/o_proj/.test(raw)) return `out-proj.${l}`;
+      return `attention.${l}`;
+    case 'MLP':
+      return /gate|silu|gelu|relu/.test(raw) ? `activation.${l}` : `mlp.${l}`;
+    case 'Block':
+      if (/ln1|ln2/.test(raw)) return pick(pre ? `norm.${l}.${/ln2/.test(raw) ? 2 : 1}` : `residual.${l}.${/ln2/.test(raw) ? 2 : 1}`) ?? `block.${l}`;
+      if (/attn/.test(raw)) return `attention.${l}`;
+      if (/mlp/.test(raw)) return `mlp.${l}`;
+      return `block.${l}`;
+    case 'GPT': {
+      const gen = codeRegions.GPT && raw && codeLines.slice(0, n).map((x) => x.raw).reverse().find((r) => /^\s+def /.test(r));
+      if (gen && /def generate/.test(gen)) return /softmax|top_k|top_p|multinomial|temperature|sorted|scatter|kth/.test(raw) ? 'sampling' : 'generation';
+      if (/wte|vocab_size, cfg.d_model\)/.test(raw) && !/lm_head/.test(raw)) return 'token-embedding';
+      if (/wpe|pos_encoding|rope|alibi/.test(raw)) return 'positional';
+      if (/build_mask/.test(raw)) return `mask.${l}.${hh}`;
+      if (/ln_f/.test(raw)) return pick('final-norm') ?? 'lm-head';
+      if (/lm_head|tie_weights/.test(raw)) return 'lm-head';
+      if (/blocks/.test(raw)) return `block.${l}`;
+      return 'model';
+    }
+    case 'Config':
+      return 'model';
+    default:
+      return null;
+  }
 }
