@@ -396,17 +396,21 @@ export function sceneHeader(stage, { chips = [], title, sub = '' } = {}) {
 export function sceneCaption(stage, { x = ZONES.caption.x, y = ZONES.caption.y, w = ZONES.caption.w } = {}) {
   const el = h('div', { class: 'k-scene-caption', style: { width: `${w}px` } });
   stage.add(el, { x, y });
-  let last = '';
+  let last = '', anim = null;
   return {
     el,
     set(html) {
       if (html === last) return;
       last = html;
+      anim?.cancel();
       if (reducedMotion()) { el.innerHTML = html; return; }
-      el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140 }).finished.then(() => {
+      const out = el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140 });
+      anim = out;
+      out.finished.then(() => {
+        if (last !== html) return;              // a newer caption arrived meanwhile
         el.innerHTML = html;
-        el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: MOTION.easeOut });
-      }).catch(() => { el.innerHTML = html; });
+        anim = el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: MOTION.easeOut });
+      }).catch(() => { if (last === html) el.innerHTML = html; });
     },
   };
 }
