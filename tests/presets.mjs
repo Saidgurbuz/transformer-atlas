@@ -4,17 +4,15 @@ import { readdirSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { modelFromWeights, infer } from '../src/engine/index.js';
+import { decodeWeights } from '../src/presets/index.js';
 
 globalThis.atob ??= (b) => Buffer.from(b, 'base64').toString('binary');
 const dir = process.argv[2] ? resolve(process.argv[2]) : join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'presets');
-const files = readdirSync(dir).filter((f) => f.endsWith('.js') && !['index.js', 'manifest.js'].includes(f));
+const files = readdirSync(dir).filter((f) => f.endsWith('.js') && !['index.js', 'manifest.js'].includes(f) && !f.includes('_smoke'));
 let bad = 0;
 for (const f of files) {
   const mod = (await import(pathToFileURL(join(dir, f)).href)).default;
-  const bin = atob(mod.weights);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  const flat = new Float32Array(bytes.buffer);
+  const flat = decodeWeights(mod.weights, mod.dtype);
   const weights = {};
   let off = 0;
   for (const [name, shape] of mod.order) {

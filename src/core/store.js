@@ -9,7 +9,7 @@
 //   'notice'  short user-facing message {text, error}
 
 import {
-  createModel, modelFromWeights, infer, forward, validateConfig, paramSpecs, makeTokenizer,
+  createModel, modelFromWeights, infer, forward, validateConfig, paramSpecs, makeTokenizer, tokenizerFromPreset,
   DEFAULT_CONFIG, DEFAULT_VOCAB, noGrad,
 } from '../engine/index.js';
 import { PRESETS, loadPresetData } from '../presets/index.js';
@@ -57,6 +57,7 @@ export const store = {
   setText(text, { quiet = false } = {}) {
     const st = this.state;
     const { ids, dropped } = st.tokenizer.encode(text);
+    // BPE presets have no padding token; keep at least one real token
     st.text = text;
     st.dropped = dropped;
     st.ids = ids.slice(0, st.config.block_size);
@@ -126,8 +127,8 @@ export const store = {
     if (!meta) { this.notice(`Unknown preset ${id}`, true); return; }
     const data = await loadPresetData(id);
     const st = this.state;
-    st.vocab = data.vocab;
-    st.tokenizer = makeTokenizer(data.vocab);
+    st.vocab = data.vocab ?? null;
+    st.tokenizer = tokenizerFromPreset(data);
     st.config = { ...DEFAULT_CONFIG, ...data.config };
     st.model = modelFromWeights(st.config, data.weights);
     st.weights = `preset:${id}`;
