@@ -180,3 +180,14 @@
 
 .atlas-drawer .katex-display { overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
 .atlas-drawer .math-card { min-width: 0; }
+
+/* phones: the stage scrolls sideways instead of shrinking text */
+.k-stage.k-scroll { overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; }
+.k-sizer { height: 1px; }
+@media (max-width: 700px) {
+  .atlas-crumbs { max-width: calc(100vw - 32px); font-size: 12px; }
+  .atlas-crumbs .crumb:not(.cur) { max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .atlas-top { flex-direction: column; align-items: stretch; }
+  .atlas-tools { align-self: flex-end; }
+  .atlas-tool { width: 30px; height: 30px; }
+}

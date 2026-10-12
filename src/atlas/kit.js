@@ -21,7 +21,8 @@ export function stage2d(el, { top = 64, bottom = 84, side = 24 } = {}) {
   svg.append(defs);
   const layers = { back: h('div', { class: 'k-layer back' }), mid: h('div', { class: 'k-layer mid' }), front: h('div', { class: 'k-layer front' }) };
   const canvas = h('div', { class: 'k-canvas', style: { width: `${W}px`, height: `${H}px` } }, layers.back, svg, layers.mid, layers.front);
-  const root = h('div', { class: 'k-stage' }, canvas);
+  const sizer = h('div', { class: 'k-sizer' });       // gives the scroll container its width on narrow screens
+  const root = h('div', { class: 'k-stage' }, canvas, sizer);
   el.append(root);
   let k = 1;
   const scaleHooks = new Set();
@@ -29,8 +30,14 @@ export function stage2d(el, { top = 64, bottom = 84, side = 24 } = {}) {
     const cw = el.clientWidth, ch = el.clientHeight;
     const aw = Math.max(200, cw - 2 * side), ah = Math.max(200, ch - top - bottom);
     k = Math.min(aw / W, ah / H);
-    const x = (cw - W * k) / 2, y = top + (ah - H * k) / 2;
+    // Narrow screens (phones): fitting the width would make text unreadably small, so fit
+    // the height instead (capped) and let the scene scroll sideways.
+    const narrow = aw / W < 0.45;
+    if (narrow) k = Math.min(ah / H, 0.62);
+    root.classList.toggle('k-scroll', narrow);
+    const x = narrow ? side : (cw - W * k) / 2, y = top + (ah - H * k) / 2;
     canvas.style.transform = `translate(${x}px, ${y}px) scale(${k})`;
+    sizer.style.width = narrow ? `${W * k + 2 * side}px` : '0px';
     scaleHooks.forEach((f) => f(k));
   }
   const ro = new ResizeObserver(fit);
