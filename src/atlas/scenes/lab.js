@@ -1,56 +1,59 @@
 // Ablation lab (More menu, reference scene). One question: what breaks if one part of the model is removed?
-// Every experiment edits a CLONE (engine.cloneModel) on the current text, with next-character targets, under noGrad.
-// ctx.state.model is only read. Composition: before / after (the model and the copy).
-// A mask that lets a position see the character it is scored on (no mask, or a prefix that covers it) leaks the
-// answer: its losses are flagged, and the bidirectional row is marked as leakage instead of a model effect.
+// Every experiment edits a CLONE (engine.cloneModel) on the current text, with next-token targets (next-character
+// for the character model), under noGrad. ctx.state.model is only read. Composition: before / after (the model and the copy).
+// A mask that lets a position see the token it is scored on (no mask, or a prefix that covers it) leaks the answer:
+// its losses are flagged, and the bidirectional row is marked as leakage instead of a model effect.
 // Steps: the model, switch one part off, measure the loss, attention before and after, rank every ablation.
 import { stage2d, sceneHeader, sceneCaption, headPicker, checkBadge, ZONES, MOTION, appear, countTo, useStyle } from '../kit.js';
-import { h, fmt, texHTML, heatmap, diverging, onThemeChange, reducedMotion, tween, ease } from '../../ui/index.js';
+import { h, fmt, texHTML, heatmap, diverging, onThemeChange, reducedMotion, tween, ease, cssVar } from '../../ui/index.js';
 import { cloneModel, infer, dHead, maskAllows } from '../../engine/index.js';
 
 const STEPS = ['The model', 'Switch off', 'Measure', 'Attention', 'Rank'];
-const HX = 110, HY = 300, HW = 1030;              // hero zone (design units): 1030 wide, 460 tall in the CSS
-const SX = 1180, SY = 300;                         // side column (340 wide)
-const CY = 196;                                    // controls row: experiment, layer, head (ZONES.controls)
-const SEL_W = 440;                                 // width of the experiment select
-const LW = 128;                                    // row-label width of the prediction strip
-const PAT_W = 340;                                 // width of each attention heatmap (the query row sits above them)
-const BARMAX = 110;                                // px, the longest per-position bar (either sign)
-const SLICE_MS = 12;                               // time budget per macrotask while ablations run
-const MOVE_MS = 600;                               // MOTION.move: values that morph or resize
-const EPS = 1e-9;                                  // patterns closer than this count as identical
-const MIN_SHOW = 0.3;                              // a small value is still drawn in a visible colour (matters in dark mode)
-const TINY = 0.05;                                 // nats: when every effect is below this, the weights hardly matter
-const NEED_TEXT = 'The lab needs at least two characters. Type them in the Input box of the ⚙ drawer, top right.';
-const COPY_LEAK = 'With no mask each copy can see the character it is scored on, so this change includes leakage.';
+const HX = 110, HY = 256, HW = 1030, HH = 524;     // hero zone (design units): 1030 wide, from under the controls row to y = 780
+const SX = 1180, SY = HY;                           // side column (340 wide)
+const CY = 196;                                     // controls row: experiment, layer, head (ZONES.controls)
+const SEL_W = 440;                                  // width of the experiment select
+const LW = 116;                                     // label column of the strip: the four rows and the Δ-loss zone
+const STRIP_W = HW - LW;                            // the width one line of the strip may fill
+const LINE_GAP = 22;                                // between the lines of a wrapped strip
+const CELL_PAD = 4;                                 // px around a label inside its column
+const CELL_EXTRA = 24;                              // px: the most a column is widened to share the spare width of its line
+const DZ_MAX = 260, DZ_MIN = 64;                    // px: height of one Δ-loss zone, at most and at least (below ~64 the bars are stubs)
+const PAT_W = 340;                                  // width of each attention heatmap (the query row sits above them)
+const SLICE_MS = 12;                                // time budget per macrotask while ablations run
+const MOVE_MS = 600;                                // MOTION.move: values that morph or resize
+const EPS = 1e-9;                                   // patterns closer than this count as identical
+const MIN_SHOW = 0.3;                               // a small value is still drawn in a visible colour (matters in dark mode)
+const TINY = 0.05;                                  // nats: when every effect is below this, the weights hardly matter
 
 useStyle('lab', `
 .lb-select { width: 440px; height: 40px; padding: 0 12px; font: 600 16px/1 var(--font-body); border-radius: 10px; }
-.lb-hero { position: absolute; width: 1030px; height: 460px; }
+.lb-hero { position: absolute; width: ${HW}px; height: ${HH}px; }
 .lb-panel { position: absolute; inset: 0; opacity: 0; pointer-events: none; transition: opacity .5s cubic-bezier(.2,.7,.2,1); }
 .lb-panel.on { opacity: 1; pointer-events: auto; }
 .lb-bignote { display: grid; place-content: center; text-align: center; font-size: 20px; line-height: 1.5; color: var(--fg-2); }
 .lb-qrow { position: absolute; left: 0; top: 0; height: 40px; display: flex; align-items: center; gap: 10px; }
 .lb-qsel { width: 380px; height: 36px; padding: 0 10px; font: 600 15px/1 var(--font-mono); border-radius: 10px; }
-.lb-strip { position: absolute; left: 0; top: 44px; width: 1030px; }
-.lb-row { display: flex; align-items: center; height: 26px; margin-bottom: 8px; transition: opacity .4s ease; }
-.lb-row.ghost { opacity: .3; }
-.lb-r-d { height: 244px; align-items: stretch; margin-top: 20px; margin-bottom: 0; }
-.lb-rl { flex: 0 0 ${LW}px; padding-right: 12px; text-align: right; font: 600 14px/1.2 var(--font-mono); color: var(--fg-3); white-space: nowrap; align-self: center; }
-.lb-cells { display: flex; position: relative; height: 100%; }
-.lb-c { width: var(--cw); margin-right: 1px; height: 26px; flex: none; display: grid; place-items: center; overflow: hidden; font: 600 var(--cf)/1 var(--font-mono); color: var(--fg); border-radius: 4px; background: color-mix(in srgb, var(--surface) 90%, transparent); box-shadow: inset 0 -1px 0 var(--line); transition: background-color .5s ease, color .5s ease, box-shadow .5s ease; }
+.lb-strip { position: absolute; left: 0; top: 0; width: ${HW}px; }
+.lb-line { display: flex; align-items: flex-start; }
+.lb-lab { flex: 0 0 ${LW}px; box-sizing: border-box; padding-right: 12px; display: flex; flex-direction: column; }
+.lb-rl { flex: none; display: flex; align-items: center; justify-content: flex-end; font: 600 15px/1.2 var(--font-mono); color: var(--fg-3); white-space: nowrap; transition: opacity .4s ease; }
+.lb-scroll { flex: 1 1 auto; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+.lb-inner { position: relative; }
+.lb-row { display: flex; gap: 1px; transition: opacity .4s ease; }
+.lb-row.ghost, .lb-rl.ghost { opacity: .3; }
+.lb-c { flex: none; box-sizing: border-box; height: 100%; padding: 0 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; font: 600 var(--cf)/var(--rh) var(--font-mono); color: var(--fg); border-radius: 4px; background: color-mix(in srgb, var(--surface) 90%, transparent); box-shadow: inset 0 -1px 0 var(--line); transition: background-color .5s ease, color .5s ease, box-shadow .5s ease; }
 .lb-r-next .lb-c { color: var(--fg-2); }
 .lb-r-b .lb-c.flip { background: color-mix(in srgb, var(--c-head) 26%, var(--surface)); box-shadow: inset 0 0 0 1px var(--c-head); font-weight: 700; }
-.lb-barzone { position: relative; flex: 1; height: 100%; }
+.lb-r-d { position: relative; display: flex; gap: 1px; }
 .lb-hzero { position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed var(--line-strong); }
-.lb-cols { height: 100%; }
-.lb-col { width: var(--cw); margin-right: 1px; height: 100%; flex: none; position: relative; }
-.lb-bar { position: absolute; left: 16%; width: 68%; top: 50%; height: 0; border-radius: 3px; transition: top .6s cubic-bezier(.65,0,.35,1), height .6s cubic-bezier(.65,0,.35,1), background-color .4s ease; }
+.lb-col { flex: none; position: relative; height: 100%; }
+.lb-bar { position: absolute; left: 50%; top: 50%; width: 22px; margin-left: -11px; height: 0; border-radius: 3px; transition: top .6s cubic-bezier(.65,0,.35,1), height .6s cubic-bezier(.65,0,.35,1), background-color .4s ease; }
 .lb-pat { position: absolute; left: 0; right: 0; top: 58px; display: flex; justify-content: center; gap: 52px; }
 .lb-pcol { display: grid; gap: 10px; align-content: start; }
 .lb-title { display: grid; gap: 2px; font: 600 15px/1.2 var(--font-mono); color: var(--fg-2); letter-spacing: .02em; white-space: nowrap; }
 .lb-title small { font: 500 14px/1.2 var(--font-mono); color: var(--fg-3); }
-.lb-rank { position: absolute; left: 0; top: 0; width: 1030px; display: grid; gap: 6px; align-content: start; }
+.lb-rank { position: absolute; left: 0; top: 0; width: ${HW}px; display: grid; gap: 6px; align-content: start; }
 .lb-rhead { font: 600 15px/1 var(--font-mono); color: var(--fg-3); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
 .lb-warn { font: 500 14px/1.45 var(--font-body); color: var(--warn); }
 .lb-rrow { display: grid; grid-template-columns: 330px 1fr 92px; align-items: center; gap: 16px; height: 44px; padding: 0 12px; border-radius: 10px; cursor: pointer; transition: background-color .25s; }
@@ -86,9 +89,19 @@ useStyle('lab', `
 .lb-gcell:hover { border-color: var(--accent); transform: translateY(-1px); }
 .lb-gcell.sel { border-color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
-  .lb-panel, .lb-c, .lb-bar, .lb-rbar, .lb-gcell, .lb-row { transition: none !important; }
+  .lb-panel, .lb-c, .lb-bar, .lb-rbar, .lb-gcell, .lb-row, .lb-rl { transition: none !important; }
 }
 `);
+
+// ------------------------------------------------------------------ wording
+// The unit a position is scored on: a token for the subword model, a character for the character model.
+const unitName = (tk, n = 1) => (tk.kind === 'bpe' ? (n === 1 ? 'token' : 'tokens') : (n === 1 ? 'character' : 'characters'));
+const needText = (tk) => `The lab needs at least two ${unitName(tk, 2)}. Type text in the input box at the top of the screen.`;
+const copyLeakText = (tk) => `With no mask each copy can see the ${unitName(tk)} it is scored on, so this change includes leakage.`;
+// What the model's own mask does to its loss, in words (shown only when leaksAt is true for the model).
+const modelLeakText = (cfg, tk) => (cfg.mask === 'none'
+  ? `With no mask, each position can see the ${unitName(tk)} it is scored on, so this loss does not measure prediction.`
+  : `This prefix mask lets some positions see the ${unitName(tk)} they are scored on, so this loss does not measure prediction.`);
 
 // ------------------------------------------------------------------ numerics
 
@@ -102,10 +115,6 @@ const aligned = (lines) => `\\begin{aligned}${lines.join(' \\\\ ')}\\end{aligned
 function leaksAt(cfg, T) { for (let u = 0; u + 1 < T; u++) if (maskAllows(cfg, u, u + 1)) return true; return false; }
 // Colour of a signed value in [-1, 1]; small values keep a visible tint.
 const tint = (x) => diverging(Math.sign(x) * Math.max(Math.abs(x), MIN_SHOW));
-// What the model's own mask does to its loss, in words (shown only when leaksAt is true for the model).
-const modelLeakText = (cfg) => (cfg.mask === 'none'
-  ? 'With no mask, each position can see the character it is scored on, so this loss does not measure prediction.'
-  : 'This prefix mask lets some positions see the character they are scored on, so this loss does not measure prediction.');
 
 // Per-position cross-entropy −log softmax(logits_t)[target_t]; NaN where there is no target.
 function ceAll(logits, T, V, targets) {
@@ -227,7 +236,7 @@ const tgtFor = (li, hi, n) => ({ layer: li, head: hi, a: pairStart(li, n), b: pa
 
 // Each experiment: na(config, target) gives a reason when it does not apply; apply(clone, target) edits the clone.
 // before / after give the equation of the part, for the model and for the copy, in the model's own norm and placement.
-// leaks(config, T), when given, says whether the copy lets a position see the character it is scored on.
+// leaks(config, T), when given, says whether the copy lets a position see the token it is scored on.
 const EXPS = [
   {
     id: 'residual', title: 'Remove the residual connections', short: 'no residual connections', target: null,
@@ -327,6 +336,8 @@ const eqEl = (tex) => h('div', { class: 'lb-eq', html: texHTML(tex, { display: t
 const rd = (k, ...v) => h('div', { class: 'lb-rd' }, h('span', { class: 'lb-rd-k' }, k), h('span', { class: 'lb-rd-v' }, ...v));
 const warn = (text) => h('div', { class: 'lb-warn' }, text);
 const badge = (ok, good, bad) => h('span', { class: ['k-check', ok ? 'ok' : 'bad'] }, ok ? `✓ ${good}` : `✗ ${bad}`);
+// Children for replaceChildren: a null or false entry would otherwise be written as the text "null".
+const kids = (...xs) => xs.filter((x) => x != null && x !== false);
 
 // Layer chips (L0 … L{n−1}) in the kit's picker style, the same shape as headPicker: selects the layer for the whole app.
 function layerPicker(stage, ctx, { x, y } = {}) {
@@ -345,6 +356,77 @@ function layerPicker(stage, ctx, { x, y } = {}) {
   return { el: row, render };
 }
 
+// ------------------------------------------------------------------ strip layout
+// Every position is a column sized to its widest label (input, next, model top-1, copy top-1), so no label is cut.
+// A long text wraps into up to three lines. Each line has the same four rows and its own Δ-loss zone, so the flipped
+// cells stay aligned with their model cells. A line that is still too wide scrolls sideways (its labels stay put).
+let measureCtx = null;
+function labelWidth(text, fs) {
+  measureCtx ??= document.createElement('canvas').getContext('2d');
+  if (!measureCtx) return Array.from(text).length * fs * 0.6;     // no canvas: a monospace estimate
+  measureCtx.font = `600 ${fs}px ${cssVar('--font-mono') || 'monospace'}`;
+  return measureCtx.measureText(text).width;
+}
+
+// Left-to-right line breaks: a column (with its 1 px gap) that does not fit under cap starts a new line.
+function breakLines(need, cap) {
+  const lines = [[]];
+  let w = 0;
+  need.forEach((x, t) => {
+    if (lines[lines.length - 1].length && w + x + 1 > cap) { lines.push([]); w = 0; }
+    const cur = lines[lines.length - 1];
+    w += cur.length ? x + 1 : x;
+    cur.push(t);
+  });
+  return lines;
+}
+
+// Width of one line of columns (their widths and the 1 px gaps between them).
+const widthOf = (need, ids) => ids.reduce((s, t) => s + need[t] + 1, 0) - 1;
+// Balanced line breaks: the smallest cap that keeps the text in at most `lines` lines, so the lines come out about equal.
+function wrapBalanced(need, lines) {
+  const total = widthOf(need, need.map((_, t) => t));
+  let cap = Math.ceil(total / lines), g = breakLines(need, cap);
+  while (g.length > lines) { cap += 2; g = breakLines(need, cap); }
+  return g;
+}
+
+// labels[t] = the four display labels of position t. Returns the font size, the row geometry, the lines of
+// positions, the column widths and a signature (the DOM is rebuilt only when it changes).
+function planStrip(labels) {
+  // one line keeps full-height rows; wrapped lines use slimmer rows so that their Δ zones stay readable
+  const needs = {};                                   // column widths per font size, measured once
+  const needOf = (fs) => (needs[fs] ??= labels.map((ls) => Math.max(...ls.map((s) => labelWidth(s, fs))) + CELL_PAD));
+  const metrics = (fs, lines) => {
+    const rh = Math.round(fs * (lines === 1 ? 1.6 : 1.45)), rg = fs >= 15 ? 4 : 3, dg = fs >= 15 ? 14 : 10;   // row height, gap between rows, gap before Δ
+    return { fs, rh, rg, dg, need: needOf(fs), fixed: 4 * rh + 3 * rg + dg };
+  };
+  const zoneFor = (m, lines) => Math.min(DZ_MAX, Math.floor((HH - lines * m.fixed - (lines - 1) * LINE_GAP) / lines));
+  // the fewest lines, then the largest font, that fit the hero: every line within STRIP_W and a readable Δ zone
+  const fits = (c, g) => g.every((ids) => widthOf(c.need, ids) <= STRIP_W);
+  let m = null, groups = null;
+  for (let lines = 1; lines <= 3 && !groups; lines++) {
+    for (const fs of [16, 15, 14, 13, 12]) {
+      const cand = metrics(fs, lines), g = wrapBalanced(cand.need, lines);
+      if (g.length === lines && fits(cand, g) && zoneFor(cand, lines) >= DZ_MIN) { m = cand; groups = g; break; }
+    }
+  }
+  if (!groups) {
+    // too long for three lines at the smallest size: three balanced lines (a line wider than the hero scrolls sideways)
+    m = metrics(12, 3);
+    groups = wrapBalanced(m.need, 3);
+  }
+  const dz = zoneFor(m, groups.length);
+  // the spare width of the fullest line is shared by every column (capped), so the cells read as one grid
+  const spare = Math.min(...groups.map((g) => (STRIP_W - widthOf(m.need, g)) / g.length));
+  const extra = Math.max(0, Math.min(CELL_EXTRA, spare));
+  const cols = m.need.map((x) => x + extra);
+  const sig = [m.fs, dz, groups.map((g) => g.join(',')).join(';'), cols.map((c) => Math.round(c)).join(',')].join('|');
+  return { fs: m.fs, rh: m.rh, rg: m.rg, dg: m.dg, dz, groups, cols, barMax: Math.max(6, dz / 2 - 8), sig };
+}
+
+// ------------------------------------------------------------------ the scene
+
 export default {
   mount(el, ctx) {
     const st = stage2d(el);
@@ -360,18 +442,24 @@ export default {
 
     let step = 0, expIdx = 0, gen = 0;
     let base = null, det = null, rankRes = null, gridRes = null;
-    let paused = false, lastStep = -1, lastLH = '';
+    let paused = false, lastStep = -1, lastLH = '', chipKey = '';
     let queueId = 0, queueKey = '';
     let auto = null, autoTick = false, cancelMorph = null, morphKey = '';
     let hmA = null, hmB = null;
-    let stripGen = -1, lastBarsKey = '', gridBuilt = '', gridCells = [];
-    let cellsT = [], cellsN = [], cellsA = [], cellsB = [], barsD = [], rowB = null, rowD = null;
+    let stripKey = '', stripPlan = null, lastBarsKey = '', gridBuilt = '', gridCells = [];
+    let cellsT = [], cellsN = [], cellsA = [], cellsB = [], barsD = [], ghostB = [], ghostD = [];
 
     // ------------------------------------------------------------- static parts (shared kit)
     const header = sceneHeader(st, {
-      chips: [['Ablation', null], ['Next-character loss', 'head']], title: 'Ablation lab',
+      chips: [['Ablation', null], [`Next-${unitName(S().tokenizer)} loss`, 'head']], title: 'Ablation lab',
       sub: 'Each experiment edits a copy of the model, runs the same text and measures the change in loss. The model itself is never changed.',
     });
+    function paintChips() {
+      const u = unitName(S().tokenizer);
+      if (u === chipKey) return;
+      chipKey = u;
+      header.setChips([['Ablation', null], [`Next-${u} loss`, 'head']]);
+    }
 
     // controls row: the experiment (one select), the layer and head (kit-style pickers)
     const expSel = h('select', { class: 'select lb-select', id: 'lab-experiment', 'aria-label': 'Experiment' });
@@ -540,43 +628,78 @@ export default {
     }
 
     // ------------------------------------------------------------- strip: model and copy, token by token
-    // The copy and the deltas are shown as faint rows before their step (the hero is filled from the start).
-    function buildStrip(bs) {
-      const T = bs.T;
-      stripGen = gen;
+    // The strip is rebuilt only when the trace or the column layout changes (a new experiment can change the copy's labels).
+    function ensureStrip(bs, d) {
+      const T = bs.T, ok = !!d && !d.na;
+      const labels = Array.from({ length: T }, (_, t) => [
+        labAt(bs, t), t + 1 < T ? labAt(bs, t + 1) : '–', lab(bs.top1A[t]), ok ? lab(d.top1B[t]) : '',
+      ]);
+      const plan = planStrip(labels);
+      const key = `${gen}|${plan.sig}`;
+      if (key === stripKey) return;
+      stripKey = key;
+      stripPlan = plan;
+      buildStrip(bs, plan);
+    }
+
+    // One line per wrapped group: a fixed label column, and a scrolling area with the four rows and the Δ-loss zone.
+    function buildStrip(bs, P) {
+      cellsT = []; cellsN = []; cellsA = []; cellsB = []; barsD = []; ghostB = []; ghostD = [];
+      const rows = [
+        { name: 'input', cls: 'lb-r-text', store: cellsT, gap: P.rg },
+        { name: 'next', cls: 'lb-r-next', store: cellsN, gap: P.rg },
+        { name: 'model top-1', cls: 'lb-r-a', store: cellsA, gap: P.rg },
+        { name: 'copy top-1', cls: 'lb-r-b', store: cellsB, gap: P.dg },
+      ];
+      const lineEls = P.groups.map((ids, li) => {
+        const labCol = h('div', { class: 'lb-lab' });
+        const width = ids.reduce((s, t) => s + P.cols[t], 0) + ids.length - 1;
+        const inner = h('div', { class: 'lb-inner', style: { width: `${width}px` } });
+        for (const r of rows) {
+          const lbl = h('span', { class: 'lb-rl', style: { height: `${P.rh}px`, marginBottom: `${r.gap}px` } }, r.name);
+          const row = h('div', { class: ['lb-row', r.cls], style: { height: `${P.rh}px`, marginBottom: `${r.gap}px` } });
+          for (const t of ids) {
+            const c = h('div', { class: 'lb-c', style: { width: `${P.cols[t]}px` } });
+            r.store.push(c);
+            row.append(c);
+          }
+          if (r.cls === 'lb-r-a') row.dataset.trace = 'logits';   // the model's own logits: hover and right-click work on each top-1 cell
+          if (r.cls === 'lb-r-b') ghostB.push(lbl, row);
+          labCol.append(lbl);
+          inner.append(row);
+        }
+        const zone = h('div', { class: 'lb-r-d', style: { height: `${P.dz}px` } }, h('i', { class: 'lb-hzero' }));
+        for (const t of ids) {
+          const bar = h('i', { class: 'lb-bar' });
+          barsD.push(bar);
+          zone.append(h('div', { class: 'lb-col', style: { width: `${P.cols[t]}px` } }, bar));
+        }
+        const dLbl = h('span', { class: 'lb-rl', style: { height: `${P.dz}px` } }, 'Δ loss');
+        labCol.append(dLbl);
+        inner.append(zone);
+        ghostD.push(dLbl, zone);
+        return h('div', { class: 'lb-line', style: { marginBottom: li < P.groups.length - 1 ? `${LINE_GAP}px` : '0' } },
+          labCol, h('div', { class: 'lb-scroll' }, inner));
+      });
+      panelStrip.replaceChildren(h('div', { class: 'lb-strip', style: { '--cf': `${P.fs}px`, '--rh': `${P.rh}px` } }, ...lineEls));
       lastBarsKey = '';
-      cellsT = []; cellsN = []; cellsA = []; cellsB = []; barsD = [];
-      const cellW = Math.max(9, Math.min(45, Math.floor((HW - LW - 8) / T)));
-      const cw = cellW - 1;
-      const cf = cw >= 30 ? 17 : cw >= 22 ? 15 : cw >= 15 ? 13 : 11;
-      const cellRow = (cls, label, store) => {
-        const cells = h('div', { class: 'lb-cells' });
-        for (let t = 0; t < T; t++) { const c = h('div', { class: 'lb-c' }); store.push(c); cells.append(c); }
-        return h('div', { class: ['lb-row', cls] }, h('span', { class: 'lb-rl' }, label), cells);
-      };
-      const rT = cellRow('lb-r-text', 'input', cellsT);
-      const rN = cellRow('lb-r-next', 'next', cellsN);
-      const rA = cellRow('lb-r-a', 'model · top-1', cellsA);
-      rA.dataset.trace = 'logits';                      // the model's own logits: hover and right-click work on each top-1 cell
-      rowB = cellRow('lb-r-b', 'copy · top-1', cellsB); // the copy: not a traced tensor of the model, so no trace key
-      const cols = h('div', { class: 'lb-cells lb-cols' });
-      for (let t = 0; t < T; t++) { const bar = h('i', { class: 'lb-bar' }); barsD.push(bar); cols.append(h('div', { class: 'lb-col' }, bar)); }
-      rowD = h('div', { class: ['lb-row', 'lb-r-d'] }, h('span', { class: 'lb-rl' }, 'Δ loss'), h('div', { class: 'lb-barzone' }, h('i', { class: 'lb-hzero' }), cols));
-      panelStrip.replaceChildren(h('div', { class: 'lb-strip', style: { '--cw': `${cw}px`, '--cf': `${cf}px` } }, rT, rN, rA, rowB, rowD));
-      for (let t = 0; t < T; t++) {
+      for (let t = 0; t < bs.T; t++) {
         cellsT[t].textContent = labAt(bs, t);
-        cellsN[t].textContent = t + 1 < T ? labAt(bs, t + 1) : '–';
+        cellsT[t].title = `position ${t}: “${labAt(bs, t)}”`;
+        cellsN[t].textContent = t + 1 < bs.T ? labAt(bs, t + 1) : '–';
+        cellsN[t].title = t + 1 < bs.T ? `position ${t} is scored on “${labAt(bs, t + 1)}”` : `position ${t} has no next token`;
       }
     }
 
     function paintStrip(bs, d, stepNow) {
       const T = bs.T, A = bs.top1A, ok = !!d && !d.na;
       const showB = ok && stepNow >= 1, showD = ok && stepNow >= 2;
-      rowB.classList.toggle('ghost', stepNow < 1);
-      rowD.classList.toggle('ghost', stepNow < 2);
+      ghostB.forEach((el) => el.classList.toggle('ghost', stepNow < 1));
+      ghostD.forEach((el) => el.classList.toggle('ghost', stepNow < 2));
       for (let t = 0; t < T; t++) {
         cellsA[t].textContent = lab(A[t]);
         cellsA[t].dataset.cell = `${t},${A[t]},0`;
+        cellsA[t].title = `position ${t}: model “${lab(A[t])}”`;
       }
       for (let t = 0; t < T; t++) {
         const cb = cellsB[t];
@@ -593,13 +716,13 @@ export default {
       const grow = showD && !reducedMotion() && (key !== lastBarsKey || (stepNow === 2 && lastStep !== 2));
       if (grow) {
         barsD.forEach((b) => { b.style.transition = 'none'; b.style.height = '0px'; });
-        void rowD.offsetWidth;
+        void panelStrip.offsetWidth;                  // flush the zero heights before the bars grow
         barsD.forEach((b) => { b.style.transition = ''; });
       }
       if (showD) lastBarsKey = key;
       for (let t = 0; t < T; t++) {
         const b = barsD[t], v = showD ? d.dCE[t] : NaN, finite = Number.isFinite(v);
-        const hp = finite ? (Math.abs(v) / scale) * BARMAX : 0;
+        const hp = finite ? (Math.abs(v) / scale) * stripPlan.barMax : 0;
         b.style.transitionDelay = `${Math.min(600, t * 12)}ms`;
         b.style.height = `${hp}px`;
         b.style.top = finite && v >= 0 ? `calc(50% - ${hp}px)` : '50%';
@@ -771,6 +894,7 @@ export default {
 
     function renderSide(bs, d) {
       if (!bs) { body.replaceChildren(); return; }
+      const tk = S().tokenizer;
       if (step === 4) {
         const top = topHead();
         const note = h('div', { class: 'lb-note' }, top
@@ -783,32 +907,33 @@ export default {
         const lossEl = h('span', null, '');
         countTo(lossEl, bs.lossA, { digits: 2 });
         const induction = String(S().weights) === 'preset:induction';
-        body.replaceChildren(
+        body.replaceChildren(...kids(
           h('div', { class: 'lb-box' }, h('div', { class: 'lb-tag' }, `${modelWord()} model`),
             eqEl(aligned([String.raw`\mathcal L &= -\frac{1}{${bs.T - 1}}\sum_{t}`, String.raw`&\log p_\theta\big(x_{t+1}\mid x_{\le t}\big)`]))),
           h('div', { class: 'lb-rd-list' }, rd('model loss', lossEl, ' nats')),
           checkBadge(bs.tracedA, bs.lossA, { label: 'equals the traced logits’ loss' }),
-          baseLeaks() ? warn(modelLeakText(S().config)) : null,
-          induction ? h('div', { class: 'lb-note' }, 'This preset repeats a string. Zero layer 0, head 0 and read the Δ row on the repeated part.') : null);
+          baseLeaks() ? warn(modelLeakText(S().config, tk)) : null,
+          tk.kind === 'bpe' ? h('div', { class: 'lb-note' }, '␣ marks a leading space: “␣had” is the token “had” after a space.') : null,
+          induction ? h('div', { class: 'lb-note' }, 'This preset repeats a string. Zero layer 0, head 0 and read the Δ row on the repeated part.') : null));
         return;
       }
       if (!okD(d)) { body.replaceChildren(); return; }
       if (step === 1) {
         const c = d.copy;
-        body.replaceChildren(
+        body.replaceChildren(...kids(
           h('div', { class: 'lb-box' },
             h('div', { class: 'lb-tag' }, `${modelWord()} model`), eqEl(d.exp.before(S().config, d.t)),
             h('div', { class: 'lb-tag' }, 'copy'), eqEl(d.exp.after(S().config, d.t))),
           h('div', { class: 'lb-rd-list' }, rd('top-1 changed', `${d.flips} of ${bs.T}`), rd('copy loss', `${fix(d.lossB, 2)} nats`)),
           h('div', { class: 'lb-note' }, c.text),
           badge(c.ok, 'only the edit differs', 'the copy differs elsewhere'),
-          copyLeaks(d, bs) ? warn(COPY_LEAK) : null);
+          copyLeaks(d, bs) ? warn(copyLeakText(tk)) : null));
         return;
       }
       if (step === 2) {
         const dl = d.lossB - bs.lossA;
         const color = dl >= 0 ? 'var(--heat-pos)' : 'var(--heat-neg)';
-        body.replaceChildren(
+        body.replaceChildren(...kids(
           h('div', { class: 'lb-box' }, h('div', { class: 'lb-tag' }, 'change in loss'),
             eqEl(String.raw`\Delta\mathcal L=\tfrac{1}{${bs.T - 1}}\sum_{t}\big(\ell^B_t-\ell^A_t\big)`)),
           h('div', { class: 'lb-rd-list' },
@@ -816,7 +941,7 @@ export default {
             rd('copy loss', `${fix(d.lossB, 2)} nats`),
             rd('Δ loss', h('b', { style: { color } }, `${sgn(dl)} nats`))),
           checkBadge(d.meanDelta, dl, { label: 'equals the mean of the bars' }),
-          copyLeaks(d, bs) ? warn(COPY_LEAK) : null);
+          copyLeaks(d, bs) ? warn(copyLeakText(tk)) : null));
         return;
       }
       if (step === 3) {
@@ -838,16 +963,17 @@ export default {
     }
 
     function capFor(bs, d) {
-      if (!bs) return 'A next-character loss needs at least two characters: each one is scored on the character that follows it.';
+      const tk = S().tokenizer, u = unitName(tk);
+      if (!bs) return `A next-${u} loss needs at least two ${unitName(tk, 2)}: each one is scored on the ${u} that follows it.`;
       if (step === 0) {
         const n = bs.T - 1;
-        return `Each position is scored on the character that actually follows it. The loss is the average surprise over <b>${n}</b> ${n === 1 ? 'position' : 'positions'}: <b>${fix(bs.lossA, 2)}</b> nats.`;
+        return `Each position is scored on the ${u} that actually follows it. The loss is the average surprise over <b>${n}</b> ${n === 1 ? 'position' : 'positions'}: <b>${fix(bs.lossA, 2)}</b> nats.`;
       }
       if (step === 4) return 'Ranked by the change in loss on this text. Orange: removing the part raises the loss. Blue: removing it lowers the loss.';
       if (!okD(d)) return 'Pick another one above.';
-      if (step === 1) return `Only one part changes. The copy predicts a different top-1 character at <b>${d.flips}</b> of ${bs.T} positions, shown in rose.`;
+      if (step === 1) return `Only one part changes. The copy predicts a different top-1 ${u} at <b>${d.flips}</b> of ${bs.T} positions, shown in rose.`;
       if (step === 2) {
-        const tail = d.topVal > 0 ? `The largest rise is at position <b>${d.topPos}</b>, where the next character is “<b>${labAt(bs, d.topPos + 1)}</b>”: ${sgn(d.topVal)} nats.` : 'No position’s loss rose.';
+        const tail = d.topVal > 0 ? `The largest rise is at position <b>${d.topPos}</b>, where the next ${u} is “<b>${labAt(bs, d.topPos + 1)}</b>”: ${sgn(d.topVal)} nats.` : 'No position’s loss rose.';
         return `Bars show how much each position’s loss rose (orange) or fell (blue). ${tail}`;
       }
       const q = Math.min(S().sel.token ?? bs.T - 1, bs.T - 1);
@@ -869,9 +995,10 @@ export default {
       const bs = getBase();
       const live = !!bs;
       const d = live ? getDetail() : null;
-      if (live && stripGen !== gen) buildStrip(bs);
+      if (live) ensureStrip(bs, d);
       const naHere = !!(d && d.na);
       stepTag.textContent = STEPS[step];
+      paintChips();
       expSel.style.display = live ? '' : 'none';
       layerPick.el.style.display = live ? '' : 'none';
       headPick.el.style.display = live ? '' : 'none';
@@ -885,8 +1012,8 @@ export default {
       panelPattern.classList.toggle('on', showPattern);
       panelRank.classList.toggle('on', showRank);
       noteBox.classList.toggle('on', showNote);
-      if (showNote) noteBox.replaceChildren(h('div', null, !live ? NEED_TEXT : `Not applicable to this model: ${d.na}.`));
-      if (live && stripGen === gen) paintStrip(bs, d, step);
+      if (showNote) noteBox.replaceChildren(h('div', null, !live ? needText(S().tokenizer) : `Not applicable to this model: ${d.na}.`));
+      if (live) paintStrip(bs, d, step);
       if (showPattern) paintPattern(bs, d);
       if (showRank) paintRank(lastStep !== 4);
       paintGrid();
