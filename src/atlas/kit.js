@@ -427,26 +427,48 @@ export function tokenPicker(stage, ctx, { x = ZONES.controls.x, y = ZONES.contro
     const s = ctx.state, T = s.ids.length, sel = Math.min(s.sel.token, T - 1);
     const labels = s.ids.map((_, i) => ctx.label(i));
     const longest = Math.max(1, ...labels.map((l) => Array.from(l).length));
-    let tiles;
+    let tiles, a = 0, b = T;
     if (longest <= 2) {
       // characters: equal-width tiles on one row
       const w = Math.max(16, Math.min(40, (maxWidth - 70) / T - 4));
-      tiles = labels.map((l) => ({ l, style: { width: `${w}px`, fontSize: T > 32 ? '12px' : '17px' } }));
-      row.classList.remove('wrap');
+      tiles = labels.map((l, i) => ({ l, i, style: { width: `${w}px`, fontSize: T > 32 ? '12px' : '17px' } }));
     } else {
-      // words / subwords: tiles fit their text; the row wraps (at most ~3 rows), the font shrinks for long inputs
-      const chars = labels.reduce((a, l) => a + Array.from(l).length + 1.6, 0);
-      const fs = Math.max(12, Math.min(17, ((maxWidth - 70) * 2.6) / (chars * 0.62)));
-      tiles = labels.map((l) => ({ l, style: { minWidth: `${fs * 1.6}px`, padding: `0 ${Math.round(fs * 0.35)}px`, fontSize: `${fs}px` } }));
-      row.classList.add('wrap');
-      row.style.maxWidth = `${maxWidth - 70}px`;
+      // words / subwords: one row of tiles sized to their text. The font shrinks to fit (17 to 12 px);
+      // past that, a window of tiles around the selected token shows and the ends count the rest.
+      const avail = maxWidth - 70, MORE = 64;
+      const tileW = (l, f) => Math.max(f * 1.6, Array.from(l).length * f * 0.62 + 2 * Math.round(f * 0.35) + 2) + 4;
+      const width = (f) => labels.reduce((acc, l) => acc + tileW(l, f), 0);
+      let fs = 17;
+      while (fs > 12 && width(fs) > avail) fs -= 0.5;
+      if (width(fs) > avail) {
+        a = sel; b = sel + 1;
+        let w = tileW(labels[sel], fs), right = true;
+        for (;;) {
+          const canR = b < T && w + tileW(labels[b], fs) <= avail - 2 * MORE;
+          const canL = a > 0 && w + tileW(labels[a - 1], fs) <= avail - 2 * MORE;
+          if (!canR && !canL) break;
+          if ((right && canR) || !canL) { w += tileW(labels[b], fs); b++; } else { a--; w += tileW(labels[a], fs); }
+          right = !right;
+        }
+      }
+      tiles = labels.slice(a, b).map((l, k) => ({ l, i: a + k, style: { minWidth: `${fs * 1.6}px`, padding: `0 ${Math.round(fs * 0.35)}px`, fontSize: `${fs}px` } }));
     }
-    row.replaceChildren(...tiles.map(({ l, style }, i) => {
-      const t = h('button', { type: 'button', class: ['k-pick', i === sel && 'sel'], disabled: isDisabled?.(i), style: { ...style, '--kind': `var(--c-${kind})` }, title: `position ${i}` },
-        h('b', null, l), T <= 48 ? h('small', null, i) : null);
-      t.addEventListener('click', () => ctx.store.select({ token: i }));
-      return t;
-    }));
+    row.classList.toggle('words', longest > 2);
+    const windowed = a > 0 || b < T;
+    const more = (n, to, side) => {
+      const m = h('button', { type: 'button', class: 'k-pick-more', title: `${n} more ${side === 'l' ? 'before' : 'after'} · click to move` }, side === 'l' ? `‹ +${n}` : `+${n} ›`);
+      m.addEventListener('click', () => ctx.store.select({ token: to }));
+      return m;
+    };
+    row.replaceChildren(
+      ...(a > 0 ? [more(a, a - 1, 'l')] : []),
+      ...tiles.map(({ l, i, style }) => {
+        const t = h('button', { type: 'button', class: ['k-pick', i === sel && 'sel'], disabled: isDisabled?.(i), style: { ...style, '--kind': `var(--c-${kind})` }, title: `position ${i}` },
+          h('b', null, l), T <= 48 || windowed ? h('small', null, i) : null);
+        t.addEventListener('click', () => ctx.store.select({ token: i }));
+        return t;
+      }),
+      ...(b < T ? [more(T - b, b, 'r')] : []));
   }
   render();
   const off = ctx.on('select', render);

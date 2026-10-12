@@ -194,8 +194,9 @@
 /* hidden levels stay hidden even if a component sets visibility on its own elements */
 .atlas-layer.hidden, .atlas-layer.hidden * { visibility: hidden !important; }
 
-.k-picker.wrap { flex-wrap: wrap; row-gap: 4px; }
-.k-picker.wrap .k-pick { width: auto; height: 38px; white-space: nowrap; }
+.k-picker.words .k-pick { width: auto; height: 38px; white-space: nowrap; }
+.k-pick-more { flex: none; height: 38px; min-width: 56px; padding: 0 8px; border-radius: 8px; border: 1px dashed var(--line-strong); background: transparent; color: var(--fg-3); font: 600 12px/1 var(--font-mono); cursor: pointer; }
+.k-pick-more:hover { color: var(--fg); border-color: var(--fg-3); }
 
 /* the scene shares the screen with the right drawer instead of hiding under it */
 .atlas-stage { transition: right .32s var(--ease); right: 0; }
