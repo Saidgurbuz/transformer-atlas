@@ -7,6 +7,7 @@
 //     C: { name: 'Q', kind: 'q', shape: 'T×d_h', data },   // data optional: reference values for maxError()
 //     title, maxWidth: 720, maxCell: 56, maxHeight: null,
 //     showValues: 'auto' | true | false, digits: 2, eqDigits, speed: 1,
+//     hint: true,                              // false hides the idle 'hover a cell' text in the corner
 //   });
 //   parent.append(mm.el);
 //
@@ -587,6 +588,7 @@ export function matmulAnim(opts) {
 
   // The corner when no product is running: the zero line and a hint, or the row being filled.
   function drawCorner(tk, rowI) {
+    if (o.hint === false && rowI < 0) return;   // scenes that explain the product themselves
     const { s, xA, bandTop, bandBottom, readY } = L;
     const width = P.k * s;
     const base = (bandTop + bandBottom) / 2;
