@@ -2,6 +2,7 @@
 //   tools/smoke.sh --view attention [--theme dark] [--width 420] [--out shot.png] [--eval "js expr"] [--full]
 //   tools/smoke.sh --all            (every view, light + dark, desktop; prints a table)
 //   tools/smoke.sh --file dist/transformer-atlas.html --view head   (single-file build via file://)
+//   tools/smoke.sh --url https://saidgurbuz.github.io/transformer-atlas/ --view model   (deployed site)
 // Prints JSON per view: console errors, page errors, horizontal overflow, stub status.
 // Always run through tools/smoke.sh, which allows one browser at a time on the login node.
 import http from 'node:http';
@@ -30,7 +31,7 @@ const server = http.createServer(async (req, res) => {
   } catch { res.writeHead(404).end('not found'); }
 });
 await new Promise((r) => server.listen(0, '127.0.0.1', r));
-const base = opt('file', null) ? `file://${join(ROOT, opt('file'))}` : `http://127.0.0.1:${server.address().port}/index.html`;
+const base = opt('url', null) ?? (opt('file', null) ? `file://${join(ROOT, opt('file'))}` : `http://127.0.0.1:${server.address().port}/index.html`);
 
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist'] });
 

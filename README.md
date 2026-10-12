@@ -1,5 +1,7 @@
 # Transformer Atlas
 
+**Live:** https://saidgurbuz.github.io/transformer-atlas/ · version 1.0.0 ([changelog](CHANGELOG.md))
+
 A full-screen, zoomable atlas of a decoder-only Transformer running a real (tiny, trained)
 model in your browser. Start from a 3D view of the whole model, click a part to zoom into it
 (Model → Block 2 → Attention → Head 1 → Softmax), and each level shows one idea, animated on the
@@ -51,7 +53,9 @@ From the cluster, forward the port (`ssh -L 8000:localhost:8000 <login-node>`) a
 
 ## Deploy (GitHub Pages)
 
-The app is static, so GitHub Pages can host it at `https://saidgurbuz.github.io/transformer-atlas/`.
+The app is static and is published with GitHub Pages at `https://saidgurbuz.github.io/transformer-atlas/`
+(from the `site` branch; the source repository can stay private). To ship a new version: bump
+`src/version.js`, add a CHANGELOG entry, tag `vX.Y.Z`, then run `tools/deploy_pages.sh`.
 
 ```bash
 tools/deploy_pages.sh            # rebuild and update the `site` branch (private; nothing is published)
