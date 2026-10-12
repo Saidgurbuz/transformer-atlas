@@ -6,6 +6,7 @@ __pycache__/
 
 # local runtime artefacts
 tools/.smoke*.lock
+tools/.frames*.lock
 logs/
 dist/
 drafts/

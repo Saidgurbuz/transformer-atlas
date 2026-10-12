@@ -4,6 +4,7 @@
 //   tools/smoke.sh --all --preset tinystories   (any mode: open that model via ?preset=)
 //   tools/smoke.sh --all --shots dir --wait 2500 (also save every view's screenshot)
 //   tools/smoke.sh --all --shard 2/6             (every 6th view from the 3rd: parallel sweeps)
+//   tools/smoke.sh --view model --query root=b   (extra URL parameters, e.g. a scene variant)
 //   tools/smoke.sh --file dist/transformer-atlas.html --view head   (single-file build via file://)
 //   tools/smoke.sh --url https://saidgurbuz.github.io/transformer-atlas/ --view model   (deployed site)
 // Prints JSON per view: console errors, page errors, horizontal overflow, stub status.
@@ -53,7 +54,8 @@ async function check(view, { theme = 'light', width = 1440, height = 900, out = 
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('requestfailed', (r) => { if (!/fonts\.(googleapis|gstatic)/.test(r.url())) errors.push(`request failed: ${r.url()}`); });
   await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.fulfill({ status: 200, contentType: 'text/css', body: '' }));
-  const q = opt('preset', null) ? `?preset=${opt('preset')}` : '';
+  const params = [opt('preset', null) && `preset=${opt('preset')}`, opt('query', null)].filter(Boolean);
+  const q = params.length ? `?${params.join('&')}` : '';
   await page.goto(`${base}${q}#${view}`, { waitUntil: 'load' });
   await page.waitForTimeout(wait);
   const info = await page.evaluate(() => ({

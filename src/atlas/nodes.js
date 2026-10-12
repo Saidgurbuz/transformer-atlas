@@ -7,9 +7,15 @@ import { codeLines, codeRegions } from '../core/codemap.js';
 
 const T = (s) => () => s;
 
+// ?root=<name> previews an alternative top-level scene (scenes/model-<name>.js) during design work.
+function rootVariant() {
+  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('root');
+  return v && /^[a-z0-9]{1,12}$/.test(v) ? `./scenes/model-${v}.js` : './scenes/model.js';
+}
+
 export const PATTERNS = [
   { pattern: 'model', title: T('Transformer'), parent: null, kind: 'resid', blurb: 'The whole decoder-only model, input to prediction.',
-    scene: () => import('./scenes/model.js'), keys: () => ['emb.out', 'logits', 'probs'] },
+    scene: () => import(rootVariant()), keys: () => ['emb.out', 'logits', 'probs'] },
 
   { pattern: 'tokens', title: T('Tokens'), parent: () => 'model', kind: 'embed', blurb: 'Text becomes a sequence of integer ids.',
     scene: () => import('./scenes/tokens.js'), keys: () => [] },
