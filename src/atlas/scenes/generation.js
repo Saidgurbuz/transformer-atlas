@@ -14,9 +14,9 @@ const STEPS = ['Prompt', 'One step', 'Keep going', 'The cache'];
 const STEP_KIND = ['embed', 'embed', 'embed', 'k'];   // each step's label takes the colour of what the step is about
 const SEED = 7;           // sampling seed: the same input and settings always give the same text
 const MAX_NEW = 16;       // tokens per run
-const VIS_TILES = 64;     // sequence tiles shown; a longer context elides its start
+const TAPE = { h: 40, font: 16, pad: 6, minW: 26, ell: 28, tick: 12 };   // subword tape: tile height, label px, padding, min width, ellipsis width, empty slot width
 const CELL = 4;           // px per cache cell (square)
-const MAX_ROWS = 28;      // cache rows per stack; the newest rows sit at the bottom
+const MAX_ROWS = 40;      // cache rows per stack; the newest rows sit at the bottom (all of them for a short text)
 const KV_BUDGET = 350;    // px for all K and V stacks together, so the side column ends above the caption
 const SEQ = { x: ZONES.hero.x, y: 310, w: 1030 };
 const MODEL = { x: ZONES.hero.x, y: 440, w: 290, h: 160 };
@@ -40,6 +40,11 @@ const maxAbs = (a, b, off) => { let m = 0; for (let i = 0; i < a.length; i++) m 
 const htmlEsc = (t) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const TEX_ESC = { '\\': '\\textbackslash ', '{': '\\{', '}': '\\}', '$': '\\$', '&': '\\&', '#': '\\#', '^': '\\textasciicircum ', '_': '\\_', '%': '\\%', '~': '\\textasciitilde ' };
 const texEsc = (t) => t.replace(/[\\{}$&#^_%~]/g, (c) => TEX_ESC[c]);
+// A display label as TeX text. The visible space ␣ is drawn by the \vsp macro (KaTeX's fonts have no ␣); a newline
+// and ⟨eot⟩ become text KaTeX typesets, as \n and angle brackets.
+const texLab = (label) => texEsc(label).replace(/␣/g, '\\vsp{}').replace(/↵/g, '\\textbackslash{}n').replace(/⟨/g, '\\textless{}').replace(/⟩/g, '\\textgreater{}');
+// Width of a subword tile: its label at the tape's font (0.64 em per glyph covers monospace faces), plus padding and border.
+const labelWidth = (label) => Math.max(TAPE.minW, Math.ceil(Array.from(label).length * TAPE.font * 0.64) + 2 * TAPE.pad + 2);
 const vecTex = (row) => `${Array.from(row.slice(0, 4), (x) => num(x, 2)).join(',\\;')},\\;\\dots`;   // first four entries
 const yieldNow = () => new Promise((r) => setTimeout(r, 0));
 
@@ -97,7 +102,7 @@ useStyle('generation', `
 .gn-seqctl { display: flex; align-items: center; gap: 8px; }
 .gn-seqctl .btn { height: 32px; padding: 0 12px; font-size: 14px; }
 .gn-seq { display: flex; align-items: flex-start; }
-.gn-tile { position: relative; flex: 0 0 auto; box-sizing: border-box; border-radius: 10px; display: grid; place-items: center; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 3px 8px rgba(0, 0, 0, .08); font: 600 22px/1 var(--font-mono); color: var(--fg); transition: background-color .45s ease, border-color .45s ease, box-shadow .45s ease; }
+.gn-tile { position: relative; flex: 0 0 auto; box-sizing: border-box; border-radius: 10px; display: grid; place-items: center; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 3px 8px rgba(0, 0, 0, .08); font: 600 22px/1 var(--font-mono); color: var(--fg); white-space: nowrap; transition: background-color .45s ease, border-color .45s ease, box-shadow .45s ease; }
 .gn-tile.gn-gen { background: color-mix(in srgb, var(--c-embed) 20%, var(--surface)); border-color: color-mix(in srgb, var(--c-embed) 60%, var(--line)); }
 .gn-tile.gn-empty { background: transparent; border: 1px dashed var(--line-strong); box-shadow: none; color: transparent; }
 .gn-tile.gn-new { border: 2px solid var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent), 0 8px 16px rgba(0, 0, 0, .14); }
@@ -109,7 +114,7 @@ useStyle('generation', `
 .gn-model { box-sizing: border-box; width: 290px; height: 160px; padding: 18px 20px; border-radius: 16px; display: grid; align-content: center; gap: 6px; background: color-mix(in srgb, var(--c-resid) 9%, var(--surface)); border: 1px solid color-mix(in srgb, var(--c-resid) 50%, var(--line)); box-shadow: 0 16px 34px rgba(0, 0, 0, .14), 0 2px 0 color-mix(in srgb, var(--c-resid) 26%, transparent); }
 .gn-model b { font: 650 27px/1.1 var(--font-display); color: var(--fg); letter-spacing: -.01em; }
 .gn-model small { font: 500 14px/1.45 var(--font-mono); color: var(--fg-2); }
-.gn-pop { display: grid; place-items: center; box-sizing: border-box; width: 40px; height: 40px; border-radius: 10px; font: 650 22px/1 var(--font-mono); color: var(--fg); background: color-mix(in srgb, var(--c-embed) 30%, var(--surface)); border: 2px solid var(--c-embed); box-shadow: 0 12px 24px rgba(0, 0, 0, .2); }
+.gn-pop { display: grid; place-items: center; box-sizing: border-box; min-width: 40px; width: max-content; height: 40px; padding: 0 6px; white-space: nowrap; border-radius: 10px; font: 650 22px/1 var(--font-mono); color: var(--fg); background: color-mix(in srgb, var(--c-embed) 30%, var(--surface)); border: 2px solid var(--c-embed); box-shadow: 0 12px 24px rgba(0, 0, 0, .2); }
 .gn-candwrap { width: 670px; }
 .gn-candhead { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 30px; margin-bottom: 6px; }
 .gn-temp { display: grid; grid-template-columns: 170px 120px; align-items: center; gap: 10px; }
@@ -117,9 +122,9 @@ useStyle('generation', `
 .gn-temp .value { font: 500 14px/1 var(--font-mono); color: var(--fg); }
 .gn-cands { display: grid; gap: ${CAND_GAP}px; }
 .gn-cands[hidden] { display: none; }
-.gn-cand { display: grid; grid-template-columns: 30px 1fr 56px 84px; align-items: center; gap: 12px; height: ${CAND_H}px; box-sizing: border-box; padding: 0 8px; border-radius: 8px; border: 1px solid transparent; transition: background-color .4s ease, border-color .4s ease; }
+.gn-cand { display: grid; grid-template-columns: var(--chip, 30px) 1fr 56px 84px; align-items: center; gap: 12px; height: ${CAND_H}px; box-sizing: border-box; padding: 0 8px; border-radius: 8px; border: 1px solid transparent; transition: background-color .4s ease, border-color .4s ease; }
 .gn-cand.gn-chosen { background: var(--surface-2); border-color: var(--fg-3); }
-.gn-cand-ch { display: grid; place-items: center; width: 28px; height: 20px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); font: 600 15px/1 var(--font-mono); color: var(--fg); }
+.gn-cand-ch { display: grid; place-items: center; justify-self: start; width: calc(var(--chip, 30px) - 2px); height: 20px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); font: 600 15px/1 var(--font-mono); color: var(--fg); white-space: nowrap; }
 .gn-cand-track { height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; }
 .gn-cand-track i { display: block; width: 0; height: 100%; border-radius: 5px; transition: width .6s cubic-bezier(.65, 0, .35, 1), background-color .4s ease; }
 .gn-cand-p { font: 600 14px/1 var(--font-mono); color: var(--fg); text-align: right; }
@@ -206,7 +211,7 @@ export default {
     let autoOn = true, autoCalling = false;
     let work = Promise.resolve();
     const waiters = [];       // settle() callers, woken when a prompt feed ends or is superseded
-    let tiles = [], layers = [], vis = null, rowsShown = 0, stackRange = 1, cnt = {}, sideRefs = {};
+    let tiles = [], ell = null, layers = [], vis = null, rowsShown = 0, stackRange = 1, cnt = {}, sideRefs = {};
     let shownL = 0, shownG = 0;   // what paintAll last put on screen: cache length and generated count
     let capShown = null;
 
@@ -283,33 +288,53 @@ export default {
       };
     }
 
-    function glyph(id) { const c = base.tk.token(id); return c === ' ' ? '␣' : c === '\n' ? '⏎' : c; }
+    // A display label: ␣ marks a leading space and ↵ a newline, as the tokenizer labels them (the token picker shows the same).
+    function glyph(id) { return base.tk.label(id); }
 
+    // The tape's geometry for the current sequence. Character tokens keep the fixed grid (one glyph per cell). Subword
+    // tokens are as wide as their label, so a word stays whole; positions not generated yet are narrow empty slots.
+    // When the row is too long the oldest positions are elided, and an ellipsis tile names them. The geometry is
+    // computed from the labels, not measured, so it is right even while the scene is hidden.
     function layoutVis() {
-      const S = base.S, hidden = S > VIS_TILES ? S - (VIS_TILES - 1) : 0;
-      const n = hidden ? VIS_TILES : S;
-      const gap = n > 40 ? 2 : 4;
+      const bpe = base.tk.kind === 'bpe';
+      if (bpe) return { bpe, gap: 4, th: TAPE.h, w: 0, labelEvery: 1 };
+      const n = base.S, gap = n > 40 ? 2 : 4;
       const w = clamp(Math.floor((SEQ.w - (n - 1) * gap) / n), 10, 34);
       const th = clamp(w + 20, 30, 46);          // tiles stay near square when they are narrow
-      return { hidden, n, gap, w, th, labelEvery: w >= 20 ? 1 : w >= 14 ? 4 : 8 };
+      return { bpe, gap, w, th, labelEvery: w >= 20 ? 1 : w >= 14 ? 4 : 8 };
     }
-    const tileX = (i) => SEQ.x + i * (vis.w + vis.gap) + vis.w / 2;
-    const tileIndex = (pos) => (pos < vis.hidden ? -1 : vis.hidden ? pos - vis.hidden + 1 : pos);
+    // The shown positions are a..e. The tokens and the next empty slot must fit: the oldest tokens are elided until they
+    // do, so an empty slot never pushes a generated token out of the tape. More empty slots are shown while they fit.
+    function tapeLayout(ids = seq) {          // ids: the tokens shown (the sequence, or the sequence plus the token about to join)
+      const L = ids.length, S = base.S, { bpe, gap } = vis;
+      const ws = Array.from({ length: S }, (_, p) => (!bpe ? vis.w : p < L ? labelWidth(glyph(ids[p])) : TAPE.tick));
+      const ellW = bpe ? TAPE.ell : vis.w;
+      const width = (a, e) => ws.slice(a, e + 1).reduce((s, w) => s + w, 0) + (e - a) * gap + (a > 0 ? ellW + gap : 0);
+      const must = Math.min(S, L + 1) - 1;        // the newest token, and the next slot when there is one
+      let a = 0;                                  // the first position shown; the newest token always is
+      while (a < L - 1 && width(a, must) > SEQ.w) a++;
+      let e = must;
+      while (e < S - 1 && width(a, e + 1) <= SEQ.w) e++;
+      const cx = new Array(S);                    // centre x of every shown position
+      let x = SEQ.x + (a > 0 ? ellW + gap : 0);
+      for (let p = a; p <= e; p++) { cx[p] = x + ws[p] / 2; x += ws[p] + gap; }
+      return { a, e, ws, cx, ellW };
+    }
     const withoutRows = (L) => { let n = base.P; for (let k = base.P; k < L; k++) n += k + 1; return n; };
 
     // ------------------------------------------------------------ DOM that depends on the input
     function buildDom() {
       vis = layoutVis();
       seqRow.style.gap = `${vis.gap}px`;
-      tiles = Array.from({ length: vis.n }, (_, i) => {
-        const pos = vis.hidden ? (i === 0 ? -1 : vis.hidden + i - 1) : i;
-        const ch = h('span', { class: 'gn-ch', style: { fontSize: `${Math.min(22, vis.w - 2)}px` } });
-        const idx = pos >= 0 ? h('span', { class: 'gn-idx', style: { top: `${vis.th + 6}px` } }, String(pos)) : null;
-        const el = h('div', { class: 'gn-tile', style: { width: `${vis.w}px`, height: `${vis.th}px` }, title: pos >= 0 ? `position ${pos}` : `positions 0 to ${vis.hidden - 1} are not shown` }, ch, idx);
-        if (pos < 0) { el.classList.add('gn-ell'); ch.textContent = '⋯'; }
+      tiles = Array.from({ length: base.S }, (_, pos) => {
+        const ch = h('span', { class: 'gn-ch', style: { fontSize: `${vis.bpe ? TAPE.font : Math.min(22, vis.w - 2)}px` } });
+        const idx = h('span', { class: 'gn-idx', style: { top: `${vis.th + 6}px` } }, String(pos));
+        const el = h('div', { class: 'gn-tile', style: { height: `${vis.th}px` }, title: `position ${pos}` }, ch, idx);
         return { el, ch, idx, pos };
       });
-      seqRow.replaceChildren(...tiles.map((t) => t.el));
+      const ellIdx = h('span', { class: 'gn-idx', style: { top: `${vis.th + 6}px`, left: '0', right: 'auto', textAlign: 'left' } });   // "0–17" starts at the tape's edge
+      ell = { el: h('div', { class: 'gn-tile gn-ell', style: { height: `${vis.th}px` } }, h('span', { class: 'gn-ch' }, '⋯'), ellIdx), idx: ellIdx };
+      seqRow.replaceChildren(ell.el, ...tiles.map((t) => t.el));
       const { cfg } = base;
       modelEl.replaceChildren(
         h('b', null, 'Transformer'),
@@ -573,17 +598,21 @@ export default {
     async function animateStep(id) {
       if (!base || !consistent() || g >= base.maxNew) return false;
       const e = epoch, pos = seq.length, tokId = next.id;
-      const tile = tiles.find((t) => t.pos === pos);
-      let flight = null;
-      if (tile && !reducedMotion() && !dead && id === runId) {
+      let flight = null, dest = null;
+      if (!reducedMotion() && !dead && id === runId) {
+        // the flight lands where the token will sit once the tape is repainted (the window may move as it joins)
+        const lay = tapeLayout(seq.concat([tokId]));
+        dest = h('div', { style: { width: `${lay.ws[pos]}px`, height: `${vis.th}px` } });
+        st.add(dest, { x: lay.cx[pos], y: SEQ.y + vis.th / 2, anchor: 'c' });
         pulse(modelEl);
-        const pop = h('div', { class: 'gn-pop' }, glyph(tokId));
+        const pop = h('div', { class: 'gn-pop', style: vis.bpe ? { fontSize: `${TAPE.font}px` } : null }, glyph(tokId));
         st.add(pop, { x: MODEL.x + MODEL.w / 2, y: MODEL.y, anchor: 'c', layer: 'front' });
-        flight = fly(st, pop, tile.el, { duration: FLY_MS, arc: 90 });   // fly clones the token, so the original can leave now
+        flight = fly(st, pop, dest, { duration: FLY_MS, arc: 90 });   // fly clones the token, so the original can leave now
         pop.remove();
       }
       advance();
       if (flight) await flight;
+      dest?.remove();
       if (e === epoch && !dead) paintAll({ animate: true, fresh: pos });
       return true;
     }
@@ -700,7 +729,7 @@ export default {
         const main = greedy ? `\\mathit{id}_{${P}}=\\arg\\max_{v}\\, z_{${P - 1},v}` : `\\mathit{id}_{${P}}\\sim\\softmax(z_{${P - 1}}/T)`;
         let lv = '';
         if (c) {
-          const tch = texEsc(glyph(c.id));
+          const tch = texLab(glyph(c.id));
           lv = `z_{${P - 1},\\,\\text{“${tch}”}}=${num(c.logits[c.id], 2)},\\qquad p(\\text{“${tch}”})=${num(c.probs[c.id], 3)}${greedy ? '' : `\\text{ at } T=${T}`}`;
         }
         return { cap, main, live: lv };
@@ -712,7 +741,7 @@ export default {
         if (!kvOn) {
           return {
             cap: `${head} With no cache, all ${P + 1} positions run again to produce it.`,
-            main: `\\mathit{id}_{${P}}${tok != null ? `=\\text{“${texEsc(glyph(tok))}”}` : ''},\\qquad z_{${P}}=\\text{Transformer}(\\mathit{id}_{0},\\dots,\\mathit{id}_{${P}})`,
+            main: `\\mathit{id}_{${P}}${tok != null ? `=\\text{“${texLab(glyph(tok))}”}` : ''},\\qquad z_{${P}}=\\text{Transformer}(\\mathit{id}_{0},\\dots,\\mathit{id}_{${P}})`,
             live: `\\text{positions run: } ${P + 1}`,
           };
         }
@@ -792,37 +821,45 @@ export default {
       eyebrow.replaceChildren(
         chip(`${cfg.n_layer} ${cfg.n_layer === 1 ? 'layer' : 'layers'}`, 'resid'),
         chip(temp > 0 ? `T = ${temp.toFixed(2)}` : 'greedy'),        // a setting, so a neutral chip
-        chip(kvOn ? 'KV cache' : 'no cache'));                         // a method, so a neutral chip
+        chip(kvOn ? 'KV cache' : 'no cache'),                          // a method, so a neutral chip
+        ...(base.tk.kind === 'bpe' ? [chip('␣ = leading space')] : []));   // the subword labels need this key
       seqLabel.textContent = `tokens · prompt ${P}${g ? ` · generated ${g}` : ''} · context ${seq.length} of ${cfg.block_size}${stopReason() ? ' · stopped' : ''}`;
     }
 
     function paintSeq(fresh) {
-      const L = seq.length;
-      const labelOn = (pos) => pos === L - 1 || (pos % vis.labelEvery === 0 && Math.abs(pos - (L - 1)) > vis.labelEvery / 2);
-      for (const t of tiles) {
-        if (t.pos < 0) continue;
-        const has = t.pos < L;
-        t.el.classList.toggle('gn-gen', has && t.pos >= base.P);
+      const L = seq.length, lay = tapeLayout();
+      // subword tape: every token is numbered; of the empty slots, the next one and every fourth after it (narrow slots would crowd)
+      const labelOn = (pos) => pos === L - 1 || (vis.bpe ? pos < L || (pos - L) % 4 === 0
+        : pos % vis.labelEvery === 0 && Math.abs(pos - (L - 1)) > vis.labelEvery / 2);
+      tiles.forEach((t, p) => {
+        const has = p < L;
+        t.el.style.display = p >= lay.a && p <= lay.e ? '' : 'none';
+        t.el.style.width = `${lay.ws[p]}px`;
+        t.el.classList.toggle('gn-gen', has && p >= base.P);
         t.el.classList.toggle('gn-empty', !has);
-        t.el.classList.toggle('gn-new', has && g > 0 && t.pos === L - 1);
-        t.ch.textContent = has ? glyph(seq[t.pos]) : '';
-        t.idx.classList.toggle('gn-on', labelOn(t.pos));
-        if (t.pos === fresh && !reducedMotion()) {
+        t.el.classList.toggle('gn-new', has && g > 0 && p === L - 1);
+        t.ch.textContent = has ? glyph(seq[p]) : '';
+        t.idx.classList.toggle('gn-on', labelOn(p));
+        if (p === fresh && !reducedMotion()) {
           t.el.animate([{ transform: 'scale(.4)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], { duration: 460, easing: MOTION.easeOut });
         }
-      }
+      });
+      ell.el.style.display = lay.a > 0 ? '' : 'none';
+      ell.el.style.width = `${lay.ellW}px`;
+      ell.el.title = `positions 0 to ${lay.a - 1} are not shown`;
+      ell.idx.textContent = lay.a > 1 ? `0–${lay.a - 1}` : '0';
+      ell.idx.classList.add('gn-on');
     }
 
     function paintBus() {
-      const i = tileIndex(seq.length - 1);
-      if (i < 0) { bus.setAttribute('d', ''); return; }
-      const y0 = SEQ.y + vis.th + 24, xBox = MODEL.x + MODEL.w / 2;
+      if (!seq.length) { bus.setAttribute('d', ''); return; }
+      const lay = tapeLayout(), y0 = SEQ.y + vis.th + 24, xBox = MODEL.x + MODEL.w / 2, xNew = lay.cx[seq.length - 1];
       if (base.kvOn) {
-        bus.setAttribute('d', `M${tileX(i)},${y0} V${BUS_Y} H${xBox} V${MODEL.y - 4}`);
+        bus.setAttribute('d', `M${xNew},${y0} V${BUS_Y} H${xBox} V${MODEL.y - 4}`);
       } else {
         // no cache: every visible token is read again, so a bracket spans the sequence and feeds the box
-        const first = tileX(vis.hidden ? 1 : 0), last = tileX(i), mid = (first + last) / 2;
-        bus.setAttribute('d', `M${first},${y0} V${BUS_Y - 12} H${last} V${y0} M${mid},${BUS_Y - 12} V${BUS_Y} H${xBox} V${MODEL.y - 4}`);
+        const first = lay.cx[lay.a], mid = (first + xNew) / 2;
+        bus.setAttribute('d', `M${first},${y0} V${BUS_Y - 12} H${xNew} V${y0} M${mid},${BUS_Y - 12} V${BUS_Y} H${xBox} V${MODEL.y - 4}`);
       }
       bus.classList.toggle('gn-run', running);
     }
@@ -845,6 +882,8 @@ export default {
       let order = Array.from(probs.keys()).sort((a, b) => probs[b] - probs[a]).slice(0, cands.length);
       if (!order.includes(next.id)) order[order.length - 1] = next.id;   // always show the chosen token
       order = order.sort((a, b) => probs[b] - probs[a]);
+      // the chip column is as wide as the longest label shown (15 px glyphs), so the probability bars line up
+      candBox.style.setProperty('--chip', `${Math.max(30, Math.ceil(Math.max(...order.map((id) => Array.from(glyph(id)).length)) * 15 * 0.64) + 14)}px`);
       const traced = g === 0 && temp === 0;
       if (traced) candBox.dataset.trace = 'probs'; else delete candBox.dataset.trace;
       cands.forEach((c, i) => {
@@ -863,8 +902,8 @@ export default {
       candLabel.textContent = temp > 0 ? `next token · drawn at T = ${temp.toFixed(2)}` : 'next token · the highest score wins';
     }
 
-    // Each stack: rows are positions, columns are the dims of kv head 0. The window ends at the newest row and
-    // starts 28 (or fewer) rows earlier; rows the cache does not hold yet are placeholders. One colour scale for all.
+    // Each stack: rows are positions, columns are the dims of kv head 0. The window ends at the newest row and holds
+    // rowsShown rows (every row of a short input); rows the cache does not hold yet are placeholders. One colour scale for all.
     function paintStacks(fresh) {
       if (!base.kvOn || !cache || !layers.length) return;
       const { cfg, P } = base;
@@ -928,6 +967,7 @@ export default {
       sideRefs.note.textContent = `${L} rows cached`;
       const lines = [
         `kv head 0 of ${kvHeads} · rows ${top}–${qpos} shown`,
+        `row ${qpos} is the token “${glyph(seq[qpos])}”`,
         `one colour scale for every stack: ±${fmt(stackRange, 2)}`,
       ];
       if (readLo >= 0) lines.push(`token ${qpos} reads rows ${readLo}–${qpos}`);
