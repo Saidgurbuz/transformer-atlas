@@ -63,7 +63,7 @@ export const PATTERNS = [
   { pattern: 'tower', title: T('All tensors (v0.1)'), parent: () => 'model', extra: true, kind: 'resid', blurb: 'Every traced tensor as a 3D tower.',
     scene: () => import('./scenes/legacy.js').then((m) => m.legacy('explorer')), keys: () => [] },
   { pattern: 'stepper', title: T('Code ↔ forward pass'), parent: () => 'model', extra: true, kind: 'attn', blurb: 'Step through model.py line by line.',
-    scene: () => import('./scenes/legacy.js').then((m) => m.legacy('stepper')), keys: () => [] },
+    scene: () => import('./scenes/stepper.js'), keys: () => [] },
   { pattern: 'cheatsheet', title: T('Interview cheat sheet'), parent: () => 'model', extra: true, kind: 'head', blurb: 'Formulas, shapes and flashcards.',
     scene: () => import('./scenes/cheatsheet.js'), keys: () => [] },
   { pattern: 'scaling', title: T('Params, FLOPs & memory'), parent: () => 'model', extra: true, kind: 'mlp', blurb: 'What real models cost.',
