@@ -51,10 +51,12 @@ export class SceneEngine {
     this.controls.zoomSpeed = 0.9;
     this.controls.addEventListener('change', () => this.invalidate());
 
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x445066, 1.6));
+    this.hemi = new THREE.HemisphereLight(0xffffff, 0x445066, 1.6);
+    this.scene.add(this.hemi);
     const sun = new THREE.DirectionalLight(0xffffff, 1.1);
     sun.position.set(10, 30, 20);
     this.scene.add(sun);
+    this.sun = sun;                          // scenes with their own lighting dim these
 
     this.pickables = new Set();
     this.raycaster = new THREE.Raycaster();
