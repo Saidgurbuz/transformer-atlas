@@ -193,3 +193,6 @@
 }
 /* hidden levels stay hidden even if a component sets visibility on its own elements */
 .atlas-layer.hidden, .atlas-layer.hidden * { visibility: hidden !important; }
+
+.k-picker.wrap { flex-wrap: wrap; row-gap: 4px; }
+.k-picker.wrap .k-pick { width: auto; height: 38px; white-space: nowrap; }

@@ -425,10 +425,25 @@ export function tokenPicker(stage, ctx, { x = ZONES.controls.x, y = ZONES.contro
   stage.add(wrap, { x, y });
   function render() {
     const s = ctx.state, T = s.ids.length, sel = Math.min(s.sel.token, T - 1);
-    const w = Math.max(16, Math.min(40, (maxWidth - 70) / T - 4));
-    row.replaceChildren(...s.ids.map((_, i) => {
-      const t = h('button', { type: 'button', class: ['k-pick', i === sel && 'sel'], disabled: isDisabled?.(i), style: { width: `${w}px`, fontSize: T > 32 ? '12px' : '17px', '--kind': `var(--c-${kind})` }, title: `position ${i}` },
-        h('b', null, ctx.label(i)), T <= 48 ? h('small', null, i) : null);
+    const labels = s.ids.map((_, i) => ctx.label(i));
+    const longest = Math.max(1, ...labels.map((l) => Array.from(l).length));
+    let tiles;
+    if (longest <= 2) {
+      // characters: equal-width tiles on one row
+      const w = Math.max(16, Math.min(40, (maxWidth - 70) / T - 4));
+      tiles = labels.map((l) => ({ l, style: { width: `${w}px`, fontSize: T > 32 ? '12px' : '17px' } }));
+      row.classList.remove('wrap');
+    } else {
+      // words / subwords: tiles fit their text; the row wraps (at most ~3 rows), the font shrinks for long inputs
+      const chars = labels.reduce((a, l) => a + Array.from(l).length + 1.6, 0);
+      const fs = Math.max(12, Math.min(17, ((maxWidth - 70) * 2.6) / (chars * 0.62)));
+      tiles = labels.map((l) => ({ l, style: { minWidth: `${fs * 1.6}px`, padding: `0 ${Math.round(fs * 0.35)}px`, fontSize: `${fs}px` } }));
+      row.classList.add('wrap');
+      row.style.maxWidth = `${maxWidth - 70}px`;
+    }
+    row.replaceChildren(...tiles.map(({ l, style }, i) => {
+      const t = h('button', { type: 'button', class: ['k-pick', i === sel && 'sel'], disabled: isDisabled?.(i), style: { ...style, '--kind': `var(--c-${kind})` }, title: `position ${i}` },
+        h('b', null, l), T <= 48 ? h('small', null, i) : null);
       t.addEventListener('click', () => ctx.store.select({ token: i }));
       return t;
     }));

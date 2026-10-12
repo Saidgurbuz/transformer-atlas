@@ -118,6 +118,20 @@ current step; the full set is one click away in the maths drawer. Coloured macro
 \Wq \Wk \Wv \Wo \WE \WU \Wup \Wdown \Wgate \Aw \Mk \Pe \xres`, operators `\softmax \LN
 \RMSNorm \GELU \SiLU \ReLU \concat \CE \Attn \MLP`.
 
+## Tokenizers and vocabulary size
+
+Two kinds of presets exist. Character presets (`charlm`, `llama`, `induction`, `reverse`): V = 32,
+one character per token. The subword preset (`tinystories`, loaded by default): byte-level BPE
+with V = 4,096, so most words are one token and labels are words like `␣Lily` (␣ marks the
+leading space). `ctx.state.tokenizer.kind` is `'char'` or `'bpe'`; for BPE it also has
+`words(text)` (pre-tokenized words) and `explain(word)` (the real merge sequence, for animating
+BPE). Scenes must work for both:
+- never draw all V rows or columns when V is large: show the top-k entries (by probability,
+  logit, similarity, ...) or the rows the current text uses, and say how many are not shown;
+- token labels can be several characters: size tiles to their text (the kit's `tokenPicker`
+  already does), never assume one character per token;
+- matrices with V rows (W_E, W_U, logits) show the rows for this text's tokens, or the top-k.
+
 ## Correctness
 
 Every number on screen comes from `ctx.state.trace`, `ctx.state.model.params` or engine
