@@ -3,6 +3,7 @@
 //   tools/smoke.sh --all            (every view, light + dark, desktop; prints a table)
 //   tools/smoke.sh --all --preset tinystories   (any mode: open that model via ?preset=)
 //   tools/smoke.sh --all --shots dir --wait 2500 (also save every view's screenshot)
+//   tools/smoke.sh --all --shard 2/6             (every 6th view from the 3rd: parallel sweeps)
 //   tools/smoke.sh --file dist/transformer-atlas.html --view head   (single-file build via file://)
 //   tools/smoke.sh --url https://saidgurbuz.github.io/transformer-atlas/ --view model   (deployed site)
 // Prints JSON per view: console errors, page errors, horizontal overflow, stub status.
@@ -18,6 +19,10 @@ const { chromium } = require('./node_modules/playwright');
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png' };
 
+// Chromium keeps its profile and HTTP cache under os.tmpdir(). On the cluster TMPDIR points at
+// the shared GPFS filesystem, where every cache write syncs slowly: a page took ~30 s to load
+// instead of 0.5 s. Node-local /tmp avoids that.
+if (!process.env.SMOKE_KEEP_TMPDIR) process.env.TMPDIR = '/tmp';
 const args = process.argv.slice(2);
 const opt = (name, dflt) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : dflt; };
 const flag = (name) => args.includes(`--${name}`);
@@ -72,10 +77,12 @@ async function check(view, { theme = 'light', width = 1440, height = 900, out = 
 try {
   if (flag('all')) {
     const { PATTERNS } = await import('../src/atlas/nodes.js');
-    const VIEWS = PATTERNS.map((p) => ({ id: p.pattern.replace(':l', '0').replace(':h', '0').replace(':n', '1') }));
+    // --shard i/n: every n-th view starting at i, so a sweep can run as n parallel jobs
+    const [si, sn] = opt('shard', '0/1').split('/').map(Number);
+    const VIEWS = PATTERNS.map((p) => ({ id: p.pattern.replace(':l', '0').replace(':h', '0').replace(':n', '1') })).filter((_, i) => i % sn === si);
     const rows = [];
     const shots = opt('shots', null);    // --shots dir: also save <view>-<theme>.png there
-    for (const v of VIEWS) for (const theme of ['light', 'dark']) {
+    for (const v of VIEWS) for (const theme of opt('themes', 'light,dark').split(',')) {
       const r = await check(v.id, { theme, wait: Number(opt('wait', 700)), out: shots ? join(shots, `${v.id}-${theme}.png`) : null });
       rows.push(r);
       console.log(`${(r.errors.length || r.failed ? 'FAIL' : r.stub ? 'stub' : 'ok').padEnd(5)} ${v.id.padEnd(11)} ${theme.padEnd(5)} errors=${r.errors.length} overflow=${r.overflowX || r.viewOverflow} ${r.errors.slice(0, 2).join(' | ').slice(0, 200)}`);
