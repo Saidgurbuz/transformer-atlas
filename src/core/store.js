@@ -134,7 +134,9 @@ export const store = {
     st.weights = `preset:${id}`;
     st.preset = data;
     emit('config', st.config);
-    // short samples keep the 3D tower readable; the user can paste longer text
+    // short samples keep the 3D tower readable; the user can paste longer text.
+    // Subword samples are whole sentences (~18 tokens), so they are used as is.
+    if (st.tokenizer.kind === 'bpe') { this.setText(data.samples?.[0] ?? st.text, { quiet: true }); return; }
     const sample = data.samples?.find((x) => x.length <= 40) ?? data.samples?.[0] ?? st.text;
     this.setText(sample.slice(0, st.config.block_size), { quiet: true });
   },
