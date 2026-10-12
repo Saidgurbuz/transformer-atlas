@@ -15,7 +15,9 @@ const STEPS = ['Token ids', 'Look up rows', 'Positions', 'x₀'];
 const CELL = 42, CELL_GAP = 4, ROW_H = 60;          // hero cells are 42 wide, 4 apart; a stage row is 60 tall
 const HEAD_COLS = 12, TAIL_COLS = 4;                // columns: all of d up to 17, else the first 12, ⋮, the last 4
 const CTX_ALL = 36, CTX_HEAD = 8, CTX_TAIL = 3;     // context rows: every row up to 36, else a window
+const CTX_IDS = 6;                                  // W_E rows for a vocabulary above CTX_ALL: this text's rows nearest the selected one
 const CTX_W = 340, CTX_LAB = 34, CTX_CELL = 16;     // the side column is 340 wide
+const LABW_MAX = 120, LABEL_CHAR = 9.2;             // a context label column fits its longest label (up to LABW_MAX), 15 px mono
 const CTX_Y = 520, CTX_ROWS_Y = 550, CTX_BOTTOM = 760, CTX_AVAIL = CTX_BOTTOM - CTX_ROWS_Y, GAP_ROW = 16;
 const LABEL_PX = 15;                                // the label size: a context label every k rows keeps this much room
 const SIDE_Y = 260;
@@ -66,7 +68,7 @@ useStyle('embedding', `
 .em-ctx-read { color: var(--fg-2); }
 .em-ctx { padding-top: 4px; }
 .em-ctx-row { display: flex; align-items: center; height: var(--pc); }
-.em-ctx-lab { flex: none; width: ${CTX_LAB}px; padding-right: 6px; text-align: right; font: 500 ${LABEL_PX}px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap; }
+.em-ctx-lab { flex: none; width: var(--lw, ${CTX_LAB}px); padding-right: 6px; text-align: right; font: 500 ${LABEL_PX}px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .em-ctx-cells { display: flex; gap: 1px; }
 .em-ctx-c { flex: none; width: var(--cw); height: calc(var(--pc) - 1px); border-radius: 2px; }
 .em-ctx-c.ell { display: grid; place-items: center; background: none !important; font: 500 12px/1 var(--font-mono); color: var(--fg-3); }
@@ -102,6 +104,27 @@ function ctxRows(n, anchor) {
   }
   return rows;
 }
+
+// A vocabulary too large to list (W_E with V > CTX_ALL): the rows of this text nearest the selected position, up to
+// CTX_IDS distinct ids, in id order. A gap row counts the vocabulary entries between two rows, and the ends too.
+function idRows(V, ids, q, n = CTX_IDS) {
+  const seen = [];
+  for (let k = 0; seen.length < n && (q - k >= 0 || q + k < ids.length); k++) {
+    for (const t of k === 0 ? [q] : [q - k, q + k]) {
+      if (t >= 0 && t < ids.length && seen.length < n && !seen.includes(ids[t])) seen.push(ids[t]);
+    }
+  }
+  const rows = [];
+  let prev = -1;
+  for (const id of seen.sort((a, b) => a - b)) {
+    if (id - prev > 1) rows.push({ ell: true, n: id - prev - 1 });
+    rows.push({ t: id });
+    prev = id;
+  }
+  if (V - 1 - prev > 0) rows.push({ ell: true, n: V - 1 - prev });
+  return rows;
+}
+const fmtN = (n) => Math.round(n).toLocaleString('en-US');
 
 const absMax = (...arrs) => { let m = 0; for (const a of arrs) if (a) for (let i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i])); return m || 1; };
 const sci = (v) => (v === 0 ? '0' : v.toExponential(1));
@@ -249,6 +272,7 @@ export default {
       const { T, V, d, q, ids, hasP, W, pos, out } = g;
       if (i <= 1) return {
         kind: 'embed', n: V, anchor: ids[q], hi: i === 1 ? ids[q] : null, wte: true, word: 'id', gapWord: 'entries',
+        rows: V > CTX_ALL ? idRows(V, ids, q) : null,            // a large vocabulary shows the rows of this text
         value: (r, c) => W[r * d + c], labelOf: (r) => lab(r), tex: '\\WE', shape: `${V} × ${d}`,
       };
       if (i === 2 && hasP) return {
@@ -269,17 +293,22 @@ export default {
       const tab = g && tableFor(i);
       if (!tab) return;
       const { cols, RANGE } = g;
-      const rows = ctxRows(tab.n, tab.anchor);
+      const rows = tab.rows ?? ctxRows(tab.n, tab.anchor);
       const gaps = rows.filter((r) => r.ell).length, toks = rows.length - gaps;
-      const pitch = Math.max(5, Math.min(14, Math.floor((CTX_AVAIL - gaps * GAP_ROW) / Math.max(1, toks))));
+      // a short table (the rows of a large vocabulary) has room for a taller row, so every label fits its own row
+      const pitch = Math.max(5, Math.min(tab.rows ? 16 : 14, Math.floor((CTX_AVAIL - gaps * GAP_ROW) / Math.max(1, toks))));
       const k = Math.max(1, Math.ceil(LABEL_PX / pitch));    // a label every k-th row keeps one label height between labels
       const hiRow = tab.hi == null ? -1 : rows.findIndex((r) => r.t === tab.hi);
-      const cw = Math.min(CTX_CELL, Math.floor((CTX_W - CTX_LAB - (cols.length - 1)) / cols.length));
-      const body = h('div', { class: 'em-ctx', style: { '--kind': `var(--c-${tab.kind})`, '--pc': `${pitch}px`, '--cw': `${cw}px` } });
+      // the label column is as wide as its longest label (a subword such as “␣internationalization” is many characters)
+      const longest = Math.max(0, ...rows.filter((r) => !r.ell).map((r) => [...tab.labelOf(r.t)].length));
+      const labW = Math.min(LABW_MAX, Math.max(CTX_LAB, Math.ceil(longest * LABEL_CHAR) + 10));
+      const cw = Math.min(CTX_CELL, Math.floor((CTX_W - labW - 6 - (cols.length - 1)) / cols.length));
+      const body = h('div', { class: 'em-ctx', style: { '--kind': `var(--c-${tab.kind})`, '--pc': `${pitch}px`, '--cw': `${cw}px`, '--lw': `${labW}px` } });
       if (tab.trace) body.dataset.trace = tab.trace;
       rows.forEach((r, ri) => {
         if (r.ell) {
-          body.append(h('div', { class: 'em-ctx-gap' }, h('span', { class: 'em-ctx-lab' }, '⋮'), h('span', { class: 'em-ctx-gt' }, `${r.n} ${tab.gapWord} not shown`)));
+          const word = r.n === 1 ? tab.gapWord.replace(/ies$/, 'y').replace(/s$/, '') : tab.gapWord;     // “1 entry not shown”
+          body.append(h('div', { class: 'em-ctx-gap' }, h('span', { class: 'em-ctx-lab' }, '⋮'), h('span', { class: 'em-ctx-gt' }, `${fmtN(r.n)} ${word} not shown`)));
           return;
         }
         const on = ri === hiRow;
@@ -310,8 +339,8 @@ export default {
         main = `\\mathrm{id}_t \\in \\{0,\\dots,${V - 1}\\}`;
         plain = true;
         live = `“${tokName(q)}” at position ${q} is id ${id}, so it reads row ${id} of W_E.`;
-        note = `The vocabulary has ${V} entries, and an id is the index of its token in that list.`
-          + (s.config.tie_weights ? ' W_E is also the output matrix W_U, because the weights are tied.' : '');
+        note = `The vocabulary has ${fmtN(V)} entries, and an id is the index of its token in that list.`
+          + (s.config.tie_weights ? ' Tied weights: W_E is also W_U.' : '');   // short: the side column has three lines here
       } else if (i === 1) {
         const lv = liveOf('emb.tok') ?? { result: W[id * d], expected: tok[q * d] };
         main = mathFor('emb.tok').compact;
@@ -352,10 +381,15 @@ export default {
     function capText(i) {
       const { V, q, ids, hasP, enc } = g;
       const cfg = ctx.state.config;
-      if (i === 0) return `Each character is one token. Its id, from 0 to ${V - 1}, is its index in the vocabulary, and it names one row of W_E.`;
+      if (i === 0) {
+        const unit = ctx.state.tokenizer.kind === 'char'
+          ? 'Each character is one token.'
+          : 'Each token is a piece of text, often a whole word and sometimes part of one.';
+        return `${unit} Its id, from 0 to ${fmtN(V - 1)}, is its index in the vocabulary, and it names one row of W_E.`;
+      }
       if (i === 1) return `The id copies row ${ids[q]} of W_E into row ${q} of X_tok, the row for “<b>${tokName(q)}</b>”. A one-hot vector times W_E gives the same row, so the lookup is a matrix product.`;
       if (i === 2) return hasP
-        ? 'Each position vector joins the token at that position, so the same character gets a different x₀ at every position.'
+        ? 'Each position vector joins the token at that position, so the same token gets a different x₀ at every position.'
         : (NO_POS[enc] || NO_POS.none)[2];
       const tail = cfg.residual
         ? 'The residual stream starts here: each attention and MLP output is added onto it, layer after layer.'

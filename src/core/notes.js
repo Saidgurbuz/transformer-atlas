@@ -4,7 +4,7 @@ export const NOTES = {
  "overview": [
   {
    "placement": "Architecture map: residual stream and norm placement in each block, plus the final norm before the LM head",
-   "text": "Each block adds its attention and MLP outputs into one residual stream that stays d_model = 64 wide from embedding to LM head, and Elhage et al. describe both sub-layers as reading it 'by performing a linear projection' and writing back 'by adding a linear projection back in'. Both presets normalize each sub-layer's input and apply a final norm (ln_f) before lm_head, as GPT-2 did after moving layer norm to the input of each sub-block. Xiong et al. show that in the original Post-LN Transformer the expected gradients of the parameters near the output layer are large at initialization, so a large learning rate makes training unstable and warm-up helps, while Pre-LN Transformers can be trained without warm-up.",
+   "text": "Each block adds its attention and MLP outputs into one residual stream that stays d_model wide (64 in the character presets, 128 in the TinyStories preset) from embedding to LM head, and Elhage et al. describe both sub-layers as reading it 'by performing a linear projection' and writing back 'by adding a linear projection back in'. Every preset normalizes each sub-layer's input and applies a final norm (ln_f) before lm_head, as GPT-2 did after moving layer norm to the input of each sub-block. Xiong et al. show that in the original Post-LN Transformer the expected gradients of the parameters near the output layer are large at initialization, so a large learning rate makes training unstable and warm-up helps, while Pre-LN Transformers can be trained without warm-up.",
    "refs": [
     "elhage2021",
     "radford2019",
@@ -47,8 +47,8 @@ export const NOTES = {
  ],
  "stepper": [
   {
-   "placement": "attn.scores and attn.scaled rows (reference/model.py lines 157-159), in all four presets",
-   "text": "Read <code>attn.scaled</code> against <code>attn.scores</code>: each logit is divided by sqrt(d_head), which is sqrt(16) = 4 in these presets (d_model 64 over 4 heads). Vaswani et al. say they suspect that for large d_k the dot products grow in magnitude and push the softmax into regions of very small gradients, which is why they scale by 1/sqrt(d_k); the <code>attn_scale</code> switch in Config removes the factor.",
+   "placement": "attn.scores and attn.scaled rows (reference/model.py lines 157-159), in every preset",
+   "text": "Read <code>attn.scaled</code> against <code>attn.scores</code>: each logit is divided by sqrt(d_head), which is sqrt(16) = 4 in the character presets (d_model 64 over 4 heads) and sqrt(32) in the TinyStories preset (d_model 128 over 4 heads). Vaswani et al. say they suspect that for large d_k the dot products grow in magnitude and push the softmax into regions of very small gradients, which is why they scale by 1/sqrt(d_k); the <code>attn_scale</code> switch in Config removes the factor.",
    "refs": [
     "vaswani2017",
     "mody-numpy"
@@ -63,8 +63,8 @@ export const NOTES = {
    ]
   },
   {
-   "placement": "resid_mid and resid_out rows (lines 211 and 214), the ln1, ln2 rows, and the final lnf row (line 277); all four presets are pre-LN",
-   "text": "With the residual switch on (the default, and the setting in all four presets), resid_mid is the block input plus the attention output and resid_out adds the MLP output to that, while ln1 and ln2 are the normalized inputs to the attention and MLP and lnf is the final normalization before the LM head. GPT-2 moved layer norm to the input of each sub-block and added a final layer norm, and Xiong et al. report that, in the tasks they tested, the learning-rate warm-up could be removed with this pre-LN placement. Elhage et al. describe the residual stream as a communication channel that each attention and MLP layer reads from and writes to by adding a linear projection back in, so each residual row holds everything written to it so far.",
+   "placement": "resid_mid and resid_out rows (lines 211 and 214), the ln1, ln2 rows, and the final lnf row (line 277); every preset is pre-LN",
+   "text": "With the residual switch on (the default, and the setting in every preset), resid_mid is the block input plus the attention output and resid_out adds the MLP output to that, while ln1 and ln2 are the normalized inputs to the attention and MLP and lnf is the final normalization before the LM head. GPT-2 moved layer norm to the input of each sub-block and added a final layer norm, and Xiong et al. report that, in the tasks they tested, the learning-rate warm-up could be removed with this pre-LN placement. Elhage et al. describe the residual stream as a communication channel that each attention and MLP layer reads from and writes to by adding a linear projection back in, so each residual row holds everything written to it so far.",
    "refs": [
     "radford2019",
     "xiong2020",
@@ -169,7 +169,7 @@ export const NOTES = {
  "attention": [
   {
    "placement": "Scaled scores (QK^T divided by √d_h) just before the softmax, and how peaked each row looks",
-   "text": "All four presets have d_h = 64 / 4 = 16, so the raw scores are divided by √16 = 4 before the softmax. Vaswani et al. suspect that for large d_k the unscaled dot products grow in magnitude and push softmax into regions with extremely small gradients; the attn_scale ablation drops the factor, which multiplies every logit by 4 and generally makes each row sharper.",
+   "text": "The four character presets have d_h = 64 / 4 = 16, so their raw scores are divided by √16 = 4 before the softmax; the TinyStories preset has d_h = 128 / 4 = 32, so its scores are divided by √32. Vaswani et al. suspect that for large d_k the unscaled dot products grow in magnitude and push softmax into regions with extremely small gradients; the attn_scale ablation drops the factor, which multiplies every logit by 4 (or by √32 in TinyStories) and generally makes each row sharper.",
    "refs": [
     "vaswani2017"
    ]
@@ -209,7 +209,7 @@ export const NOTES = {
  "multihead": [
   {
    "placement": "Q, K and V split into heads (q_heads, k_heads, v_heads) and the O-projection per-head contributions",
-   "text": "In the four 64-wide, 4-head presets each query head is a 16-dimensional slice of Q, and K and V use the same 16-dimensional width per head; the llama preset has only 2 KV heads, which reference/model.py (lines 154-156) repeats to match its 4 query heads. Vaswani et al. define MultiHead(Q,K,V) = Concat(head_1,...,head_h)W^O, and Elhage et al. describe the concatenate-and-multiply form as mathematically equivalent to each head writing its output into the residual stream, so the per-head terms sum to the attention output; Elhage et al. do not consider biases, so in this app that sum is exact only up to the O-projection bias (reference/model.py line 139), which the charlm, induction and reverse presets have and llama does not. Kobayashi et al. show that attention weights alone are only one of the two factors that determine the output of attention, the other being the norm of the transformed input vectors, so a large weight on a token with a small transformed-vector norm can still contribute little.",
+   "text": "In the four character presets (64-wide, 4 heads) each query head is a 16-dimensional slice of Q, and K and V use the same 16-dimensional width per head; the llama preset has only 2 KV heads, which reference/model.py (lines 154-156) repeats to match its 4 query heads. Vaswani et al. define MultiHead(Q,K,V) = Concat(head_1,...,head_h)W^O, and Elhage et al. describe the concatenate-and-multiply form as mathematically equivalent to each head writing its output into the residual stream, so the per-head terms sum to the attention output; Elhage et al. do not consider biases, so in this app that sum is exact only up to the O-projection bias (reference/model.py line 139), which the charlm, induction and reverse presets have and llama does not. Kobayashi et al. show that attention weights alone are only one of the two factors that determine the output of attention, the other being the norm of the transformed input vectors, so a large weight on a token with a small transformed-vector norm can still contribute little.",
    "refs": [
     "vaswani2017",
     "elhage2021",
@@ -326,7 +326,7 @@ export const NOTES = {
    ]
   },
   {
-   "placement": "The MoE panel, comparing total parameters with the parameters and FLOPs used per token. The four presets are dense, so this is a comparison rather than something they show.",
+   "placement": "The MoE panel, comparing total parameters with the parameters and FLOPs used per token. Every preset is dense, so this is a comparison rather than something they show.",
    "text": "In a Switch-style MoE layer, a router sends each token to a single expert, so the parameter count rises with the number of experts while FLOPs per example stay constant (Fedus et al. 2021, Secs. 2 and 2.1). Every expert's weights still have to be stored even though each token uses only one, and an auxiliary loss is added to encourage a balanced load across experts (Sec. 2.2).",
    "refs": [
     "fedus2021"
@@ -376,7 +376,7 @@ export const NOTES = {
  "head": [
   {
    "placement": "The lnf and logits traces, just before the next-token probability bars. src/views/head.js is still a stub at the time of this check, so this describes the planned panels.",
-   "text": "In nanoGPT's forward pass the final LayerNorm (<code>ln_f</code>) runs right before <code>lm_head</code>, so the logits are the unembedding applied to the normalised final residual vector; all four presets here are pre-norm and follow the same order. The logit lens applies the same final projection (multiplication by the transpose of the embedding matrix W, in GPT-2) to intermediate layers' activations, and in GPT-2 1558M it reports that 'at some point in the middle' the model has formed a 'pretty good guess' for the next token, which later layers seem to refine.",
+   "text": "In nanoGPT's forward pass the final LayerNorm (<code>ln_f</code>) runs right before <code>lm_head</code>, so the logits are the unembedding applied to the normalised final residual vector; every preset here is pre-norm and follows the same order. The logit lens applies the same final projection (multiplication by the transpose of the embedding matrix W, in GPT-2) to intermediate layers' activations, and in GPT-2 1558M it reports that 'at some point in the middle' the model has formed a 'pretty good guess' for the next token, which later layers seem to refine.",
    "refs": [
     "nanogpt",
     "logit-lens"
@@ -398,7 +398,7 @@ export const NOTES = {
   },
   {
    "placement": "The lm_head (unembedding) matrix in the parameter breakdown, next to the embedding matrix in the tokens view.",
-   "text": "None of the four presets ties its weights, so <code>lm_head</code> is a separate 32 x 64 matrix of 2,048 parameters, about 1 to 2% of each preset (2,048 of 208,256 for the charlm). Press and Wolf recommend tying the input embedding and the output embedding, and their Table 5 gives PTB test perplexity of 74.3 with tying against 78.4 without, for the large LSTM with dropout (the 78.4 row is labelled 'Large [Zaremba et al. 2014]'). The logit lens describes GPT-2's final step as multiplying the final vector by the transpose of the same embedding matrix W.",
+   "text": "The four character presets do not tie their weights, so <code>lm_head</code> is a separate 32 x 64 matrix of 2,048 parameters, about 1 to 2% of each (2,048 of 208,256 for the charlm). The TinyStories preset ties them, so its output matrix is the 4,096 x 128 embedding itself. Press and Wolf recommend tying the input embedding and the output embedding, and their Table 5 gives PTB test perplexity of 74.3 with tying against 78.4 without, for the large LSTM with dropout (the 78.4 row is labelled 'Large [Zaremba et al. 2014]'). The logit lens describes GPT-2's final step as multiplying the final vector by the transpose of the same embedding matrix W.",
    "refs": [
     "press2016tying",
     "logit-lens"
@@ -468,8 +468,8 @@ export const NOTES = {
    ]
   },
   {
-   "placement": "The 1/√d_h switch: every preset has d_h = 16, so turning the scale off multiplies each score by 4.",
-   "text": "Turning off the 1/√d_h scale multiplies every attention score by √16 = 4 in these presets, so each softmax sharpens while the weights stay the same. Vaswani et al. motivate the scale by noting that, for large d_k, the dot products 'grow large in magnitude, pushing the softmax function into regions where it has extremely small gradients'. At d_h = 16 the switch mainly acts like a temperature change on attention, so expect sharper heatmaps rather than a new mechanism.",
+   "placement": "The 1/√d_h switch: d_h is 16 in the character presets and 32 in TinyStories, so turning the scale off multiplies each score by √d_h.",
+   "text": "Turning off the 1/√d_h scale multiplies every attention score by √d_h: by √16 = 4 in the character presets and by √32 ≈ 5.66 in TinyStories, so each softmax sharpens while the weights stay the same. Vaswani et al. motivate the scale by noting that, for large d_k, the dot products 'grow large in magnitude, pushing the softmax function into regions where it has extremely small gradients'. At d_h = 16 or 32 the switch mainly acts like a temperature change on attention, so expect sharper heatmaps rather than a new mechanism.",
    "refs": [
     "vaswani2017"
    ]

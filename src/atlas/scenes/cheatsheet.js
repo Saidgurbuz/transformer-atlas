@@ -259,7 +259,10 @@ const DECK = [
   // Tokens
   { topic: 'Tokens', node: 'tokens',
     q: 'How does byte-pair encoding build its vocabulary?',
-    a: 'BPE starts from a base alphabet, usually bytes or characters. It repeatedly merges the most frequent adjacent pair of symbols in the corpus into a new symbol, and each merge adds one entry to the vocabulary. Common words become single tokens while rare words split into pieces, so there are no unknown tokens. This reference model uses one token per character, which is the same procedure with no merges.' },
+    // The answer depends on the loaded tokenizer: its merges and entries are read from the model, not written here.
+    a: (tk) => (tk.kind === 'bpe'
+      ? `BPE starts from a base alphabet of 256 byte values, so any text can be encoded. It repeatedly merges the most frequent adjacent pair of symbols in the training corpus into a new symbol, and each merge adds one entry to the vocabulary. This model learned ${fmtInt(tk.merges)} merges, so its ${fmtInt(tk.size)} entries are the 256 bytes, the merges${specialsText(tk)}. Common words become single tokens while rare words split into pieces, so there are no unknown tokens.`
+      : `BPE starts from a base alphabet, usually bytes or characters. It repeatedly merges the most frequent adjacent pair of symbols in the corpus into a new symbol, and each merge adds one entry to the vocabulary. Common words become single tokens while rare words split into pieces, so there are no unknown tokens. This model uses one token per character: its ${fmtInt(tk.size)} entries are the characters, with no merges.`) },
   { topic: 'Tokens', node: 'tokens',
     q: 'Why do LLMs use subword tokens rather than characters or whole words?',
     a: 'Whole words need a huge vocabulary and produce unknown tokens for new words. Characters keep the vocabulary tiny but make sequences several times longer, and attention cost grows with the square of the length. Subwords sit between the two: a moderate vocabulary, shorter sequences and no unknown tokens.' },
@@ -347,6 +350,11 @@ const FORMULAS_CONCEPT = [
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const fmtInt = (v) => Math.round(v).toLocaleString('en-US');
+/** The special tokens of a byte-level BPE vocabulary: its entries that are neither one of the 256 bytes nor a merge. */
+const specialsText = (tk) => {
+  const n = Math.max(0, tk.size - 256 - tk.merges);
+  return n ? ` and ${n} special token${n === 1 ? '' : 's'}` : '';
+};
 /** Bytes in binary units, named exactly: 40,960 bytes is 40 KiB (the shared fmtBytes labels the same unit KB). */
 const fmtKiB = (b) => (b < 1024 ? `${fmtInt(b)} bytes` : b < 1048576 ? `${+(b / 1024).toFixed(1)} KiB` : `${+(b / 1048576).toFixed(2)} MiB`);
 const resolveNode = (id, cfg) => (validFor(id, cfg) ? id : 'model');
@@ -453,6 +461,8 @@ export default {
     const cleanups = [];
     const host = (node) => ({ add: (n) => node.append(n), onCleanup: (f) => cleanups.push(f) });
     const tokName = (i) => (ctx.label(i) === '␣' ? 'space' : ctx.label(i));     // the space token reads as “space”, as in the LM-head scene
+    // A flashcard answer: a string, or a function of the loaded tokenizer (a character or byte-level BPE model).
+    const answerOf = (c) => (typeof c.a === 'function' ? c.a(ctx.state.tokenizer) : c.a);
 
     const docEl = h('div', { class: 'k-doc cs-doc', role: 'region', tabindex: 0, 'aria-label': 'Interview cheat sheet, a scrollable reference' });
     const inner = h('div', { class: 'k-doc-inner' });
@@ -612,7 +622,7 @@ export default {
             h('div', { class: 'cs-hint' }, 'Press to reveal the answer')),
           h('div', { class: ['cs-face', 'cs-back'] },
             h('div', { class: 'cs-face-top' }, h('span', null, `${n} / ${total}`), h('span', null, 'Answer')),
-            h('p', { class: 'cs-a' }, c.a))));
+            h('p', { class: 'cs-a' }, answerOf(c)))));
       const setFlipped = (on) => {
         flip.classList.toggle('on', on);
         flip.setAttribute('aria-pressed', String(on));
@@ -856,7 +866,10 @@ export default {
       const maskName = cfg.mask === 'none' ? 'no mask' : `${cfg.mask} mask`;
       const kv = cacheBytes(cfg, T, 2);
       tweenText(tiles.params.v, total, fmtInt);
-      tiles.params.s.textContent = `${cfg.n_layer} blocks · vocabulary ${cfg.vocab_size} · ${cfg.tie_weights ? 'output head tied to the embedding' : 'separate output head'}`;
+      const vocab = st.tokenizer.kind === 'bpe'
+        ? `${fmtInt(cfg.vocab_size)} tokens (byte-level BPE, ${fmtInt(st.tokenizer.merges)} merges)`
+        : `${cfg.vocab_size} characters`;
+      tiles.params.s.textContent = `${cfg.n_layer} blocks · vocabulary of ${vocab} · ${cfg.tie_weights ? 'output head tied to the embedding' : 'separate output head'}`;
       tweenText(tiles.block.v, block, fmtInt);
       const shape = textbook
         ? `12·d² = ${fmtInt(12 * d * d)} for MHA with d_ff = 4d. ${left} make up the other ${fmtInt(rest)}.`
@@ -870,11 +883,13 @@ export default {
     function onTrace() {
       const st = ctx.state;
       if (!st.trace) return;
-      const sig = JSON.stringify(st.config);
+      const tk = st.tokenizer;
+      const sig = `${JSON.stringify(st.config)}|${tk.kind}|${tk.size}|${tk.merges ?? ''}`;   // the deck's answers read the tokenizer
       if (sig !== cfgSig) {
         cfgSig = sig;
         eyebrow.replaceChildren(...configChips(st.config).map(([t, k]) => chip(t, k)));
         renderDeck();
+        renderQuiz();                // a quiz in progress shows its current card's answer for this model
       }
       renderTiles(st);
       buildShapes(st);

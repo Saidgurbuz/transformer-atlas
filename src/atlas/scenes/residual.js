@@ -26,6 +26,7 @@ const TOK_W = 56, COL_GAP = 14, TRACK_W = 360, PCT_GAP = 10, PCT_W = 74, PAIR_GA
 const COL_A = TOK_W + COL_GAP;                             // x of the first bar track, inside a row
 const COL_B = COL_A + TRACK_W + PCT_GAP + PCT_W + PAIR_GAP; // x of the second bar track
 const ROW_W = COL_B + TRACK_W + PCT_GAP + PCT_W;
+const TOK_MAX = SX - 24 - BARS.x - (ROW_W - TOK_W);        // the widest token column that keeps every row 24 units clear of the equation column
 const EASE = MOTION.easeOut, MOVE = MOTION.ease;
 
 useStyle('residual-scene', `
@@ -60,7 +61,7 @@ useStyle('residual-scene', `
 .rs-colhead { position: absolute; top: -34px; font: 600 15px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap; }
 .rs-brow { position: absolute; left: 0; top: 0; width: ${ROW_W}px; height: 32px; display: flex; align-items: center;
   transition: transform ${MOTION.move}ms ${MOVE}; }
-.rs-tok { width: ${TOK_W}px; text-align: left; font: 600 17px/1 var(--font-mono); color: var(--fg); white-space: pre; }
+.rs-tok { flex: none; width: var(--tokw, ${TOK_W}px); overflow: hidden; text-overflow: ellipsis; text-align: left; font: 600 17px/1 var(--font-mono); color: var(--fg); white-space: pre; }
 .rs-track { position: relative; width: ${TRACK_W}px; height: 22px; margin-left: ${COL_GAP}px; border-radius: 6px; background: var(--surface-2); overflow: hidden; }
 .rs-track.b { margin-left: ${PAIR_GAP}px; }
 .rs-track.top { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -166,9 +167,10 @@ export default {
 
     // ------------------------------------------------------------ without the adds: two bar columns, step 4
     const bars = h('div', { class: 'rs-bars rs-part rs-off' });
+    // the column heads sit over the two bar tracks, which move with the width of the token column (--tokw)
     bars.append(
-      h('div', { class: 'rs-colhead', style: { left: `${COL_A}px` } }, 'with every add'),
-      h('div', { class: 'rs-colhead', style: { left: `${COL_B}px` } }, 'without every add'));
+      h('div', { class: 'rs-colhead', style: { left: `calc(var(--tokw, ${TOK_W}px) + ${COL_A - TOK_W}px)` } }, 'with every add'),
+      h('div', { class: 'rs-colhead', style: { left: `calc(var(--tokw, ${TOK_W}px) + ${COL_B - TOK_W}px)` } }, 'without every add'));
     st.add(bars, { x: BARS.x, y: BARS.y });
 
     // ------------------------------------------------------------ side column: the equation for this step
@@ -316,6 +318,9 @@ export default {
 
     function paintBars(D) {
       const S = ctx.state, K = compare(D);
+      // the token column is as wide as its longest label (a subword such as “␣internationalization” is many characters wide)
+      const longest = Math.max(0, ...K.ids.map((id) => [...S.tokenizer.label(id)].length));
+      bars.style.setProperty('--tokw', `${Math.min(TOK_MAX, Math.max(TOK_W, Math.ceil(longest * 10.4) + 8))}px`);
       for (const [id, row] of barRows) if (!K.ids.includes(id)) { row.el.remove(); barRows.delete(id); }
       K.ids.forEach((id, r) => {
         let row = barRows.get(id);
@@ -323,7 +328,7 @@ export default {
           const ta = h('div', { class: 'rs-track' }, h('div', { class: 'rs-fill' }));
           const tb = h('div', { class: 'rs-track b' }, h('div', { class: 'rs-fill' }));
           const pa = h('span', { class: 'rs-p' }), pb = h('span', { class: 'rs-p' });
-          const el = h('div', { class: 'rs-brow' }, h('span', { class: 'rs-tok' }, S.tokenizer.label(id)), ta, pa, tb, pb);
+          const el = h('div', { class: 'rs-brow' }, h('span', { class: 'rs-tok', title: S.tokenizer.label(id) }, S.tokenizer.label(id)), ta, pa, tb, pb);
           row = { el, ta, tb, pa, pb, fa: ta.firstChild, fb: tb.firstChild };
           barRows.set(id, row);
           bars.append(el);

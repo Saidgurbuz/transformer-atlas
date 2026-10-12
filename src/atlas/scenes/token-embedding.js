@@ -27,6 +27,9 @@ const COPY_LEAD = 120, COPY_STEP = 14, COPY_FADE = 260;   // the copied row fill
 const SWEEP_MS = 40;                        // ms per entry of the sum in step 1
 const OUT_MS = 300, IN_MS = 420;            // a group fades out, then the next one fades in
 const GROUPS_OF_STEP = [['gE', 'gT'], ['gE', 'gD'], ['gE', 'gT', 'gB', 'gX'], ['gM']];
+const SWEEP_STOPS = 48;                     // a large vocabulary (V > MAX_DRAW_V): the step-1 sweep stops this many times
+const TBL_H = 150, TBL_COL = 4;             // a large vocabulary's table: at most TBL_H units tall, TBL_COL units per column
+const MAP_NEAR = 16;                        // a large vocabulary's map also draws this many rows nearest the selected token
 
 useStyle('token-embedding', `
 .te-hero { position: relative; width: ${HERO_W}px; height: ${HERO_H}px; }
@@ -43,6 +46,11 @@ useStyle('token-embedding', `
   transition: opacity .3s ease, background-color .4s ease; }
 .te-cell.dim { opacity: .16; }
 .te-cell.hl { outline: 2px solid var(--accent); outline-offset: 2px; }
+.te-strip.te-sparse { background: var(--surface-3); border-radius: 3px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 9%, transparent); }
+.te-mark { position: absolute; top: 0; bottom: 0; border-radius: 2px; transition: opacity .3s ease; }
+.te-mark.off { opacity: 0; }
+.te-mark.hl { outline: 2px solid var(--accent); outline-offset: 2px; }
+.te-cursor { position: absolute; top: -6px; bottom: -6px; width: 2px; border-radius: 1px; background: var(--accent); transition: left 40ms linear, opacity .2s ease; }
 .te-table { position: absolute; opacity: .5; }
 .te-table .heatmap { display: block; line-height: 0; }
 .te-table .heatmap-title { display: none; }
@@ -65,6 +73,8 @@ useStyle('token-embedding', `
 .te-pt.in { cursor: pointer; }
 .te-pt.in .te-dot { fill: var(--c-embed); opacity: 1; transform: scale(1.45); }
 .te-pt.in .te-lab { font: 700 15px var(--font-mono); fill: var(--fg); opacity: 1; }
+.te-pt.nolab .te-lab { opacity: 0; }
+.te-pt.nolab:hover .te-lab { opacity: 1; fill: var(--fg); }
 .te-pt.sel .te-dot { fill: var(--accent); transform: scale(1.9); }
 .te-pt.sel .te-lab { fill: var(--accent); }
 .te-pt.sel .te-sel-ring { opacity: 1; }
@@ -83,7 +93,7 @@ useStyle('token-embedding', `
 .te-sw.in { background: var(--c-embed); opacity: 1; }
 .te-sw.sel { background: var(--accent); opacity: 1; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent); }
 @media (prefers-reduced-motion: reduce) {
-  .te-group, .te-group.off, .te-strip, .te-cell, .te-check, .te-pt .te-dot, .te-pt .te-lab, .te-pt .te-lead, .te-pt .te-sel-ring { transition: none !important; }
+  .te-group, .te-group.off, .te-strip, .te-cell, .te-mark, .te-cursor, .te-check, .te-pt .te-dot, .te-pt .te-lab, .te-pt .te-lead, .te-pt .te-sel-ring { transition: none !important; }
 }
 `);
 
@@ -107,17 +117,52 @@ const maxAbs = (a) => { let m = 0; for (const v of a) if (Number.isFinite(v)) m 
 const copyMs = (D) => COPY_LEAD + (D.d - 1) * COPY_STEP + COPY_FADE;
 const paintStrip = (sp) => sp.cells.forEach((c, u) => { c.style.background = diverging(sp.vals[u] / sp.range); });
 
+const fmtN = (n) => Math.round(n).toLocaleString('en-US');
+const allIds = (V) => Array.from({ length: V }, (_, v) => v);
+/** Index labels for a large vocabulary: its first, quarter, middle, three-quarter and last entries. */
+const ticksOf = (V) => [...new Set([0, Math.round(V / 4), Math.round(V / 2), Math.round((3 * V) / 4), V - 1])];
+
 /**
- * Cell pitches, strip widths, the table's cell and the vertical axis for a vocabulary of V entries and width d.
- * Every strip is at most STRIP_W wide; the axis is the centre of the wider strip.
+ * Cell pitches, strip widths, the table's cells and the vertical axis for a vocabulary of V entries, width d and k
+ * table rows. Every strip is at most STRIP_W wide; the axis is the centre of the wider strip. A large vocabulary
+ * (V > MAX_DRAW_V) has no entry cells: its one-hot and products are tracks (pe is then a fraction of a unit), and its
+ * table holds the k rows this text uses.
  */
-function geometry(V, d) {
-  const pe = Math.max(3, Math.min(PITCH_E_MAX, Math.floor(STRIP_W / V))), pd = Math.max(3, Math.min(PITCH_X_MAX, Math.floor(STRIP_W / d)));
-  const ge = pe >= 8 ? 2 : 1, gd = pd >= 8 ? 2 : 1;
-  const eW = V * pe - ge, dW = d * pd - gd;
-  const cw = clamp(Math.floor(120 / V), 2, TBL_CELL);
-  return { pe, pd, ge, gd, ce: pe - ge, cd: pd - gd, eW, dW, cw, tW: d * cw, tH: V * cw, ax: Math.max(eW, dW) / 2 };
+function geometry(V, d, k) {
+  const sparse = V > MAX_DRAW_V;
+  const pe = sparse ? STRIP_W / V : Math.max(3, Math.min(PITCH_E_MAX, Math.floor(STRIP_W / V)));
+  const pd = Math.max(3, Math.min(PITCH_X_MAX, Math.floor(STRIP_W / d)));
+  const ge = sparse ? 0 : (pe >= 8 ? 2 : 1), gd = pd >= 8 ? 2 : 1;
+  const eW = sparse ? STRIP_W : V * pe - ge, dW = d * pd - gd;
+  const rowH = sparse ? clamp(Math.floor(TBL_H / k), 2, 8) : clamp(Math.floor(120 / V), 2, TBL_CELL);
+  const colW = sparse ? TBL_COL : rowH;
+  return { pe, pd, ge, gd, ce: pe - ge, cd: pd - gd, eW, dW, rowH, colW, tW: d * colW, tH: k * rowH, ax: Math.max(eW, dW) / 2 };
 }
+
+/**
+ * A row of V entries that are almost all 0, drawn as a track with one mark per entry that is not 0 (cells would be too
+ * small to see). marks: [{at, value}]; the marks are coloured on the diverging ramp of `range`.
+ */
+function sparseRow(parent, { left, top, width, pitch, marks, range, cursor = false }) {
+  const el = h('div', { class: 'te-strip te-sparse', style: { left: px(left), top: px(top), width: px(width), height: px(STRIP_H) } });
+  const w = Math.max(4, pitch);
+  const ms = marks.map(({ at, value }) => {
+    const m = h('div', { class: 'te-mark', style: { left: px((at + 0.5) * pitch - w / 2), width: px(w) } });
+    el.append(m);
+    return { m, value };
+  });
+  const cur = cursor ? h('div', { class: 'te-cursor', style: { left: '0px', opacity: '0' } }) : null;
+  if (cur) el.append(cur);
+  parent.append(el);
+  const sp = { el, cells: [], marks: ms, pitch, range, cursor: cur };
+  paintSparse(sp);
+  return sp;
+}
+/** Colours the marks of a sparse row on the diverging ramp (again after a theme change). */
+function paintSparse(sp) { sp.marks.forEach(({ m, value }) => { m.style.background = diverging(value / sp.range); }); }
+
+/** The rows a large vocabulary's map draws: the rows this text uses, the selected row and its nearest rows, in id order. */
+const mapIds = (D) => [...new Set([...D.usedIds, D.id, ...D.near.map((n) => n.j)])].sort((a, b) => a - b);
 
 /** Vertical positions of the parts, in hero units. The one-hot row is at the top in every step. */
 function rowsOf(g) {
@@ -240,7 +285,9 @@ export default {
     let step = 0, cur = null, destroyed = false, ticking = false;
     let parts = null;                        // the DOM of the lookup and the sum, built for the current data
     let strips = [];                         // the strips of parts, repainted when the theme changes
-    let map = null, mapWE = null;            // step 3: the PCA map, and the W_E it was computed from
+    let map = null, mapWE = null, mapKey = '';   // step 3: the PCA map, the W_E it was computed from, and the rows it draws
+    let pcaCache = null;                     // the PCA of W_E, computed once per W_E
+    let sparseSp = [];                       // the sparse rows of the hero, repainted when the theme changes
     let nearOf = null;                       // the tokens closest to the selected one (its tooltip on the map)
     let checkEl = null;                      // the check in the side column (steps 1 and 2)
     let auto = null, autoOn = !reducedMotion();
@@ -264,7 +311,7 @@ export default {
     const GROUP = { gT, gD, gB, gX, gE, gM };
     setVisible(0, { immediate: true });      // before any content is styled, so nothing fades at mount
     const mapHost = h('div', { class: 'te-map' });
-    const mapNote = h('div', { class: 'k-caption', style: { width: px(HERO_W), display: 'none' } });
+    const mapNote = h('div', { class: 'k-caption', style: { position: 'absolute', left: '0px', top: px(HERO_H - 26), width: px(HERO_W), display: 'none' } });
     gM.append(mapHost, mapNote);
 
     // ------------------------------------------------------------ right column: this step's equation, live numbers, check
@@ -311,7 +358,10 @@ export default {
       const partial = new Float64Array(V);
       let run = 0;
       for (let u = 0; u < V; u++) { run += prod[u]; partial[u] = run; }
-      return { cfg: cs.config, ids: cs.ids, T, WE, V, d, t, id, x, onehot, jStar, maxDelta, col, prod, partial, sumU: run, random: cs.weights === 'random' };
+      const usedIds = [...new Set(cs.ids)].sort((a, b) => a - b);      // the rows this text reads, in id order
+      const near = nearest(WE.data, V, d, id, MAP_NEAR);              // the rows closest to the selected one (cosine)
+      return { cfg: cs.config, ids: cs.ids, T, WE, V, d, t, id, x, onehot, jStar, maxDelta, col, prod, partial, sumU: run, random: cs.weights === 'random',
+        sparse: V > MAX_DRAW_V, usedIds, near };
     }
 
     // ------------------------------------------------------------ the lookup, the column and the sum (steps 0 to 2)
@@ -319,38 +369,55 @@ export default {
       parts?.heat.destroy();
       parts = null;
       strips = [];
+      sparseSp = [];
       for (const g of [gT, gD, gB, gX, gE]) g.replaceChildren();
     }
 
-    /** Builds the one-hot row, the table, the band, the copied row, and the column and products of step 1, for this data. */
+    /**
+     * Builds the one-hot row, the table, the band, the copied row, and the column and products of step 1, for this data.
+     * A large vocabulary (V > MAX_DRAW_V) draws its one-hot and products as tracks with one mark each, and its table as
+     * the rows this text uses: every other entry is 0 or not in the text, so nothing is left out of the arithmetic.
+     */
     function buildHero(D) {
       destroyHero();
-      const { V, d, WE, id, t, x, onehot, jStar: j, col, prod } = D;
-      if (V > MAX_DRAW_V) {
-        gE.append(place(h('div', { class: 'k-caption', style: { width: px(STRIP_W) } },
-          `W_E has ${V} rows, too many to draw entry by entry. The lookup is still exact: the one-hot row picks row ${id}, the traced embedding of “${at(t)}” at position ${t}.`), 0, 0));
-        return;
-      }
-      const g = geometry(V, d), R = rowsOf(g), rW = maxAbs(WE.data);
+      const { V, d, WE, id, t, x, onehot, jStar: j, col, prod, sparse } = D;
+      const k = sparse ? D.usedIds.length : V;                   // table rows: all of W_E, or the rows this text uses
+      const g = geometry(V, d, k), R = rowsOf(g), rW = maxAbs(WE.data);
       const eL = g.ax - g.eW / 2, dL = g.ax - g.dW / 2, tL = g.ax - g.tW / 2;
       const add = (parent, vals, o) => { const sp = strip(parent, vals, o); strips.push(sp); return sp; };
+      const track = (parent, o) => { const sp = sparseRow(parent, o); sparseSp.push(sp); return sp; };
 
       // the one-hot row: its 1 is the thing the lookup is about; index labels every 8, and the lit entry
-      const e = add(gE, onehot, { left: eL, top: R.e, pitch: g.pe, cell: g.ce, gap: g.ge, range: 1 });
-      gE.append(place(h('div', { class: 'te-cap' }, `one-hot e, ${V} entries`), eL, 0));
-      for (let u = 0; u < V; u += 8) if (Math.abs(u - id) >= 3) gE.append(place(h('div', { class: 'te-idx' }, String(u)), eL + u * g.pe + g.ce / 2, R.eIdx, 'tc'));
-      gE.append(place(h('div', { class: 'te-idx lit' }, `${id} · “${at(t)}”`), eL + id * g.pe + g.ce / 2, R.eIdx,
-        id < 4 ? 'tl' : id > V - 5 ? 'tr' : 'tc'));
+      let e;
+      if (sparse) {
+        e = track(gE, { left: eL, top: R.e, width: g.eW, pitch: g.pe, marks: [{ at: id, value: 1 }], range: 1 });
+        gE.append(place(h('div', { class: 'te-cap' }, `one-hot e · ${fmtN(V)} entries: 1 at ${id}, 0 at the other ${fmtN(V - 1)}, not drawn`), eL, 0));
+        for (const u of ticksOf(V)) {
+          if (Math.abs(u - id) * g.pe < 90) continue;            // a tick under the selected entry's label is left out
+          gE.append(place(h('div', { class: 'te-idx' }, String(u)), eL + (u + 0.5) * g.pe, R.eIdx, u === 0 ? 'tl' : u === V - 1 ? 'tr' : 'tc'));
+        }
+        const xl = eL + (id + 0.5) * g.pe;
+        gE.append(place(h('div', { class: 'te-idx lit' }, `${id} · “${at(t)}”`), xl, R.eIdx, xl < 90 ? 'tl' : xl > eL + g.eW - 90 ? 'tr' : 'tc'));
+      } else {
+        e = add(gE, onehot, { left: eL, top: R.e, pitch: g.pe, cell: g.ce, gap: g.ge, range: 1 });
+        gE.append(place(h('div', { class: 'te-cap' }, `one-hot e, ${V} entries`), eL, 0));
+        for (let u = 0; u < V; u += 8) if (Math.abs(u - id) >= 3) gE.append(place(h('div', { class: 'te-idx' }, String(u)), eL + u * g.pe + g.ce / 2, R.eIdx, 'tc'));
+        gE.append(place(h('div', { class: 'te-idx lit' }, `${id} · “${at(t)}”`), eL + id * g.pe + g.ce / 2, R.eIdx,
+          id < 4 ? 'tl' : id > V - 5 ? 'tr' : 'tc'));
+      }
 
       // the table W_E: a small dimmed reference (steps 0 and 2), with the times node between it and e
-      const heat = heatmap({ data: WE.data, rows: V, cols: d, mode: 'diverging', range: rW, cell: g.cw, minCell: 1, maxCell: 8, showValues: false, ariaLabel: 'W_E, the embedding table' });
+      const tbl = sparse ? Float64Array.from(D.usedIds.flatMap((u) => Array.from(WE.data.subarray(u * d, u * d + d)))) : WE.data;
+      const heat = heatmap({ data: tbl, rows: k, cols: d, mode: 'diverging', range: rW, cell: g.colW, cellH: g.rowH, minCell: 1, maxCell: 8, showValues: false,
+        ariaLabel: sparse ? 'W_E, the rows this text uses' : 'W_E, the embedding table' });
       gT.append(place(h('div', { class: 'te-table' }, heat.el), tL, R.t));
-      gT.append(place(h('div', { class: 'te-cap embed' }, `W_E (${V} × ${d}), the table`), tL, R.tLbl));
+      gT.append(place(h('div', { class: 'te-cap embed' }, sparse ? `W_E · ${k} of ${fmtN(V)} rows, the rows this text uses` : `W_E (${V} × ${d}), the table`), tL, R.tLbl));
       gT.append(place(op('\\times', { kind: 'embed', size: OP_D }), g.ax, R.opTimes, 'c'));
 
       // the band on row t of the table (step 2): the row the lookup takes
-      const rowY = R.t + id * g.cw + g.cw / 2;
-      gB.append(h('div', { class: 'te-band', style: { left: px(tL - 8), top: px(rowY - 8), width: px(g.tW + 16), height: '16px' } }),
+      const rowIdx = sparse ? D.usedIds.indexOf(id) : id, bh = sparse ? Math.max(10, g.rowH + 6) : 16;
+      const rowY = R.t + rowIdx * g.rowH + g.rowH / 2;
+      gB.append(h('div', { class: 'te-band', style: { left: px(tL - 8), top: px(rowY - bh / 2), width: px(g.tW + 16), height: px(bh) } }),
         place(h('div', { class: 'te-cap embed' }, `row ${id} · “${at(t)}”`), tL + g.tW + 14, rowY, 'lc'));
 
       // the copied row x (step 2), tied to the table by the equals node; its entries carry the hover card of emb.tok
@@ -361,18 +428,31 @@ export default {
       gX.append(place(op('=', { kind: 'embed', size: OP_D }), g.ax, R.opEq, 'c'));
 
       // step 1: the column of W_E in entry j takes the table's place; the products e_u · W_E[u, j] and their sum
-      const colS = add(gD, col, { left: eL, top: R.t, pitch: g.pe, cell: g.ce, gap: g.ge, range: rW, title: (u, v) => `W_E[${u}, ${j}] = ${fmt(v, 3)}` });
-      gD.append(place(h('div', { class: 'te-cap embed' }, `W_E[:, ${j}], column ${j} of the table`), eL, R.tLbl));
-      gD.append(place(op('\\odot', { kind: 'embed', size: OP_D }), g.ax, R.opDot, 'c'));
-      const prodS = add(gD, prod, { left: eL, top: R.p, pitch: g.pe, cell: g.ce, gap: g.ge, range: rW, title: (u, v) => `e_${u} · W_E[${u}, ${j}] = ${fmt(v, 3)}` });
-      prodS.cells.forEach((c) => c.classList.add('dim'));
-      gD.append(place(h('div', { class: 'te-cap' }, `e_u · W_E[u, ${j}], one product per entry`), eL, R.pLbl));
-      gD.append(place(h('div', { class: 'te-callout' }, `u = ${id}: 1 × ${fmt(col[id], 3)}`), eL + id * g.pe + g.ce / 2, R.pLbl, 'tc'));
-      gD.append(place(op('\\Sigma', { kind: 'embed', size: OP_D }), g.ax, R.opSum, 'c'));
-      const readout = place(h('div', { class: 'te-sum' }), g.ax, R.sumY, 'tc');
+      // a large vocabulary has no table in step 1, so its products and their sum move up into the table's rows
+      const sumY = sparse ? R.t + STRIP_H + GAP : R.sumY, opSum = sparse ? (R.t + STRIP_H + sumY) / 2 : R.opSum;
+      let colS = null, prodS;
+      if (sparse) {
+        // the only product that is not 0 is e_id · W_E[id, j]; the cursor of the sweep runs along the track to it
+        prodS = track(gD, { left: eL, top: R.t, width: g.eW, pitch: g.pe, marks: [{ at: id, value: col[id] }], range: rW, cursor: true });
+        prodS.marks[0].m.classList.add('off');
+        const call = h('div', { class: 'te-callout' }, `u = ${id}: 1 × ${fmt(col[id], 3)}`);
+        const xm = eL + (id + 0.5) * g.pe;
+        gD.append(xm < g.ax ? place(call, xm - 8, R.tLbl, 'tl') : place(call, xm + 8, R.tLbl, 'tr'));
+        gD.append(place(h('div', { class: 'te-cap' }, `e_u · W_E[u, ${j}] for every row u: the other ${fmtN(V - 1)} products are 0, not drawn`), g.ax, sumY + 36, 'tc'));
+      } else {
+        colS = add(gD, col, { left: eL, top: R.t, pitch: g.pe, cell: g.ce, gap: g.ge, range: rW, title: (u, v) => `W_E[${u}, ${j}] = ${fmt(v, 3)}` });
+        gD.append(place(h('div', { class: 'te-cap embed' }, `W_E[:, ${j}], column ${j} of the table`), eL, R.tLbl));
+        gD.append(place(op('\\odot', { kind: 'embed', size: OP_D }), g.ax, R.opDot, 'c'));
+        prodS = add(gD, prod, { left: eL, top: R.p, pitch: g.pe, cell: g.ce, gap: g.ge, range: rW, title: (u, v) => `e_${u} · W_E[${u}, ${j}] = ${fmt(v, 3)}` });
+        prodS.cells.forEach((c) => c.classList.add('dim'));
+        gD.append(place(h('div', { class: 'te-cap' }, `e_u · W_E[u, ${j}], one product per entry`), eL, R.pLbl));
+        gD.append(place(h('div', { class: 'te-callout' }, `u = ${id}: 1 × ${fmt(col[id], 3)}`), eL + id * g.pe + g.ce / 2, R.pLbl, 'tc'));
+      }
+      gD.append(place(op('\\Sigma', { kind: 'embed', size: OP_D }), g.ax, opSum, 'c'));
+      const readout = place(h('div', { class: 'te-sum' }), g.ax, sumY, 'tc');
       gD.append(readout);
 
-      parts = { heat, e, x: xs, col: colS, prod: prodS, readout };
+      parts = { heat, e, x: xs, col: colS, prod: prodS, readout, sparse };
     }
 
     /** Step 1: the sum up to entry u. Later products are dim, the cursor marks entry u, the readout holds the running sum. */
@@ -380,18 +460,28 @@ export default {
       const D = cur;
       if (!parts || !D) return;
       const { V, id, jStar: j, partial, sumU } = D;
-      parts.prod.cells.forEach((c, k) => c.classList.toggle('dim', k > u));
-      const live = u >= V - 1 ? id : u;      // the cursor rests on the live term once the sum is complete
-      for (const sp of [parts.e, parts.col, parts.prod]) {
-        sp.cells.forEach((c) => c.classList.remove('hl'));
-        if (live >= 0) sp.cells[live].classList.add('hl');
+      if (D.sparse) {
+        // the sweep moves a cursor along the track; the one product that is not 0 appears when the cursor reaches it,
+        // and the cursor rests on it once the sum is complete (as the dense strips rest on their live term)
+        const p = parts.prod, live = u >= V - 1 ? id : u;
+        p.cursor.style.opacity = u < 0 ? '0' : '1';
+        p.cursor.style.left = `${u < 0 ? -1 : (live + 0.5) * p.pitch - 1}px`;
+        p.marks[0].m.classList.toggle('off', u < id);
+        if (u === id && !reducedMotion()) p.marks[0].m.animate([{ transform: 'scaleY(1)' }, { transform: 'scaleY(1.6)' }, { transform: 'scaleY(1)' }], { duration: 600, easing: 'ease-out' });
+      } else {
+        parts.prod.cells.forEach((c, k) => c.classList.toggle('dim', k > u));
+        const live = u >= V - 1 ? id : u;      // the cursor rests on the live term once the sum is complete
+        for (const sp of [parts.e, parts.col, parts.prod]) {
+          sp.cells.forEach((c) => c.classList.remove('hl'));
+          if (live >= 0) sp.cells[live].classList.add('hl');
+        }
+        if (u === id && u < V - 1 && !reducedMotion()) {
+          parts.prod.cells[id].animate([{ transform: 'scale(1)' }, { transform: 'scale(1.22)' }, { transform: 'scale(1)' }], { duration: 600, easing: 'ease-out' });
+        }
       }
       parts.readout.innerHTML = u >= V - 1
         ? `x<sub>${j}</sub> = ${fmt(sumU, 3)}`
         : `Σ<sub>u ≤ ${u}</sub> = ${fmt(u < 0 ? 0 : partial[u], 3)}`;
-      if (u === id && u < V - 1 && !reducedMotion()) {
-        parts.prod.cells[id].animate([{ transform: 'scale(1)' }, { transform: 'scale(1.22)' }, { transform: 'scale(1)' }], { duration: 600, easing: 'ease-out' });
-      }
       if (u >= V - 1) checkEl?.classList.add('on');
     }
 
@@ -408,13 +498,15 @@ export default {
       if (!parts || !cur) return;
       parts.e.el.style.opacity = step === 2 ? '.6' : '1';
       if (step !== 1) parts.e.cells.forEach((c, u) => c.classList.toggle('hl', u === cur.id));
+      parts.e.marks?.forEach(({ m }) => m.classList.toggle('hl', step !== 1));
     }
 
     // ------------------------------------------------------------ step 3: the embedding space, PCA of every row of W_E
-    function buildMap(D) {
-      const { xy, ratio } = pca2(D.WE.data, D.V, D.d);
-      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-      for (let v = 0; v < D.V; v++) {
+    /** The points of the map: the rows `ids` of the PCA `pca`, scaled to fill the hero. The PCA origin (the mean row) stays in the frame. */
+    function buildMap(ids, pca) {
+      const { xy, ratio } = pca;
+      let x0 = 0, x1 = 0, y0 = 0, y1 = 0;
+      for (const v of ids) {
         x0 = Math.min(x0, xy[2 * v]); x1 = Math.max(x1, xy[2 * v]);
         y0 = Math.min(y0, xy[2 * v + 1]); y1 = Math.max(y1, xy[2 * v + 1]);
       }
@@ -428,7 +520,7 @@ export default {
         s('text', { class: 'te-axis-lab', x: HERO_W - 4, y: oy - 8, 'text-anchor': 'end' }, `PC1 · ${pct(ratio[0])} of variance`),
         s('text', { class: 'te-axis-lab', x: ox + 8, y: 18 }, `PC2 · ${pct(ratio[1])} of variance`));
       const pts = [];
-      for (let v = 0; v < D.V; v++) {
+      for (const v of ids) {
         const x = toX(xy[2 * v]), y = toY(xy[2 * v + 1]);
         const lead = s('line', { class: 'te-lead', x1: 0, y1: 0, x2: 0, y2: 0 });
         const lbl = s('text', { class: 'te-lab', x: 10, y: 5 }, lab(v));
@@ -450,20 +542,23 @@ export default {
       map = { svg, pts, ox, oy, ratio };
     }
 
-    /** Rebuild the map only when W_E itself changes. Returns true when it was rebuilt. */
+    /**
+     * Rebuilds the map when W_E changes ('wE'), or when a large vocabulary's drawn rows change ('rows': the PCA is
+     * kept, only the points move). A small vocabulary draws every row. Returns null when nothing changed.
+     */
     function syncMap(D) {
       const big = D.V > MAX_MAP_V;
-      mapHost.style.display = big ? 'none' : '';
-      mapNote.style.display = big ? '' : 'none';
-      if (big) {
-        mapNote.textContent = `The map shows up to ${MAX_MAP_V} vocabulary rows; this model has ${D.V}.`;
-        map = null; mapWE = null;
-        return false;
-      }
-      if (map && mapWE === D.WE) return false;
-      buildMap(D);
+      const ids = big ? mapIds(D) : allIds(D.V);
+      const key = big ? ids.join(',') : '';
+      if (map && mapWE === D.WE && mapKey === key) return null;
+      const wChanged = mapWE !== D.WE;
+      if (!pcaCache || pcaCache.WE !== D.WE) pcaCache = { WE: D.WE, ...pca2(D.WE.data, D.V, D.d) };
+      buildMap(ids, pcaCache);
       mapWE = D.WE;
-      return true;
+      mapKey = key;
+      mapNote.style.display = big ? '' : 'none';
+      if (big) mapNote.textContent = `Showing ${fmtN(ids.length)} of ${fmtN(D.V)} rows: this text’s tokens, and the ${MAP_NEAR} nearest to “${at(D.t)}”.`;
+      return wChanged ? 'wE' : 'rows';
     }
 
     /** Points fly out from the centre, nearest first. */
@@ -494,7 +589,7 @@ export default {
       }
       const sel = map.pts.find((p) => p.v === D.id);
       if (sel) map.svg.append(sel.g);          // the selected token is drawn last, above its neighbours
-      nearOf = { id: D.id, list: D.V >= 2 ? nearest(D.WE.data, D.V, D.d, D.id, 3) : [] };
+      nearOf = { id: D.id, list: D.near.slice(0, 3) };
       const inText = map.pts.filter((p) => p.positions.length > 0 && p !== sel).sort((a, b) => a.positions[0] - b.positions[0]);
       placeLabels([...(sel ? [sel] : []), ...inText]);
     }
@@ -508,7 +603,7 @@ export default {
       for (const p of map.pts) {
         p.lbl.setAttribute('x', 10); p.lbl.setAttribute('y', 5);
         p.lead.setAttribute('x2', 0); p.lead.setAttribute('y2', 0);
-        p.g.classList.remove('lead');
+        p.g.classList.remove('lead', 'nolab');
       }
       const boxes = [];
       for (const p of list) {
@@ -521,8 +616,11 @@ export default {
           [p.x + 30, p.y - 8, 1], [p.x - 30 - w, p.y - 8, 1], [p.x - w / 2, p.y - 34, 1], [p.x - w / 2, p.y + 30, 1],
         ];
         const free = ([bx, by]) => bx >= 0 && by >= 0 && bx + w <= HERO_W && by + LH <= HERO_H
-          && boxes.every(([qx, qy, qw]) => bx < qx + qw + 3 && bx + w + 3 > qx && by < qy + LH + 3 && by + LH + 3 > qy);
-        const [bx, by, leader] = cands.find(free) || cands[0];
+          && boxes.every(([qx, qy, qw]) => !(bx < qx + qw + 3 && bx + w + 3 > qx && by < qy + LH + 3 && by + LH + 3 > qy));
+        const hit = cands.find(free);
+        // a crowded label (no free spot) is left to the hover, so no two labels print on each other; the selected token's label always shows
+        if (!hit && p !== list[0]) { p.g.classList.add('nolab'); continue; }
+        const [bx, by, leader] = hit || cands[0];
         boxes.push([bx, by, w]);
         p.lbl.setAttribute('x', bx - p.x);
         p.lbl.setAttribute('y', by + 12 - p.y);
@@ -541,16 +639,19 @@ export default {
       const kids = [h('div', { class: 'k-label te-label' }, STEPS[step])];
       checkEl = null;
       if (step === 0) {
+        // a large vocabulary's label under the 1 (u=1887) is wider than the 1 and would push this line out of its box:
+        // there it is a bare u (the line above has u = id), and the thin spaces go too
+        const big = V > MAX_DRAW_V, under = big ? 'u' : `u=${id}`, sep = big ? '' : String.raw`\,`;
         kids.push(
           eq(String.raw`\mathbf{e}_{${id}} \in \{0,1\}^{${V}}`),
-          live(String.raw`\begin{aligned} (\mathbf{e}_{${id}})_u &= \mathbf{1}[u = ${id}] \\ &= (0,\dots,0,\,\underbrace{1}_{u=${id}},\,0,\dots,0) \end{aligned}`));
+          live(String.raw`\begin{aligned} (\mathbf{e}_{${id}})_u &= \mathbf{1}[u = ${id}] \\ &= (0,\dots,0,${sep}\underbrace{1}_{${under}},${sep}0,\dots,0) \end{aligned}`));
       } else if (step === 1) {
         kids.push(
           eq(String.raw`x_{${j}} = \sum_{u} e_u\,\WE_{u,${j}}`),
           live(String.raw`\begin{aligned} &= \cdots + 1\cdot\WE_{${id},${j}} + \cdots \\ &= ${num(WE.data[id * d + j], 3)} \end{aligned}`));
         checkEl = h('div', { class: 'te-check' },
           checkBadge(sumU, x[j], { label: 'equals the traced value' }),
-          h('span', { class: 'k-caption', style: { fontSize: '15px' } }, `all ${V} terms · ${V - 1} of them 0`));
+          h('span', { class: 'k-caption', style: { fontSize: '15px' } }, `all ${fmtN(V)} terms · ${fmtN(V - 1)} of them 0`));
         kids.push(checkEl);
       } else if (step === 2) {
         kids.push(
@@ -565,7 +666,7 @@ export default {
         kids.push(
           eq(String.raw`\begin{aligned} \WE &\in \R^{${V}\times${d}} \\ &\xrightarrow{\text{PCA}} \R^{${V}\times 2} \end{aligned}`, 22),
           h('div', { class: 'te-legend' },
-            legendRow(h('span', { class: 'te-sw' }), 'vocabulary entry'),
+            legendRow(h('span', { class: 'te-sw' }), V > MAX_MAP_V ? `nearest rows to “${at(t)}” by cosine` : 'vocabulary entry'),
             legendRow(h('span', { class: 'te-sw in' }), `token in this text (${distinct} distinct)`),
             legendRow(h('span', { class: 'te-sw sel' }), `selected: “${at(t)}” at position ${t}`)),
           h('div', { class: 'k-caption te-note', html: cfg.tie_weights
@@ -577,15 +678,16 @@ export default {
     }
 
     function captionFor(D) {
-      const { id, t, V, d, jStar: j, maxDelta, sumU } = D;
-      const drawn = V <= MAX_DRAW_V;
-      if (step === 0) return `The one-hot vector of token <b>“${at(t)}”</b> has a 1 at index ${id} and 0 everywhere else, one entry per vocabulary item.${drawn ? ' W_E, the table, is shown dimmed.' : ''}`;
-      if (step === 1) return `Each entry of x is a sum over the ${V} rows of W_E, and every term but one is multiplied by 0. So <b>x<sub>${j}</sub> = W_E[${id}, ${j}] = ${fmt(sumU, 3)}</b>.`;
-      if (step === 2) {
-        const copy = drawn ? `Row ${id} of W_E is copied into x, entry by entry.` : `The product is row ${id} of W_E, the vector of this token.`;
-        return `${copy} It matches the traced embedding of <b>“${at(t)}”</b> at position ${t} (max |Δ| = ${fmt(maxDelta, 3)}), so a lookup is a one-hot product.`;
+      const { id, t, V, d, jStar: j, maxDelta, sumU, sparse } = D;
+      if (step === 0) {
+        const zeros = sparse ? ` (${fmtN(V - 1)} zeros, not drawn)` : ', one entry per vocabulary item';
+        return `The one-hot vector of token <b>“${at(t)}”</b> has a 1 at index ${id} and 0 everywhere else${zeros}. W_E, the table, is shown dimmed${sparse ? ', with the rows this text uses' : ''}.`;
       }
-      return `Each row of W_E is a point in ${d} dimensions; PCA keeps the two directions of greatest spread, so nearby points tend to have similar vectors. The map is a projection, so distances are approximate.`;
+      if (step === 1) return `Each entry of x is a sum over the ${fmtN(V)} rows of W_E, and every term but one is multiplied by 0. So <b>x<sub>${j}</sub> = W_E[${id}, ${j}] = ${fmt(sumU, 3)}</b>.`;
+      if (step === 2) return `Row ${id} of W_E is copied into x, entry by entry. It matches the traced embedding of <b>“${at(t)}”</b> at position ${t} (max |Δ| = ${fmt(maxDelta, 3)}), so a lookup is a one-hot product.`;
+      return sparse
+        ? `Each row of W_E is a point in ${d} dimensions. PCA fits all ${fmtN(V)} rows and keeps the two directions of greatest spread, so nearby points tend to have similar vectors.`
+        : `Each row of W_E is a point in ${d} dimensions; PCA keeps the two directions of greatest spread, so nearby points tend to have similar vectors. The map is a projection, so distances are approximate.`;
     }
 
     function render(D) {
@@ -613,9 +715,17 @@ export default {
     /** How long a step stays on screen when the scene plays itself: long enough for its motion. */
     function holdMs(D) {
       if (step === 0) return MOTION.step;
-      if (step === 1) return Math.max(MOTION.step, OUT_MS + D.V * SWEEP_MS + 900);
+      if (step === 1) return Math.max(MOTION.step, OUT_MS + sweepStops(D).length * SWEEP_MS + 900);
       if (step === 2) return Math.max(MOTION.step, OUT_MS + copyMs(D) + 500);
       return 0;
+    }
+
+    /** The entries the step-1 sweep stops at: every entry of a small vocabulary; a large one gets evenly spaced stops, the selected entry among them. */
+    function sweepStops(D) {
+      if (!D.sparse) return allIds(D.V);
+      const stops = new Set(Array.from({ length: SWEEP_STOPS }, (_, k) => Math.round(((k + 1) * D.V) / SWEEP_STOPS) - 1));
+      stops.add(D.id);
+      return [...stops].sort((a, b) => a - b);
     }
 
     /** The motion of the current step, from its start (after `delay` ms, while the previous group fades out). */
@@ -626,9 +736,10 @@ export default {
       const still = instant || reducedMotion();
       if (step === 1) {
         if (still) { showSum(D.V - 1); checkEl?.classList.add('on'); return; }
+        const stops = sweepStops(D);
         showSum(-1);
-        for (let u = 0; u < D.V; u++) later(delay + u * SWEEP_MS, () => showSum(u));
-        later(delay + D.V * SWEEP_MS, () => checkEl?.classList.add('on'));
+        stops.forEach((u, k) => later(delay + k * SWEEP_MS, () => showSum(u)));
+        later(delay + stops.length * SWEEP_MS, () => checkEl?.classList.add('on'));
       } else if (step === 2) {
         if (!still) copyRow(delay);
         later(still ? 0 : delay + copyMs(D) - 80, () => checkEl?.classList.add('on'));
@@ -667,10 +778,10 @@ export default {
       if (destroyed) return;
       const D = data();
       buildHero(D);
-      const rebuilt = syncMap(D);
+      const change = syncMap(D);               // 'wE' when W_E changed (the map blooms), 'rows' when only its points moved
       setVisible(step, { immediate: true });
       render(D);
-      playStep({ entering: rebuilt, instant });
+      playStep({ entering: change === 'wE', instant });
     }
 
     // ------------------------------------------------------------ start
@@ -680,7 +791,7 @@ export default {
     if (autoOn) scheduleNext();
     el.addEventListener('pointerdown', stopAuto);
     offs.push(ctx.on('trace', () => refresh()), ctx.on('select', () => refresh()));
-    const offTheme = onThemeChange(() => { if (!destroyed) strips.forEach(paintStrip); });
+    const offTheme = onThemeChange(() => { if (!destroyed) { strips.forEach(paintStrip); sparseSp.forEach(paintSparse); } });
 
     return {
       pause() { stopAuto(); stopTimers(); },

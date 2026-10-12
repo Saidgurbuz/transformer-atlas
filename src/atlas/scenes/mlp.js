@@ -259,7 +259,7 @@ export default {
     function paint(D, i, { animate = true } = {}) {
       const { t, F, d, sw, relu, gelu, pre, rms, resid, bias, up, act, out, xin, rUp, rAct, rOut, rIn, rank, fStar, cStar, hRe, gRe, aRe, mRe, nNeg, total, expected, biasTotal } = D;
       const { cols } = els;
-      const tok = esc(ctx.label(t));
+      const tok = esc(ctx.label(t) === '␣' ? 'space' : ctx.label(t));    // the space token reads as “space”, as elsewhere
       const n = n2;
       st.root.classList.toggle('ml-still', !animate || reducedMotion());
 
