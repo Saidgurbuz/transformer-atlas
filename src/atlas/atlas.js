@@ -150,7 +150,9 @@ export function startAtlas(root) {
   }
 
   /** Navigate to a node. origin: element or DOMRect the zoom grows from. */
+  let requested = null;     // latest navigation target, even while an earlier one is still animating
   function go(id, { origin = null, push = true } = {}) {
+    requested = id;
     busy = busy.then(() => navigate(id, { origin, push })).catch((e) => console.error(e));
     return busy;
   }
@@ -459,7 +461,7 @@ export function startAtlas(root) {
 
   window.addEventListener('hashchange', () => {
     const id = location.hash.replace(/^#/, '');
-    if (id && id !== stack[stack.length - 1]?.id) go(id, { push: false });
+    if (id && id !== (requested ?? stack[stack.length - 1]?.id)) go(id, { push: false });
   });
 
   // when the model changes shape, nodes may disappear (e.g. layer 5 of a 2-layer model)

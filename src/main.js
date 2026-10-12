@@ -7,5 +7,5 @@ store.init();
 if (PRESETS.length) {
   try { await store.loadPreset(PRESETS[0].id); } catch (e) { console.error('preset load failed', e); }
 }
-startAtlas(document.getElementById('app'));
-window.__te = { store };   // handy for the console and for smoke tests
+const atlas = startAtlas(document.getElementById('app'));
+window.__te = { store, atlas };   // handy for the console and for smoke tests
