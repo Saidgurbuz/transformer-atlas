@@ -75,8 +75,9 @@ export function fmtCount(n) {
   return String(Math.round(n));
 }
 
+// Binary units (1 KiB = 1024 B), labelled as such.
 export function fmtBytes(b) {
-  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
   let i = 0;
   while (Math.abs(b) >= 1024 && i < u.length - 1) { b /= 1024; i++; }
   return `${b.toFixed(b >= 100 || i === 0 ? 0 : 1)} ${u[i]}`;
