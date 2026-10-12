@@ -97,7 +97,8 @@ export function startAtlas(root) {
     if (!layer) return;
     try { layer.inst?.destroy?.(); } catch (e) { console.error(e); }
     layer.offs.forEach((f) => f());
-    layer.el.remove();
+    layer.offs = [];
+    layer.el?.remove();
   }
 
   function hideLayer(layer) { layer.el.classList.add('hidden'); layer.el.inert = true; try { layer.inst?.pause?.(); } catch { /* ignore */ } }
@@ -477,7 +478,11 @@ export function startAtlas(root) {
   // when the model changes shape, nodes may disappear (e.g. layer 5 of a 2-layer model)
   store.on('config', () => {
     const top = stack[stack.length - 1];
-    if (top && !validFor(top.id, cfg())) go('model');
+    if (top && !validFor(top.id, cfg())) {
+      // the open scene no longer exists for this model: stop it from reacting to the new trace
+      for (const l of stack) if (!validFor(l.id, cfg())) { l.offs.forEach((f) => f()); l.offs = []; }
+      go('model');
+    }
     renderCrumbs();
     if (leftDrawer.classList.contains('open')) renderMenu();
   });
