@@ -31,6 +31,30 @@ const FLY_MS = 640;                   // one term flies into the sum (kit fly: 6
 const SUM_MS = 1860;                  // the gaps between arrivals share this: the whole sum takes about 2.5 s
 const LABEL_CH = 7.6;                 // width of one character of a 12 px mono bar label, with a margin
 
+// Key labels under the value columns. A word token (“␣liked”) can be wider than its slot. A label that
+// does not fit is turned 40° with its end on the column's centre, while the turned labels keep clear of
+// each other. A turned label that would run into the caption is cut to the longest width that clears it,
+// with an ellipsis. When even turning is too dense, only every few labels is written, centred on its
+// column, and the query's label is always one of them; every label keeps its full text on hover (title).
+// Widths are measured in the page's own mono font, so any token size fits.
+const KEY_TILT = (40 * Math.PI) / 180;
+let measurer = null;
+/**
+ * 'flat': every label fits its slot. 'tilt': turned labels run parallel, slot × sin 40° apart, and `max` is the
+ * widest one whose lower corner stays `room` px below the row's top. 'elide': too narrow to turn, so the row
+ * writes every `step`-th label, which leaves each written label room for its full width.
+ */
+function keyLabelMode(labels, slot, px, room) {
+  measurer ??= document.createElement('canvas').getContext('2d');
+  measurer.font = `600 ${px}px ${cssVar('--font-mono') || 'monospace'}`;
+  const widths = labels.map((t) => measurer.measureText(t).width);
+  const need = Math.max(0, ...widths) + 4;                          // the widest label, with a margin
+  if (need <= slot) return { mode: 'flat', widths, max: Infinity, step: 1 };
+  if (slot * Math.sin(KEY_TILT) < px) return { mode: 'elide', widths, max: Infinity, step: Math.ceil(need / slot) };
+  // a turned label's lowest corner lies 0.643 × width + 0.883 × px below the row's top
+  return { mode: 'tilt', widths, max: Math.max(px, (room - 0.883 * px) / Math.sin(KEY_TILT)), step: 1 };
+}
+
 useStyle('mix', `
 .mx-col .k-cells { padding: 2px; border-radius: 5px; transition: opacity .6s cubic-bezier(.65,0,.35,1); }
 .mx-col.mx-masked .k-cell { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c-mask) 70%, transparent) 0 2px, transparent 2px 6px) !important; }
@@ -45,7 +69,10 @@ useStyle('mix', `
 .mx-bar.masked { background: repeating-linear-gradient(135deg, var(--c-mask) 0 2px, transparent 2px 5px); box-shadow: none; border-radius: 2px; }
 .mx-bar-val { position: absolute; left: 50%; bottom: 100%; margin-bottom: 5px; translate: -50% 0; font: 600 12px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap; }
 .mx-keys { display: flex; }
-.mx-key { flex: none; text-align: center; font: 600 15px/1 var(--font-mono); color: var(--fg-2); overflow: hidden; white-space: nowrap; transition: opacity .4s, color .4s; }
+.mx-key { flex: none; position: relative; text-align: center; font: 600 15px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap; transition: opacity .4s, color .4s; }
+.mx-key-t { display: block; }
+.mx-keys.mx-elide .mx-key-t { display: flex; justify-content: center; }
+.mx-keys.mx-tilt .mx-key-t { position: absolute; top: 0; right: 50%; transform-origin: 100% 50%; transform: rotate(-40deg); overflow: hidden; text-overflow: ellipsis; }
 .mx-key.dim { opacity: .3; }
 .mx-key.cur { color: var(--accent); }
 .mx-well { position: absolute; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); box-shadow: 0 10px 24px rgba(0,0,0,.12); }
@@ -155,7 +182,7 @@ export default {
     let step = 0, gen = 0, D = null, built = [], timers = [], active = true;
     let autoOn = !reducedMotion(), autoT = null, autoDriving = false;
     let geoKey = null, geo = null;                   // the layout is rebuilt only when T, d_h or the heads change
-    let colEls = [], barEls = [], keyEls = [], heroEls = [], bigEls = [];
+    let colEls = [], barEls = [], keyEls = [], keyRowEl = null, heroEls = [], bigEls = [];
     let accWrap = null, accVec = null, readout = null, outLabel = null, big = null, thumb = null;
     let wTag = null, scaleNote = null, waved = false;     // the weight tag, the bars' scale note, the step-3 wave (once per build)
     let header, tp, cap, stepLabel, eqMain, eqLive, checkSlot, side, thumbSlot, thumbNote;
@@ -224,7 +251,7 @@ export default {
       big?.destroy(); big = null;
       thumb?.destroy(); thumb = null;
       thumbSlot?.replaceChildren();
-      colEls = []; barEls = []; keyEls = []; heroEls = []; bigEls = [];
+      colEls = []; barEls = []; keyEls = []; keyRowEl = null; heroEls = []; bigEls = [];
       accWrap = null; readout = null; outLabel = null; wTag = null; scaleNote = null; waved = false;
       geoKey = null; geo = null;
     }
@@ -274,10 +301,10 @@ export default {
       }
       heroEls.push(put(texLabel('v_{j}', { size: 16, kind: 'v' }), { x: x0 - 12, y: YCOL + boxH / 2, anchor: 'rc' }));
 
-      const keyRow = h('div', { class: 'mx-keys', style: { width: `${T * p}px` } });
-      keyEls = Array.from({ length: T }, (_, j) => h('div', { class: 'mx-key', style: { width: `${p}px`, fontSize: T > 32 ? '11px' : '15px' } }, ctx.label(j)));
-      keyRow.append(...keyEls);
-      heroEls.push(put(keyRow, { x: x0, y: keysY }));
+      keyRowEl = h('div', { class: 'mx-keys', style: { width: `${T * p}px` } });
+      keyEls = Array.from({ length: T }, (_, j) => h('div', { class: 'mx-key', style: { width: `${p}px`, fontSize: T > 32 ? '11px' : '15px' } }, h('span', { class: 'mx-key-t' })));
+      keyRowEl.append(...keyEls);
+      heroEls.push(put(keyRowEl, { x: x0, y: keysY }));
 
       // the running sum: a well under a sum sign, named o_q
       accWrap = h('div', { class: 'mx-acc' });
@@ -435,9 +462,17 @@ export default {
         val.textContent = on && labelOn.has(j) ? pct(d.A[j]) : '';
       });
       scaleNote.textContent = step >= 1 ? `tallest bar = ${pct(d.Amax)}` : '';
+      // the token text can change at the same T, so the names, titles and the label mode are read on every paint
+      const names = keyEls.map((_, j) => ctx.label(j));
+      // the sizes build() gives the names; a turned label stays above the caption (its top is the key row's top)
+      const keys = keyLabelMode(names, geo.p, d.T > 32 ? 11 : 15, ZONES.caption.y - 6 - geo.keysY);
+      keyRowEl.classList.toggle('mx-tilt', keys.mode === 'tilt');
+      keyRowEl.classList.toggle('mx-elide', keys.mode === 'elide');
       keyEls.forEach((k, j) => {
-        const name = ctx.label(j);                                  // the token text can change at the same T
-        if (k.textContent !== name) k.textContent = name;
+        const t = k.firstChild, written = keys.mode === 'elide' && (j - q) % keys.step !== 0 ? '' : names[j];
+        if (t.textContent !== written) t.textContent = written;
+        t.title = k.title = `${j}: ${names[j]}`;                         // the slot too: an unwritten label still has a hover target
+        t.style.maxWidth = keys.widths[j] > keys.max ? `${keys.max}px` : '';     // cut to the room above the caption
         k.classList.toggle('dim', !d.vis[j]); k.classList.toggle('cur', j === q);
       });
 

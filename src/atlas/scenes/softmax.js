@@ -1,11 +1,35 @@
 // Softmax for one query row of one head, in five steps on the real numbers:
 //   scores → subtract the max → exponentiate → normalise → the full pattern.
 // Reference scene for contributors: see docs/ATLAS_GUIDE.md.
-import { stage2d, sceneHeader, sceneCaption, tokenPicker, mat, appear, pulse, countTo, useStyle, MOTION } from '../kit.js';
-import { h, fmt, texHTML, num } from '../../ui/index.js';
+import { stage2d, sceneHeader, sceneCaption, tokenPicker, mat, appear, pulse, countTo, useStyle, MOTION, ZONES } from '../kit.js';
+import { h, fmt, texHTML, num, cssVar } from '../../ui/index.js';
 
 const STEPS = ['Scores', 'Subtract max', 'Exponentiate', 'Normalise', 'The pattern'];
 const BX = 110, BY = 290, BW = 960, BH = 390;     // bar area in design units
+
+// Key labels under the bars. A word token (“␣liked”) can be wider than its slot. A label that does not
+// fit is turned 40° with its end on the bar's centre, and the turned labels keep clear of each other. A
+// turned label that would run into the caption is cut to the longest width that clears it, with an
+// ellipsis. When even turning is too dense, only every few labels is written, centred on its bar, and the
+// query's label is always one of them; every label keeps its full text on hover (title). Widths are
+// measured in the page's own mono font, so any token size fits.
+const KEY_TILT = (40 * Math.PI) / 180;
+let measurer = null;
+/**
+ * 'flat': every label fits its slot. 'tilt': turned labels run parallel, slot × sin 40° apart, and `max` is the
+ * widest one whose lower corner stays `room` px below the row's top. 'elide': too narrow to turn, so the row
+ * writes every `step`-th label, which leaves each written label room for its full width.
+ */
+function keyLabelMode(labels, slot, px, room) {
+  measurer ??= document.createElement('canvas').getContext('2d');
+  measurer.font = `600 ${px}px ${cssVar('--font-mono') || 'monospace'}`;
+  const widths = labels.map((t) => measurer.measureText(t).width);
+  const need = Math.max(0, ...widths) + 4;                          // the widest label, with a margin
+  if (need <= slot) return { mode: 'flat', widths, max: Infinity, step: 1 };
+  if (slot * Math.sin(KEY_TILT) < px) return { mode: 'elide', widths, max: Infinity, step: Math.ceil(need / slot) };
+  // a turned label's lowest corner lies 0.643 × width + 0.883 × px below the row's top
+  return { mode: 'tilt', widths, max: Math.max(px, (room - 0.883 * px) / Math.sin(KEY_TILT)), step: 1 };
+}
 
 useStyle('softmax', `
 .sm-bars { position: relative; border-left: 1px solid var(--line-strong); }
@@ -17,7 +41,10 @@ useStyle('softmax', `
 .sm-bar.masked { background: repeating-linear-gradient(135deg, var(--c-mask) 0 2px, transparent 2px 5px); box-shadow: none; }
 .sm-val { position: absolute; left: 50%; translate: -50% 0; font: 600 12px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap; transition: top .6s cubic-bezier(.65,0,.35,1); }
 .sm-keys { display: flex; }
-.sm-key { text-align: center; font: 600 16px/1 var(--font-mono); color: var(--fg-2); transition: opacity .3s; }
+.sm-key { position: relative; text-align: center; font: 600 16px/1 var(--font-mono); color: var(--fg-2); transition: opacity .3s; }
+.sm-key-t { display: block; white-space: nowrap; }
+.sm-keys.sm-elide .sm-key-t { display: flex; justify-content: center; }
+.sm-keys.sm-tilt .sm-key-t { position: absolute; top: 0; right: 50%; transform-origin: 100% 50%; transform: rotate(-40deg); overflow: hidden; text-overflow: ellipsis; }
 .sm-key.dim { opacity: .3; }
 .sm-stack { position: relative; width: 34px; border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
 .sm-seg { position: absolute; left: 0; right: 0; background: var(--c-attn); border-top: 1px solid color-mix(in srgb, var(--bg) 60%, transparent); transition: height .6s cubic-bezier(.65,0,.35,1), bottom .6s cubic-bezier(.65,0,.35,1); }
@@ -83,7 +110,13 @@ export default {
         bars.append(b);
         return b;
       });
-      keyEls = d.sc.map((_, j) => h('div', { class: 'sm-key', style: { width: `${colW}px`, fontSize: d.T > 32 ? '11px' : '16px' } }, ctx.label(j)));
+      const labels = d.sc.map((_, j) => ctx.label(j)), fs = d.T > 32 ? 11 : 16;
+      const keys = keyLabelMode(labels, colW, fs, ZONES.caption.y - 6 - (BY + BH + 10));   // the key row's top is BY + BH + 10
+      keyRow.classList.toggle('sm-tilt', keys.mode === 'tilt');
+      keyRow.classList.toggle('sm-elide', keys.mode === 'elide');
+      keyEls = labels.map((lab, j) => h('div', { class: 'sm-key', title: `${j}: ${lab}`, style: { width: `${colW}px`, fontSize: `${fs}px` } },
+        h('span', { class: 'sm-key-t', title: `${j}: ${lab}`, style: keys.widths[j] > keys.max ? { maxWidth: `${keys.max}px` } : null },
+          keys.mode === 'elide' && (j - d.q) % keys.step !== 0 ? '' : lab)));
       keyRow.replaceChildren(...keyEls);
       stackEls = d.p.map((_, j) => h('div', { class: 'sm-seg', dataset: { cell: `${d.q},${j},${hd}` } }));
       stack.replaceChildren(...stackEls);

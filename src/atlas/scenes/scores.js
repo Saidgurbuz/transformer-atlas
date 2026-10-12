@@ -3,7 +3,7 @@
 // every score as a bar, and the full S matrix → scaled by 1/√d_h, with a simulated illustration of why.
 // Reference scene for contributors: see docs/ATLAS_GUIDE.md.
 import { stage2d, sceneHeader, sceneCaption, tokenPicker, vec, mat, checkBadge, appear, useStyle, MOTION, ZONES } from '../kit.js';
-import { h, s, fmt, num, texHTML, diverging, heatmap, reducedMotion } from '../../ui/index.js';
+import { h, s, fmt, num, texHTML, diverging, heatmap, reducedMotion, cssVar } from '../../ui/index.js';
 
 const STEPS = ['Queries and keys', 'Dot product', 'All scores', 'Scale by 1/√d_h'];
 
@@ -20,6 +20,30 @@ const PITCH_MAX = 64;                             // widest key pitch, so short 
 const SIM = { seed: 20260611, trials: 60, keys: 16, dims: [4, 8, 16, 32, 64, 128, 256] };
 let simCache = null;
 
+// Key labels under the key columns. A word token (“␣liked”) can be wider than its column. A label that
+// does not fit is turned 40° with its end on the column's centre, and the turned labels keep clear of each
+// other. A turned label that would run down into the score band is cut to the longest width that clears
+// it, with an ellipsis. When even turning is too dense, only every few labels is written, centred on its
+// column, and the query's label is always one of them; every label keeps its full text on hover (title).
+// Widths are measured in the page's own mono font, so any token size fits.
+const KEY_TILT = (40 * Math.PI) / 180;
+let measurer = null;
+/**
+ * 'flat': every label fits its slot. 'tilt': turned labels run parallel, slot × sin 40° apart, and `max` is the
+ * widest one whose lower corner stays `room` px below the row's top. 'elide': too narrow to turn, so the row
+ * writes every `step`-th label, which leaves each written label room for its full width.
+ */
+function keyLabelMode(labels, slot, px, room) {
+  measurer ??= document.createElement('canvas').getContext('2d');
+  measurer.font = `600 ${px}px ${cssVar('--font-mono') || 'monospace'}`;
+  const widths = labels.map((t) => measurer.measureText(t).width);
+  const need = Math.max(0, ...widths) + 4;                          // the widest label, with a margin
+  if (need <= slot) return { mode: 'flat', widths, max: Infinity, step: 1 };
+  if (slot * Math.sin(KEY_TILT) < px) return { mode: 'elide', widths, max: Infinity, step: Math.ceil(need / slot) };
+  // a turned label's lowest corner lies 0.643 × width + 0.883 × px below the row's top
+  return { mode: 'tilt', widths, max: Math.max(px, (room - 0.883 * px) / Math.sin(KEY_TILT)), step: 1 };
+}
+
 useStyle('scores', `
 .scr-q .k-cells, .scr-col .k-cells { padding: 3px 2px; }
 .scr-q .k-cell, .scr-col .k-cell { width: var(--cw); }
@@ -31,6 +55,8 @@ useStyle('scores', `
 .scr-tok { display: grid; justify-items: center; font: 600 15px/1 var(--font-mono); color: var(--fg); white-space: nowrap; transition: opacity .4s ease; }
 .scr-tok.xs { font-size: 12px; }
 .scr-tok small { font: 500 12px/1 var(--font-mono); color: var(--fg-3); margin-top: 4px; }
+.scr-tok.scr-tilt b { position: absolute; top: 0; right: 50%; transform-origin: 100% 50%; transform: rotate(-40deg); overflow: hidden; text-overflow: ellipsis; }
+.scr-tok.scr-tilt small { margin-top: 22px; }      /* the index sits under the end of the turned word */
 .scr-tok.future { opacity: .35; }
 .scr-tok.dim { opacity: .28; }
 .scr-keylab { font-size: 17px; }
@@ -280,6 +306,9 @@ export default {
       place(qVec, { x: QX, y: VEC_BOT, anchor: 'bc' });
       place(h('div', { class: ['scr-tok', T > 32 && 'xs'] }, h('b', null, ctx.label(t)), h('small', null, `t = ${t}`)), { x: QX, y: TOK_Y, anchor: 'tc' });
 
+      const tokLab = Array.from({ length: T }, (_, j) => ctx.label(j));
+      // label size of .scr-tok (and .xs above 32 tokens); a turned label stays above the tallest bar of the band
+      const key = keyLabelMode(tokLab, P, T > 32 ? 12 : 15, BAND_Y + ZERO - HALF - 4 - TOK_Y);
       for (let j = 0; j < T; j++) {
         const kv = vec(D.K[j], { orientation: 'v', cell: cellH, gap: 2, kind: 'k', range: D.rangeK, head: 12, tail: 4,
           trace: `L${l}.attn.${D.rope ? 'k_rot' : 'k_heads'}`, cellOf: (i) => `${j},${i},${D.kvh}` });
@@ -288,7 +317,11 @@ export default {
         disposers.push(() => kv.destroy());
         place(kv, { x: cx(j), y: VEC_BOT, anchor: 'bc' });
         keyVecs.push(kv);
-        const tk = h('div', { class: ['scr-tok', T > 32 && 'xs'] }, h('b', null, ctx.label(j)), T <= 26 ? h('small', null, String(j)) : null);
+        const cut = key.mode === 'tilt' && key.widths[j] > key.max ? key.max : null;   // a turned label cut to the room above the band
+        const written = key.mode === 'elide' && (j - t) % key.step !== 0 ? '' : tokLab[j];   // a narrow row writes every step-th label
+        const tk = h('div', { class: ['scr-tok', T > 32 && 'xs', key.mode === 'tilt' && 'scr-tilt'], title: `${j}: ${tokLab[j]}`,
+          style: key.mode === 'elide' ? { width: `${P}px`, height: '1em' } : null },   // the slot stays under the pointer for the title
+          h('b', { style: cut ? { maxWidth: `${cut}px` } : null }, written), T <= 26 ? h('small', null, String(j)) : null);
         place(tk, { x: cx(j), y: TOK_Y, anchor: 'tc' });
         keyToks.push(tk);
       }
