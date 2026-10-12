@@ -72,7 +72,9 @@ export function renderSettings(body) {
   body.append(
     h('div', { class: 'eyebrow' }, 'Input'),
     textArea,
-    h('div', { class: 'small muted' }, `${st.ids.length} of ${cfg.block_size} tokens · characters outside the vocabulary are skipped`),
+    h('div', { class: 'small muted' }, `${st.ids.length} of ${cfg.block_size} tokens · ${st.tokenizer.kind === 'bpe'
+      ? 'byte-level BPE: any text is representable'
+      : 'characters outside the vocabulary are skipped'}`),
     h('div', { class: 'eyebrow' }, 'Weights'),
     select({ id: 'settings-preset', value: st.weights.startsWith('preset:') ? st.weights.slice(7) : 'random',
       options: [{ value: 'random', label: 'Random weights' }, ...PRESETS.map((p) => ({ value: p.id, label: p.title }))],
