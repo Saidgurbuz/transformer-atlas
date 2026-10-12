@@ -1,23 +1,24 @@
 // Layer normalisation on one token's vector, in steps on the real numbers.
-//   LayerNorm: x → μ → x − μ → σ → x̂ = (x − μ)/σ → h = γ·x̂ + β, then every token.
-//   RMSNorm:   x → rms → x̂ = x/rms → h = γ·x̂, then every token (no mean, no shift).
+//   LayerNorm: input → μ → x − μ → σ → x̂ = (x − μ)/σ → h = γ·x̂ + β, then every token.
+//   RMSNorm:   input → rms → x̂ = x/rms → h = γ·x̂, then every token (no mean, no shift).
 // Every number comes from the trace (the stream entering the norm, and the norm's output L{l}.ln{n})
 // and from model.params (γ, β). The scene recomputes the output and checks it against the trace.
-// Two vertical scales per token. Before the divide, the scale fits this vector's own range (zoomed). Since μ is
-// small next to σ, the Mean and Centre steps add a magnified inset (marked illustration) for the move −μ. From the
-// Scale step on, one shared scale holds for every later step, so dividing visibly stretches the bars. A short tick
-// marks where each bar was before the step.
+// Two vertical scales per token. Until the centring, the scale fits this vector's own range. Since μ is small next
+// to σ, the Centre step adds a magnified inset (marked illustration) for the move −μ. The second beat of the centring
+// (the second beat of the RMS step for RMSNorm) moves to one shared scale for every later step, so the divide that
+// follows visibly stretches the bars on a fixed axis. A short tick marks where each bar was before the step.
 // Post-LN models have no norm in front of a sub-layer: the scene says so and points at the residual adds.
 // Reference scene for contributors: see docs/ATLAS_GUIDE.md and docs/STYLE_GUIDE.md.
 import { stage2d, sceneHeader, sceneCaption, tokenPicker, checkBadge, card, chip, appear, countTo, pulse, useStyle, MOTION, ZONES } from '../kit.js';
 import { h, fmt, texHTML, heatmap, diverging, onThemeChange, reducedMotion } from '../../ui/index.js';
 
-const STEPS_LN = ['x', 'Mean', 'Centre', 'Scale', 'γ, β', 'All tokens'];
-const STEPS_RMS = ['x', 'RMS', 'Scale', 'γ', 'All tokens'];
+const STEPS_LN = ['input', 'Mean', 'Centre', 'Scale', 'γ, β', 'All tokens'];
+const STEPS_RMS = ['input', 'RMS', 'Scale', 'γ', 'All tokens'];
 const BX = ZONES.hero.x, BY = ZONES.hero.y, BW = 920, BH = 330;   // the bars of one token (design units)
 const GY = BY + BH + 44, PY = GY + 56, SH = 40;                    // the γ strip and the β strip, SH tall each
 const SX = ZONES.side.x, SY = ZONES.hero.y, SW = ZONES.side.w;     // equation column
 const CAP_W = 960;                                                 // keeps 110 units clear of the side column
+const CX = ZONES.hero.x + ZONES.hero.w / 2;                        // the hero's centre line (x = 800): the post-LN page is centred on it
 const BEAT = 900;                                                  // ms between the two beats of a step
 const LX = 130, LW = 420;                                          // the magnified inset: where its number lines start and how long they are
 const MOVE = `${MOTION.move}ms ${MOTION.ease}`;
@@ -56,9 +57,8 @@ useStyle('norm-scene', `
 .nm-hmarrow span { font: 500 34px/1 var(--font-mono); }
 .nm-hmarrow small { font: 500 13px/1 var(--font-mono); }
 .nm-side { position: absolute; width: ${SW}px; display: grid; gap: 10px; align-content: start; }
-.nm-sidelab { font: 600 17px/1.2 var(--font-mono); color: var(--c-norm); }
 .nm-eq-main { font-size: 22px; color: var(--fg); overflow-x: auto; }
-.nm-eq-live { font-size: 16px; padding: 10px 14px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); box-shadow: 0 6px 16px rgba(0, 0, 0, .06); overflow-x: auto; }
+.nm-eq-live { font-size: 18px; padding: 10px 14px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); box-shadow: 0 6px 16px rgba(0, 0, 0, .06); overflow-x: auto; }
 .nm-checkrow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .nm-checkrow[hidden] { display: none; }
 .nm-checkrow small { font: 500 13px/1 var(--font-mono); color: var(--fg-3); }
@@ -74,7 +74,7 @@ useStyle('norm-scene', `
 .nm-card-eq { font-size: 17px; color: var(--fg); margin-top: 6px; }
 .nm-card[hidden] { display: none; }
 .nm-axis { position: absolute; font: 500 15px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap; transition: opacity .4s; }
-.nm-shift { position: absolute; width: ${BW}px; height: 104px; pointer-events: none; transition: opacity ${MOVE}; }
+.nm-shift { position: absolute; width: ${BW}px; height: 130px; pointer-events: none; transition: opacity ${MOVE}; }
 .nm-sh-head { position: absolute; left: 0; top: 0; font: 500 15px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap; }
 .nm-sh-row { position: absolute; left: 0; width: ${BW}px; height: 22px; }
 .nm-sh-row[hidden] { display: none; }
@@ -85,6 +85,7 @@ useStyle('norm-scene', `
 .nm-sh-dot.was { border: 2px solid var(--fg-2); background: var(--surface); }
 .nm-sh-dot.now { border: 2px solid var(--c-norm); background: var(--c-norm); }
 .nm-sh-val { position: absolute; top: 50%; translate: 0 -50%; font: 500 15px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap; }
+.nm-sh-foot { position: absolute; left: 0; top: 112px; font: 500 14px/1 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
 `);
 
 // ------------------------------------------------------------------ pure helpers
@@ -122,6 +123,14 @@ const sig3 = (v) => Number(v).toPrecision(3);                       // three sig
 const rangeSig = (a) => `${sig3(a[0])} … ${sig3(a[1])}`;
 const rangeFix = (a, n) => `${fmt(a[0], n)} … ${fmt(a[1], n)}`;
 const ratio = (a) => `${(a[1] / a[0]).toFixed(1)}×`;
+// Dividing by s (σ or rms) multiplies every value by k = 1/s: the bars shrink when s > 1 and stretch when s < 1.
+const divideTxt = (s, unit) => {
+  const k = 1 / s, sym = `${unit} = ${fmt(s, 2)}`;
+  if (Math.abs(k - 1) < 0.005) return `Dividing by ${sym} leaves every bar where it is, so the band stays at ±1.`;
+  return k < 1
+    ? `Dividing by ${sym} shrinks every bar to ${k.toFixed(2)}× its size, so the band shrinks from ±${unit} to ±1.`
+    : `Dividing by ${sym} stretches every bar by ${k.toFixed(2)}×, so the band grows from ±${unit} to ±1.`;
+};
 
 export default {
   mount(el, ctx) {
@@ -173,9 +182,9 @@ export default {
     const gLab = place(h('div', { class: 'nm-slab' }, 'γ'), BX - 14, GY + SH / 2, 'rc');
     const bLab = place(h('div', { class: 'nm-slab' }, 'β'), BX - 14, PY + SH / 2, 'rc');
 
-    // which scale the bars are on (it changes at the Scale step), and the magnified shift for Mean and Centre:
-    // up to three dimensions, each zoomed around its own values, with the value before (ring) and after (dot)
-    const axisLab = place(h('div', { class: 'nm-axis' }), BX, BY - 26);
+    // which scale the bars are on (it changes on the second beat of the centring, or of the RMS step), and the magnified
+    // shift for the Centre step: up to three dimensions, each zoomed around its own values, the value before (ring) and after (dot)
+    const axisLab = place(h('div', { class: 'nm-axis' }), BX, BY - 16);
     const shiftHead = h('div', { class: 'nm-sh-head' });
     const shiftRows = Array.from({ length: 3 }, (_, r) => {
       const R = {
@@ -190,14 +199,15 @@ export default {
         h('div', { class: 'nm-sh-line', style: { left: `${LX}px`, width: `${LW}px` } }), R.arrow, R.was, R.now, R.val);
       return R;
     });
-    const shift = place(h('div', { class: 'nm-shift' }, shiftHead, ...shiftRows.map((R) => R.row)), BX, GY);
+    const shiftFoot = h('div', { class: 'nm-sh-foot' });
+    const shift = place(h('div', { class: 'nm-shift' }, shiftHead, ...shiftRows.map((R) => R.row), shiftFoot), BX, GY);
 
     // final step: all tokens before and after, two heatmaps in the hero zone, and a key under them
     const hero = place(h('div', { class: 'nm-hm' }), BX, BY);
     const heroNote = place(h('div', { class: 'nm-hmnote' }, 'rows: the tokens · columns: the dimensions · blue below 0, orange above'), BX, BY);
 
     // side column: the step's equation, the live numbers, the check, the ledger and the stream
-    const sideLab = h('div', { class: 'nm-sidelab' });
+    const sideLab = h('div', { class: 'k-label', style: { textAlign: 'left' } });   // the kit's step title, as in softmax.js
     const eqMain = h('div', { class: 'nm-eq-main' });
     const eqLive = h('div', { class: 'nm-eq-live' });
     const check = h('div', { class: 'nm-checkrow', hidden: true });
@@ -207,13 +217,13 @@ export default {
 
     // post-LN: no norm before the sub-layer; the norm acts on each residual add
     const note = h('div', { class: 'nm-note', hidden: true }, h('div', { class: 'nm-note-text' }, 'Post-LN: the norm runs on each residual sum, so each residual add below is followed by its own norm.'));
-    st.add(note, { x: BX + BW / 2, y: 340, anchor: 'tc' });
+    st.add(note, { x: CX, y: 340, anchor: 'tc' });
     const eqCard = (tex) => h('div', { class: 'nm-card-eq', html: texHTML(tex) });
     const noteCards = [
       card({ title: 'Residual add · attention', sub: 'the attention output joins the stream, then the sum is normalised', kind: 'resid', node: `residual.${L}.1`, w: 440, body: eqCard(`x^{\\text{mid}}_{${L}} = \\text{ln1}\\big(x_{${L}} + \\Attn(x_{${L}})\\big)`) }),
       card({ title: 'Residual add · MLP', sub: 'the MLP output joins the stream, then the sum is normalised', kind: 'resid', node: `residual.${L}.2`, w: 440, body: eqCard(`x^{\\text{out}}_{${L}} = \\text{ln2}\\big(x^{\\text{mid}}_{${L}} + \\MLP(x^{\\text{mid}}_{${L}})\\big)`) }),
     ];
-    noteCards.forEach((c, k) => { c.classList.add('nm-card'); c.hidden = true; st.add(c, { x: BX + BW / 2 + (k ? 240 : -240), y: 430, anchor: 'tc' }); });
+    noteCards.forEach((c, k) => { c.classList.add('nm-card'); c.hidden = true; st.add(c, { x: CX + (k ? 240 : -240), y: 430, anchor: 'tc' }); });
 
     // ------------------------------------------------------------ the maths of the current token
     function compute() {
@@ -264,8 +274,8 @@ export default {
       // the printed denominators of the live lines (σ or rms from the printed σ² or mean x², to 5 decimals)
       const sigP = r5(Math.sqrt(r5(s0.v2) + eps)), rmsP = r5(Math.sqrt(r5(s0.ms) + eps));
       // two vertical scales. The stream scale fits this vector's own range (with μ and the centred values), so the bars
-      // fill the chart before the divide. The shared scale holds every value shown from the Scale step on (the
-      // normalised values, the centred ones at the start of Scale, and the ±1 band), so dividing visibly stretches them.
+      // fill the chart before the centring. The shared scale comes in on the second beat of the centring and holds for
+      // every later frame (the centred values, the normalised values and the bands), so the divide visibly stretches them.
       const bandV = isRms ? s0.rms : s0.sig, mu0 = isRms ? 0 : s0.mu;
       const scaleOf = (arrs, lo, hi) => {
         for (const arr of arrs) for (const v of arr) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
@@ -284,7 +294,7 @@ export default {
         isRms, hasBias: !!beta, ik, ok, d, T, q, eps, X, Y, XH, g, beta, row, centred, xh, gx, hh, s0,
         sumC: centred.reduce((a, b) => a + b, 0), maxDiff, maxAll, jOut, maxAbs: Math.abs(row[jOut]),
         before: span(before), after: span(after),
-        rel: rel[q], relMax: rel[jm], relTok: ctx.label(jm), sigP, rmsP,
+        rel: rel[q], relMax: rel[jm], relAt: jm, sigP, rmsP,
         axS, axN, maxS, maxN, mag, hw,
         // colour scales: one for the stream before normalising, one for the normalised values (same value, same colour within a space)
         Rx: Math.max(absMax(row), absMax(centred)), Rn: Math.max(absMax(xh), absMax(gx), absMax(hh)),
@@ -292,13 +302,14 @@ export default {
       };
     }
 
-    // what the bars show in each step and beat (band = the ±value drawn, tag = its label)
+    // what the bars show in each step and beat (band = the ±value drawn, tag = its label). A beat that only moves the axis
+    // (the second beat of the centring, and of the RMS step) shows the same bars as the beat before it.
     function frame(i, b) {
       const c = cur;
       if (c.isRms) {
         if (i === 0) return { vals: c.row };
         if (i === 1) return { vals: c.row, band: c.s0.rms, tag: '±rms' };
-        if (i === 2) return b === 0 ? { vals: c.row, band: c.s0.rms, tag: '±rms' } : { vals: c.xh, band: 1, tag: '±1' };
+        if (i === 2) return { vals: c.xh, band: 1, tag: '±1' };
         if (i === 3) return { vals: c.hh, gamma: true };
         return { vals: c.hh, gamma: true, heat: true };
       }
@@ -311,9 +322,10 @@ export default {
     }
 
     // is this frame in the normalised space (after the divide) rather than the stream before it?
-    const inNorm = (i, b) => (cur.isRms ? i >= 3 || (i === 2 && b === 1) : i >= 4 || (i === 3 && b === 1));
-    // is this step on the shared scale? (from the Scale step on, whichever beat)
-    const onShared = (i) => (cur.isRms ? i >= 2 : i >= 3);
+    const inNorm = (i, b) => (cur.isRms ? i >= 2 : i >= 4 || (i === 3 && b === 1));
+    // is this frame on the shared scale? From the second beat of the centring (or of the RMS step) on: the axis changes
+    // there, and the divide that follows happens on the same axis
+    const onShared = (i, b) => (cur.isRms ? i > 1 || (i === 1 && b === 1) : i > 2 || (i === 2 && b === 1));
 
     // the bars a frame moves from (drawn as ticks); null at the very first frame
     function priorVals(i, b) {
@@ -333,8 +345,8 @@ export default {
 
     function applyFrame(i, b, animate) {
       const c = cur, F = frame(i, b), vals = F.vals, d = c.d, R = inNorm(i, b) ? c.Rn : c.Rx;
-      const shared = onShared(i), ax = shared ? c.axN : c.axS;   // the scale the bars are drawn on
-      const shiftOn = !c.isRms && (i === 1 || i === 2);          // the magnified shift: LayerNorm, Mean and Centre
+      const shared = onShared(i, b), ax = shared ? c.axN : c.axS;   // the scale the bars are drawn on
+      const shiftOn = !c.isRms && i === 2;                          // the magnified shift: LayerNorm, the Centre step only
       const anim = animate && !reducedMotion();            // reduced motion: end states, no transitions
       lastFrame = [i, b];
       const prev = priorVals(i, b);
@@ -347,7 +359,7 @@ export default {
         if (F.mu != null) {
           mu.style.top = `${ax.Y(F.mu)}px`;
           mu.style.opacity = '1';
-          muTag.textContent = F.muTag ?? `μ = ${fmt(F.mu, 3)}`;
+          muTag.textContent = F.muTag ?? `μ = ${fmt(F.mu, 4)}`;
           muTag.style.top = `${ax.Y(F.mu)}px`;
           muTag.classList.add('on');
         } else { mu.style.opacity = '0'; muTag.classList.remove('on'); }
@@ -391,30 +403,33 @@ export default {
         chart.style.opacity = heatOn ? '0' : '1';
         chart.style.pointerEvents = heatOn ? 'none' : '';
         dims.style.opacity = heatOn ? '0' : '1';
-        gStrip.style.opacity = heatOn || shiftOn ? '0' : F.gamma ? '1' : '0.5';
-        bStrip.style.opacity = heatOn || shiftOn ? '0' : F.beta ? '1' : '0.5';
-        // the magnified shift takes the γ and β place on the Mean and Centre steps; the axis label names the scale in use
+        // γ and β fade in with their step. With bias off, the β strip carries its note from the γ step on.
+        const betaOn = F.beta || (!c.isRms && !c.hasBias && i >= 4);
+        gStrip.style.opacity = heatOn || shiftOn || !F.gamma ? '0' : '1';
+        bStrip.style.opacity = heatOn || shiftOn || !betaOn ? '0' : '1';
+        // the magnified shift takes the γ and β place on the Centre step; the axis label names the scale in use
         shift.style.opacity = shiftOn ? '1' : '0';
         axisLab.style.opacity = heatOn ? '0' : '1';
-        axisLab.textContent = shared
-          ? `scale ±${fmt(c.maxN, 1)} · shared by every step from here, in units of ${c.isRms ? 'rms' : 'σ'}`
-          : `scale ±${fmt(c.maxS, 2)} · this vector’s own range, zoomed`;
+        // the axis names its units: data units until the divide has happened, units of σ (or rms) after it
+        axisLab.textContent = !shared
+          ? `scale ±${fmt(c.maxS, 2)} · fitted to this vector’s own range`
+          : inNorm(i, b)
+            ? `scale ±${fmt(c.maxN, 1)} · shared from here, in units of ${c.isRms ? 'rms' : 'σ'}`
+            : `scale ±${fmt(c.maxN, 1)} · shared from here, data units`;
         if (shiftOn) {
           const zoom = c.mag >= 1.5 ? `zoomed ×${Math.round(c.mag)}` : 'at this scale';
-          shiftHead.textContent = i === 1
-            ? `μ = ${fmt(c.s0.mu, 4)} · each value will move by −μ · ${zoom} · illustration`
-            : `each value moved by −μ = ${fmt(-c.s0.mu, 4)} · ${zoom} · illustration`;
+          shiftHead.textContent = `illustration · each value moves by −μ = ${fmt(-c.s0.mu, 4)} · ${zoom}`;
         }
         shiftRows.forEach((sr) => {
           if (!sr.txt) return;
           const [pa, pb] = sr.pos;
           sr.was.style.left = `${pa}px`;
-          sr.now.style.left = `${pb}px`;
+          sr.now.style.left = `${i >= 2 ? pb : pa}px`;   // the dot starts on its ring and moves to the centred value
           sr.arrow.style.left = `${Math.min(pa, pb)}px`;
           sr.arrow.style.width = `${Math.abs(pb - pa)}px`;
-          sr.now.style.opacity = i === 2 ? '1' : '0';
-          sr.arrow.style.opacity = i === 2 ? '1' : '0';
-          sr.val.textContent = sr.txt[i === 2 ? 1 : 0];
+          sr.now.style.opacity = shiftOn ? '1' : '0';
+          sr.arrow.style.opacity = shiftOn ? '1' : '0';
+          sr.val.textContent = sr.txt;
         });
         gLab.style.opacity = gStrip.style.opacity;
         bLab.style.opacity = bStrip.style.opacity;
@@ -447,16 +462,14 @@ export default {
           main: `\\operatorname{rms}_{t} = \\sqrt{\\frac{1}{${d}}\\sum_{c} \\xres_{t,c}^{2} + \\varepsilon}`,
           live: stack([`\\frac{1}{${d}}\\sum_{c} x_{${q},c}^{2} &= ${s5(c.s0.ms)}`, `\\operatorname{rms}_{${q}} &= \\sqrt{${s5(c.s0.ms)} + ${eps}}`, `&= ${s5(c.rmsP)}`]),
         };
-        if (i === 2) return b === 0
-          ? { main: `\\hat x_{t,c} = \\frac{\\xres_{t,c}}{\\operatorname{rms}_{t}}`, live: `\\operatorname{rms}_{${q}} = ${s5(c.rmsP)}` }
-          : { main: `\\hat x_{t,c} = \\frac{\\xres_{t,c}}{\\operatorname{rms}_{t}}`, live: `\\hat x_{${dim}} = \\frac{${tp4(x[j])}}{${s5(c.rmsP)}} = ${t3(xhP)}` };
+        if (i === 2) return { main: `\\hat x_{t,c} = \\frac{\\xres_{t,c}}{\\operatorname{rms}_{t}}`, live: `\\hat x_{${dim}} = \\frac{${tp4(x[j])}}{${s5(c.rmsP)}} = ${t3(xhP)}` };
         if (i === 3) return {
           main: `h_{t,c} = \\gamma_{c}\\,\\hat x_{t,c}`,
-          live: stack([`h_{${dim}} &= \\gamma_{${j}}\\hat x_{${dim}}`, `&= ${t3(c.g[j])} \\cdot ${tp3(xhP)} = ${t3(gxP)}`]),
+          live: stack([`h_{${dim}} &= \\gamma_{${j}}\\hat x_{${dim}}`, `&= ${t3(c.g[j])} \\cdot ${tp3(xhP)}`, `&= ${t3(gxP)}`]),
         };
         return {
           main: aligned([`\\frac{1}{${d}}\\sum_{c} \\hat x_{t,c}^{2} = \\frac{\\operatorname{ms}_{t}}{\\operatorname{ms}_{t}+\\varepsilon} \\approx 1`]),
-          live: `\\min_{t} = ${t5(c.after[0])}, \\qquad \\max_{t} = ${t5(c.after[1])}`,
+          live: stack([`\\min_{t} &= ${t5(c.after[0])}`, `\\max_{t} &= ${t5(c.after[1])}`]),
         };
       }
       if (i === 1) return {
@@ -474,36 +487,45 @@ export default {
             live: `\\hat x_{${dim}} = \\frac{${tp4(num)}}{${s5(c.sigP)}} = ${t3(xhP)}` };
       if (i === 4) return b === 0
         ? { main: `h_{t,c} = \\gamma_{c}\\,\\hat x_{t,c}`,
-            live: stack([`h_{${dim}} &= \\gamma_{${j}}\\hat x_{${dim}}`, `&= ${t3(c.g[j])} \\cdot ${tp3(xhP)} = ${t3(gxP)}`]) }
+            live: stack([`h_{${dim}} &= \\gamma_{${j}}\\hat x_{${dim}}`, `&= ${t3(c.g[j])} \\cdot ${tp3(xhP)}`, `&= ${t3(gxP)}`]) }
         : { main: `h_{t,c} = \\gamma_{c}\\,\\hat x_{t,c} + \\beta_{c}`,
-            live: stack([`h_{${dim}} &= \\gamma_{${j}}\\hat x_{${dim}} + \\beta_{${j}}`, `&= ${t3(gxP)} + ${tp3(bP)} = ${t3(r3(gxP + bP))}`]) };
+            live: stack([`h_{${dim}} &= \\gamma_{${j}}\\hat x_{${dim}} + \\beta_{${j}}`, `&= ${t3(gxP)} + ${tp3(bP)}`, `&= ${t3(r3(gxP + bP))}`]) };
       return {
         main: aligned([`\\operatorname{Var}_{c}\\,\\hat x_{t,c} = \\frac{\\sigma^{2}_{t}}{\\sigma^{2}_{t}+\\varepsilon} \\approx 1`]),
-        live: `\\min_{t} = ${t5(c.after[0])}, \\qquad \\max_{t} = ${t5(c.after[1])}`,
+        live: stack([`\\min_{t} &= ${t5(c.after[0])}`, `\\max_{t} &= ${t5(c.after[1])}`]),
       };
     }
 
     // The ledger: the live numbers this step has computed so far (count-up the first time a step shows them).
     function statRows(i, animate) {
-      const c = cur, rows = [];
-      const line = (label, value, key) => {
+      const c = cur, rows = [], many = c.T > 1;      // one token shows one value, not a range
+      // the digits match the live lines: μ to 4 places, σ and σ² to 5 (the equation's rounding), the rest to 3
+      const line = (label, value, key, digits = 3) => {
         const v = h('b');
         if (typeof value === 'number') {
-          if (animate && !revealed.has(key)) { revealed.add(key); countTo(v, value, { digits: 3 }); }
-          else v.textContent = fmt(value, 3);
+          if (animate && !revealed.has(key)) { revealed.add(key); countTo(v, value, { digits }); }
+          else v.textContent = fmt(value, digits);
         } else v.innerHTML = value;
         rows.push(h('div', { class: 'nm-stat' }, h('span', { html: label }), v));
       };
       if (c.isRms) {
         if (i === 0) { line('values per token', String(c.d), 'd'); line('largest |x|', `${fmt(c.maxAbs, 2)} · dim ${c.jOut}`, 'max'); }
-        if (i >= 1 && i <= 3) { line('mean x²', c.s0.ms, 'ms'); line('rms = √(mean x² + ε)', c.s0.rms, 'rms'); }
-        if (i === 4) { line('rms per token', rangeSig(c.before), 'rb'); line('largest ÷ smallest', ratio(c.before), 'ratio'); line('mean x̂² after', rangeFix(c.after, 5), 'ra'); }
+        if (i >= 1 && i <= 3) { line('mean x²', r5(c.s0.ms), 'ms', 5); line('rms = √(mean x² + ε)', c.rmsP, 'rms', 5); }
+        if (i === 4) {
+          if (many) line('rms per token', rangeSig(c.before), 'rb'); else line('rms', sig3(c.before[0]), 'rb');
+          if (many) line('largest ÷ smallest', ratio(c.before), 'ratio');
+          line('mean x̂² after', many ? rangeFix(c.after, 5) : fmt(c.after[0], 5), 'ra');
+        }
       } else {
         if (i === 0) { line('values per token', String(c.d), 'd'); line('largest |x|', `${fmt(c.maxAbs, 2)} · dim ${c.jOut}`, 'max'); }
-        if (i === 1 || i === 2) line('μ', c.s0.mu, 'mu');
-        if (i === 2) line('Σ x′', Math.abs(c.sumC) < 1e-9 ? '0' : fmt(c.sumC, 3), 'sum');
-        if (i === 3 || i === 4) { line('σ²', c.s0.v2, 'v2'); line('σ = √(σ² + ε)', c.s0.sig, 'sig'); line('|μ| ÷ σ', c.rel, 'rel'); }
-        if (i === 5) { line('σ per token', rangeSig(c.before), 'sb'); line('largest ÷ smallest', ratio(c.before), 'ratio'); line('Var(x̂) after', rangeFix(c.after, 5), 'va'); }
+        if (i === 1) { line('μ', r4(c.s0.mu), 'mu', 4); line('largest |μ| ÷ σ', `${fmt(c.relMax, 3)} · position ${c.relAt}`, 'relmax'); }
+        if (i === 2) { line('μ', r4(c.s0.mu), 'mu', 4); line('Σ x′', Math.abs(c.sumC) < 1e-9 ? '0' : fmt(c.sumC, 3), 'sum'); }
+        if (i === 3 || i === 4) { line('σ²', r5(c.s0.v2), 'v2', 5); line('σ = √(σ² + ε)', c.sigP, 'sig', 5); line('|μ| ÷ σ', c.rel, 'rel'); }
+        if (i === 5) {
+          if (many) line('σ per token', rangeSig(c.before), 'sb'); else line('σ', sig3(c.before[0]), 'sb');
+          if (many) line('largest ÷ smallest', ratio(c.before), 'ratio');
+          line('Var(x̂) after', many ? rangeFix(c.after, 5) : fmt(c.after[0], 5), 'va');
+        }
       }
       return rows;
     }
@@ -524,30 +546,31 @@ export default {
     function caption(c, i, b) {
       if (c.isRms) {
         if (i === 0) return origin(c);
-        if (i === 1) return 'rms is the root mean square of the values. Nothing is subtracted, so the band is centred on zero.';
-        if (i === 2) return b === 0
-          ? 'The axis changes here: from now on every step shares one scale, in units of rms. The bars look small on it until the next beat divides them.'
-          : `Dividing by rms stretches every bar by ${(1 / c.s0.rms).toFixed(1)}×, so the band grows to ±1. Every token now has root mean square 1 (up to ε).`;
+        if (i === 1) return b === 0
+          ? 'rms is the root mean square of the values. Nothing is subtracted, so the band is centred on zero.'
+          : 'The axis changes here. From now on every step shares one scale, wide enough for the normalised values, so the bars look smaller on it. The next step divides them.';
+        if (i === 2) return `${divideTxt(c.rmsP, 'rms')} Every token now has root mean square 1 (up to ε).`;
         if (i === 3) return 'The learned gain γ rescales each dimension. RMSNorm has no shift β. The check on the right confirms the output.';
         return 'Left: every token’s stream before the norm. Right: the same rows after normalising, before γ. Every row now has root mean square 1 (up to ε), so all rows share one scale.';
       }
       if (i === 0) return origin(c);
-      if (i === 1) return `μ is the average of the ${c.d} values in this vector (the line). It is ${pctTxt(c.rel)} of σ, so on this axis it ${c.rel < 0.1 ? 'sits next to zero' : 'is visibly off zero'}. The largest in this text is ${pctTxt(c.relMax)}, at “${c.relTok}”.`;
+      if (i === 1) return `μ is the average of the ${c.d} values in this vector (the line). It is ${pctTxt(c.rel)} of σ, so on this axis it ${c.rel < 0.1 ? 'sits next to zero' : 'is visibly off zero'}.`;
       if (i === 2) {
+        if (b === 1) return 'The axis changes here. From now on every step shares one scale, wide enough for the normalised values, so the centred bars look smaller on it. The next step divides them.';
         const seen = c.rel < 0.1 ? 'On this axis that move is too small to see' : 'On this axis that move is visible';
         const how = c.mag >= 1.5 ? `the inset below zooms in ×${Math.round(c.mag)}` : 'the inset below shows it at this scale';
         return `Subtracting μ moves every value by the same amount, −μ = ${fmt(-c.s0.mu, 4)}, so the centred values sum to exactly 0. ${seen}; ${how}.`;
       }
       if (i === 3) return b === 0
-        ? 'σ is the spread of the centred values, and the band shows ±σ. The axis changes now: from here every step shares one scale, in units of σ, so the bars look small until the next beat divides them.'
-        : `Dividing by σ stretches every bar by ${(1 / c.s0.sig).toFixed(1)}×, so the band grows to ±1. Every token now has spread 1 (up to ε), whatever its input scale was.`;
+        ? 'σ is the spread of the centred values: the band marks ±σ on the shared scale.'
+        : `${divideTxt(c.sigP, 'σ')} Every token now has spread 1 (up to ε), whatever its input scale was.`;
       if (i === 4) {
         if (b === 0) return c.hasBias
           ? 'The learned gain γ sets the size of each dimension.'
           : 'The learned gain γ sets the size of each dimension. This model has no shift β (bias off), so this is the output, and the check confirms it.';
         return 'The learned shift β moves each dimension by its own offset. The check on the right confirms the output.';
       }
-      return 'Left: every token’s stream before the norm, each row on its own scale. Right: the same rows after normalising, before γ and β. Every row now has the same spread (up to ε).';
+      return 'Left: every token’s stream before the norm, all rows on one colour scale. Right: the same rows after normalising, before γ and β. Every row now has the same spread (up to ε).';
     }
 
     function setTexts(i, b, animate) {
@@ -565,7 +588,7 @@ export default {
       if (atToken || atAll) {
         const got = atAll ? c.maxAll : c.maxDiff;
         check.replaceChildren(
-          checkBadge(got, 0, { label: atAll ? `equals ${c.ok} for all ${c.T} tokens` : `equals ${c.ok}[${q}]`, tol: 1e-9 }),
+          checkBadge(got, 0, { label: atAll ? `equals ${c.ok} for ${c.T === 1 ? 'its only token' : `all ${c.T} tokens`}` : `equals ${c.ok}[${q}]`, tol: 1e-9 }),
           h('small', null, `max |Δ| = ${fmt(got, 2)}`));
       }
       cap.set(caption(c, i, b));
@@ -604,6 +627,8 @@ export default {
     // around its own values, with the window from compute() (hw), so the move −μ is drawn at the same length in every row.
     function buildShift(c) {
       const picks = c.isRms ? [] : [...new Set([c.jOut, 0, c.d - 1])].slice(0, 3);
+      const why = (j) => (j === c.jOut ? ' (largest |x|)' : j === 0 ? ' (first)' : ' (last)');
+      shiftFoot.textContent = picks.length ? `rows: ${picks.map((j) => `dim ${j}${why(j)}`).join(', ')}` : '';
       shiftRows.forEach((R, r) => {
         const j = picks[r];
         R.row.hidden = j === undefined;
@@ -613,7 +638,7 @@ export default {
         const at = (v) => LX + ((v - (mid - c.hw)) / (2 * c.hw)) * LW;
         R.lab.textContent = `dim ${j}`;
         R.pos = [at(x), at(xp)];                         // the value before and after the centring, along the line
-        R.txt = [`x = ${fmt(x, 4)}`, `${fmt(x, 4)} → ${fmt(xp, 4)}`];
+        R.txt = `${fmt(x, 4)} → ${fmt(xp, 4)}`;
       });
     }
 
@@ -676,7 +701,13 @@ export default {
     }
 
     // ------------------------------------------------------------ steps and beats
-    const beatsOf = (i) => (cur && (cur.isRms ? i === 2 : i === 3 || (i === 4 && cur.hasBias)) ? 2 : 1);
+    // two beats: the second beat of the centring (or of the RMS step) moves the axis; LayerNorm's Scale step has a band
+    // beat, then the divide; the γ, β step has a beat for β when there is one
+    const beatsOf = (i) => {
+      if (!cur) return 1;
+      if (cur.isRms) return i === 1 ? 2 : 1;
+      return i === 2 || i === 3 || (i === 4 && cur.hasBias) ? 2 : 1;
+    };
 
     function later(ms, fn) {
       const g = gen;

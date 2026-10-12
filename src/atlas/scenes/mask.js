@@ -18,7 +18,7 @@ const X0 = ZONES.hero.x;               // left edge of the hero (110)
 const EQ = { x: 1180, y: 280 };        // equation column (ZONES.side)
 const STRIP = { x: 560, w: 560 };      // the query strip of step 1: left edge and width budget
 const MINI = 150;                      // side of a gallery mask
-const BARS = { w: 1030, h: 170 };      // leak bars: hero width and bar height
+const BARS = { w: 1030 };              // leak chart: width of the hero part (row heights are in leakGeo)
 const LIT = 1, OFF = -Infinity;        // mask values: may see / masked (hatched by the kit)
 const MASKS = [
   { id: 'causal', name: 'causal', sub: 'j ≤ i' },
@@ -27,9 +27,9 @@ const MASKS = [
   { id: 'prefix', name: 'prefix', sub: 'prefix visible' },
 ];
 const CANDIDATES = ['e', 't', 'a', 'o', 'i', 'n', 's', 'h'];   // replacement tokens, in order
-const DENSE_T = 40;                    // above this many tokens the query picker uses narrow tiles
 const KEY_GAP = 12;                    // minimum spacing (units) between key labels of the query row
 const VALUE_GAP = 44;                  // minimum spacing (units) between bar value labels
+const HAND = 460;                      // ms: a group that enters waits for the group that leaves to fade out
 
 useStyle('mask-scene', `
 .mk-fade { transition: opacity .45s ease, left .6s cubic-bezier(.65,0,.35,1), top .6s cubic-bezier(.65,0,.35,1); }
@@ -39,7 +39,10 @@ useStyle('mask-scene', `
 .mk-eq { width: 340px; display: grid; gap: 12px; }
 .mk-eq [hidden] { display: none !important; }
 .mk-eq-main { overflow-x: auto; }
-.mk-eq-live { font-size: 17px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); overflow-x: auto; }
+.mk-eq-live { font-size: 19px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); overflow-x: auto; }
+.mk-eq-note { font: 500 15px/1.3 var(--font-mono); color: var(--fg-2); }
+.mk-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.mk-note { font: 500 19px/1.4 var(--font-body); color: var(--fg-2); white-space: nowrap; }
 .mk-legend { display: flex; gap: 22px; align-items: center; font: 500 15px/1.2 var(--font-mono); color: var(--fg-2); white-space: nowrap; }
 .mk-sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; margin-right: 8px; vertical-align: -2px; }
 .mk-sw.on { background: var(--c-attn); }
@@ -58,12 +61,11 @@ useStyle('mask-scene', `
 .mk-bar-val { position: absolute; left: 50%; translate: -50% 0; bottom: 100%; margin-bottom: 5px; font: 600 13px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap; }
 .mk-changed { position: absolute; top: 0; bottom: 0; border: 1px dashed var(--line-strong); border-radius: 6px; background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c-mask) 22%, transparent) 0 2px, transparent 2px 6px); }
 .mk-changed span { position: absolute; left: 50%; translate: -50% 0; top: 10px; writing-mode: vertical-rl; font: 600 13px/1 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
+.mk-flat { position: absolute; left: 50%; top: 50%; translate: -50% -50%; font: 600 15px/1 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
 .mk-axis { border-top: 1px solid transparent; }
 .mk-tok { position: absolute; top: 4px; text-align: center; font: 600 15px/1 var(--font-mono); color: var(--fg-2); overflow: hidden; }
 .mk-tok.hot { color: var(--fg); font-weight: 700; }
 .k-op.mk-op { font-size: 15px; }
-.mk-dense .k-picker { gap: 1px; }
-.mk-dense .k-pick { width: 14px !important; }
 .mk-slide-line { display: flex; align-items: center; gap: 10px; }
 .mk-range { flex: 1; min-width: 0; accent-color: var(--c-attn); }
 .mk-select { font: 600 16px/1 var(--font-mono); color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
@@ -145,6 +147,45 @@ const RULE_WORDS = {
   prefix: (c) => `Prefix-LM: the first <b>${c.prefix_len}</b> tokens see each other, and every query sees them. Everything after the prefix stays causal.`,
 };
 
+// The leak chart: the live model's row first, then the references it is compared with. The model is
+// one of the two references when its mask is causal or none, so sliding and prefix add a third row.
+const LEAK_CAUSAL = { key: 'dC', title: 'causal mask · illustration, same weights', eq: 'causal' };
+const LEAK_NONE = { key: 'dB', title: 'no mask · illustration, same weights', eq: 'no mask' };
+function leakRows(cfg, random = false) {
+  const live = {
+    key: { causal: 'dC', none: 'dB' }[cfg.mask] || 'dL',
+    title: `the model (mask: ${cfg.mask})${random ? ', random weights' : ''}`,
+    eq: `model (${cfg.mask})`,
+  };
+  if (cfg.mask === 'causal') return [live, LEAK_NONE];
+  if (cfg.mask === 'none') return [live, LEAK_CAUSAL];
+  return [live, LEAK_CAUSAL, LEAK_NONE];
+}
+// Each row is a title, then its bars. Two rows take the full height; three rows share it.
+function leakGeo(n) {
+  const H = n > 2 ? 104 : 170, pitch = 30 + H + 22;
+  return { n, H, titleY: (k) => TOP + k * pitch, rowY: (k) => TOP + k * pitch + 30, axisY: TOP + (n - 1) * pitch + 30 + H + 6 };
+}
+
+// One row of the leak chart: its bars, their value labels, and the note for a row that never moves.
+// Only the largest bar and every `every`-th bar carry a label, and a label clears a taller neighbour.
+function drawLeakRow(r, vals, scale, every, H) {
+  const flat = vals.reduce((a, v) => Math.max(a, v), 0) < 0.005;
+  let peak = 0;
+  for (let i = 1; i < vals.length; i++) if (vals[i] > vals[peak]) peak = i;
+  r.flat.hidden = !flat;
+  const sc = Math.max(scale, 0.005);
+  const hs = vals.map((v) => (flat ? 0 : (v / sc) * H));
+  vals.forEach((v, i) => {
+    const bar = r.bars[i], lab = bar.firstChild;
+    bar.style.height = `${hs[i]}px`;
+    const show = !flat && (i === peak || (i % every === 0 && Math.abs(i - peak) >= every));
+    lab.textContent = show ? v.toFixed(2) : '';
+    const near = Math.max(hs[i - 1] ?? 0, hs[i + 1] ?? 0);
+    lab.style.marginBottom = `${5 + Math.max(0, near - hs[i])}px`;
+  });
+}
+
 export default {
   mount(el, ctx) {
     const st = stage2d(el);
@@ -154,33 +195,38 @@ export default {
     let geo = null;                               // grid geometry of the current structure
     let mMask = null, maskPaint = null, mBand = null, maskLab = null;
     let mScores = null, scPaint = null, mProbs = null, prPaint = null, opEl = null, bandS = null, bandP = null, scLab = null, prLab = null;
-    let rowMat = null, rowLabel = null, rowKeys = null, legendEl = null;
-    let titleA = null, titleB = null;
+    let rowMat = null, rowLabel = null, rowKeys = null, legendEl = null, legendWords = null;
     let minis = [];
-    let barsA = [], barsB = [], axisLabels = [];
+    let leak = null;                              // the leak chart of the current structure: rows, axis, geometry
     let lastMask = null, buildRaf = null, buildOrder = null, morphTimer = null;
     let newTok = null, leakRes = null, optKey = '', sliderKey = 'window';
+    let leakJob = null, leakGen = 0, alive = true;
     let auto = null, autoDriving = false;
+    const waiting = new Map();                    // groups that enter once the group leaving the hero has faded: key → timer
     const kids = [];                              // structure elements, disposed on rebuild
     const stopAuto = () => { clearTimeout(auto); auto = null; };
 
     // ------------------------------------------------ shared parts (persist across rebuilds)
     const header = sceneHeader(st, { chips: [[`Layer ${l}`, 'resid'], [`Head ${hd}`, 'attn']], title: 'Mask' });
-    const picker = tokenPicker(st, ctx, { label: 'query', maxWidth: 1000 });
+    const picker = tokenPicker(st, ctx, { label: 'query' });
     const cap = sceneCaption(st, {});
 
     const charSel = h('select', { class: 'mk-select', 'aria-label': 'replacement for the last token', onChange: () => { newTok = Number(charSel.value); render(); } });
     const charRow = st.add(h('div', { class: 'k-picker-wrap mk-fade' }, h('span', { class: 'k-picker-label' }, 'replace last token'), charSel), { x: ZONES.controls.x, y: ZONES.controls.y });
+    const noteEl = st.add(h('div', { class: 'mk-note mk-fade' }, 'Add one more token: the leak test compares two positions.'), { x: 625, y: 440, anchor: 'c' });
+    hide(noteEl, true);
 
     const eqHead = h('div', { class: 'k-label', style: { textAlign: 'left' } });
     const eqMain = h('div', { class: 'mk-eq-main' });
     const eqLive = h('div', { class: 'mk-eq-live' });
-    const eqCheck = h('div');
+    const eqNote = h('div', { class: 'mk-eq-note' }, 'random weights (not trained)');
+    eqNote.hidden = true;
+    const eqCheck = h('div', { class: 'mk-checks' });
     const sliderLab = h('span', { class: 'k-picker-label' });
     const slider = h('input', { type: 'range', class: 'mk-range', 'aria-label': 'mask size', onInput: () => ctx.store.setConfig(sliderKey === 'window' ? { window: Number(slider.value) } : { prefix_len: Number(slider.value) }) });
     const sliderVal = h('b', { class: 'k-label' });
     const sliderRow = h('div', { class: 'mk-slide-line' }, sliderLab, slider, sliderVal);
-    const eq = st.add(h('div', { class: 'mk-eq mk-fade' }, eqHead, eqMain, eqLive, eqCheck, sliderRow), { x: EQ.x, y: EQ.y });
+    const eq = st.add(h('div', { class: 'mk-eq mk-fade' }, eqHead, eqMain, eqLive, eqNote, eqCheck, sliderRow), { x: EQ.x, y: EQ.y });
 
     // ------------------------------------------------ structure: rebuilt when the tokens change
     function add(node, x, y, anchor = 'tl', off = null) {
@@ -204,9 +250,28 @@ export default {
       return id === 'sliding' ? `w${c.window}` : id === 'prefix' ? `p${c.prefix_len}` : '';
     }
 
+    // Place the leak chart for n rows and hide the rows it does not use. Rows that stay move with a
+    // transition, so going from two rows to three reads as a change, not a jump.
+    function placeLeak(n) {
+      const g = leakGeo(n);
+      leak.n = n;
+      leak.geo = g;
+      leak.rows.forEach((r, k) => {
+        if (k >= n) { hide(r.title, true); hide(r.row, true); }
+        st.move(r.title, X0, g.titleY(k));
+        st.move(r.row, X0, g.rowY(k));
+        r.row.style.height = `${g.H}px`;
+      });
+      st.move(leak.axis, X0, g.axisY);
+    }
+    const barsList = () => (leak ? [...leak.rows.slice(0, leak.n).flatMap((r) => [r.title, r.row]), leak.axis] : []);
+    const listOf = (k) => (k === 'bars' ? barsList() : k === 'note' ? [noteEl] : (G[k] || []));
+
     function build() {
       stopBuild();
       cancelMorph();
+      for (const t of waiting.values()) clearTimeout(t);
+      waiting.clear();
       for (const k of kids.splice(0)) { try { k.off?.(); } catch { /* ignore */ } k.el.remove(); }
       const s = ctx.state;
       T = s.ids.length;
@@ -239,9 +304,10 @@ export default {
         return { label: top - 44, strip: top, keys: top + stripH + 6 };
       };
       geo.stripAt = stripAt;
+      legendWords = h('span', null, '');
       legendEl = add(h('div', { class: 'mk-legend' },
         h('span', null, h('i', { class: 'mk-sw on' }), 'may see'),
-        h('span', null, h('i', { class: 'mk-sw off' }), 'masked: −∞ before the softmax, 0 after')), X0, stripAt(T - 1).keys + 15 + 12);
+        h('span', null, h('i', { class: 'mk-sw off' }), legendWords)), X0, stripAt(T - 1).keys + 15 + 12);
 
       const every = Math.max(1, Math.ceil(KEY_GAP / (rowCell + 1)));
       rowLabel = add(h('div', { class: 'k-label', style: { textAlign: 'left' } }), STRIP.x, stripAt(0).label);
@@ -261,34 +327,35 @@ export default {
         return { m, hm, btn, key: miniKey(m.id) };
       });
 
-      // leak bars: causal row above, the no-mask row below (same weights, mask changed)
-      const slot = BARS.w / T, rowStyle = { width: `${BARS.w}px`, height: `${BARS.h}px` };
-      const rowEls = [h('div', { class: 'mk-row', style: rowStyle }), h('div', { class: 'mk-row', style: rowStyle })];
-      const bars = [[], []];
-      for (let i = 0; i < T; i++) for (let r = 0; r < 2; r++) {
-        if (i === T - 1) {
-          rowEls[r].append(h('div', { class: 'mk-changed', style: { left: `${i * slot + 3}px`, width: `${slot - 6}px` } }, h('span', null, 'changed')));
-          bars[r].push(null);
-          continue;
+      // leak chart: the rows are built once per structure; placeLeak() places them for the live mask
+      const slot = BARS.w / T, barW = Math.min(slot * 0.6, 64);     // a bar is capped, so one slab stays a bar
+      const rows = Array.from({ length: 3 }, () => {
+        const title = h('div', { class: 'k-label', style: { textAlign: 'left' } });
+        const flat = h('span', { class: 'mk-flat' }, '0.00 at every position');
+        flat.hidden = true;
+        const row = h('div', { class: 'mk-row', style: { width: `${BARS.w}px` } }, flat);
+        const bars = [];
+        for (let i = 0; i < T - 1; i++) {
+          const b = h('div', { class: 'mk-bar', style: { left: `${i * slot + (slot - barW) / 2}px`, width: `${barW}px`, height: '0px' } }, h('span', { class: 'mk-bar-val' }));
+          row.append(b);
+          bars.push(b);
         }
-        const b = h('div', { class: 'mk-bar', style: { left: `${i * slot + slot * 0.2}px`, width: `${slot * 0.6}px`, height: '0px' } }, h('span', { class: 'mk-bar-val' }));
-        rowEls[r].append(b);
-        bars[r].push(b);
-      }
+        if (T > 1) {                              // the last position is the one that changes, so it has no bar
+          const cw = Math.min(slot - 6, barW + 12);
+          row.append(h('div', { class: 'mk-changed', style: { left: `${(T - 1) * slot + (slot - cw) / 2}px`, width: `${cw}px` } }, h('span', null, 'changed')));
+        }
+        return { title, flat, row, bars };
+      });
       const axis = h('div', { class: 'mk-axis', style: { width: `${BARS.w}px`, height: '24px' } });
-      axisLabels = Array.from({ length: T }, (_, i) => {
+      const axisLabels = Array.from({ length: T }, (_, i) => {
         const t = h('div', { class: 'mk-tok', style: { left: `${i * slot}px`, width: `${slot}px` } }, ctx.label(i));
         axis.append(t);
         return t;
       });
-      const yA = TOP + 34, yB = yA + BARS.h + 56;
-      titleA = add(h('div', { class: 'k-label', style: { textAlign: 'left' } }), X0, TOP);
-      titleB = add(h('div', { class: 'k-label', style: { textAlign: 'left' } }), X0, yB - 30);
-      add(rowEls[0], X0, yA);
-      add(rowEls[1], X0, yB);
-      add(axis, X0, yB + BARS.h + 6);
-      barsA = bars[0];
-      barsB = bars[1];
+      leak = { rows, axis, axisLabels, n: 2, geo: null };
+      for (const r of rows) { add(r.title, X0, 0); add(r.row, X0, 0); }
+      add(axis, X0, 0);
+      placeLeak(leakRows(s.config).length);
 
       G = {
         mask: [mMask, maskLab, mBand],
@@ -296,7 +363,6 @@ export default {
         row: [rowLabel, rowMat, rowKeys],
         legend: [legendEl],
         minis: minis.map((x) => x.btn),
-        bars: [titleA, titleB, rowEls[0], rowEls[1], axis],
       };
     }
 
@@ -328,6 +394,7 @@ export default {
       opEl = add(op('\\softmax', { kind: 'attn', size: 64 }), 575, gy + span / 2, 'c');
       opEl.classList.add('mk-op');
       G.scores = [mScores, scLab, mProbs, prLab, opEl, bandS, bandP];
+      showGroup(G.scores, false);                 // shown by handOver, once the mask has faded
     }
 
     // ------------------------------------------------ the wipe (step 1) and the morph (gallery)
@@ -417,7 +484,6 @@ export default {
     // tokens), so the step and its caption never wait for all of them. The live model is one of the
     // two clones when its mask is causal or none, so its logits are reused. The result is cached per
     // forward pass and token; the pass that finishes last redraws the step.
-    let leakJob = null, leakGen = 0, alive = true;
     function leakPlan(tok) {
       const s = ctx.state, ids = s.ids, n = ids.length, model = s.model;
       const ids2 = ids.slice(0, n - 1);
@@ -479,8 +545,29 @@ export default {
       return null;
     }
 
+    // ------------------------------------------------ hero groups and their hand-over
+    // A group that leaves the hero fades out at once. A group that enters waits HAND ms for that fade,
+    // so two structures never share the hero during a transition. A group still waiting is shown by its timer.
+    function handOver(k, on, enter) {
+      const timer = waiting.get(k);
+      if (!on) {
+        clearTimeout(timer);
+        waiting.delete(k);
+        showGroup(listOf(k), false);
+        return;
+      }
+      const list = listOf(k);
+      if (!list.length) return;
+      if (enter && !reducedMotion() && list[0].classList.contains('mk-off')) {
+        clearTimeout(timer);
+        waiting.set(k, setTimeout(() => { waiting.delete(k); showGroup(listOf(k), true); }, HAND));
+        return;
+      }
+      if (timer === undefined) showGroup(list, true);
+    }
+
     // ------------------------------------------------ render the current step
-    function render({ morph = false } = {}) {
+    function render({ morph = false, enter = false } = {}) {
       if (!T) return;
       const s = ctx.state, cfg = s.config, N = T * T;
       if (step === 1) ensureGrids();
@@ -489,15 +576,19 @@ export default {
       let nVis = 0;
       for (let j = 0; j < T; j++) if (traced[q * T + j] === LIT) nVis++;
 
-      showGroup(G.mask, step === 0 || step === 2);
-      showGroup(G.scores, step === 1);
-      showGroup(G.row, step === 0);
-      showGroup(G.legend, step !== 3);
-      showGroup(G.minis, step === 2);
-      showGroup(G.bars, step === 3);
+      // which groups the hero shows at this step
+      const chart = step === 3 && T > 1;
+      if (chart) placeLeak(leakRows(cfg).length);
+      handOver('mask', step === 0 || step === 2, enter);
+      handOver('scores', step === 1, enter);
+      handOver('row', step === 0, enter);
+      handOver('legend', step !== 3 && cfg.mask !== 'none', enter);
+      handOver('minis', step === 2, enter);
+      handOver('bars', chart, enter);
+      handOver('note', step === 3 && T < 2, enter);
+      hide(charRow, !chart);
       hide(picker.el, step === 3);
-      hide(charRow, step !== 3);
-      picker.el.classList.toggle('mk-dense', T > DENSE_T);
+      legendWords.textContent = step === 0 ? 'hatched = masked (not allowed)' : 'masked: −∞ before the softmax, 0 after';
 
       // the mask: the wipe owns it while it runs, otherwise it is the traced mask; the band marks the query row
       if (step === 0 || step === 2) {
@@ -541,15 +632,17 @@ export default {
         sliderVal.textContent = slider.value;
       }
 
-      // equation column, check, caption and context line for this step
+      // equation column, checks, caption and context line for this step
       eqHead.textContent = STEPS[step];
-      let main = '', liveEq = '', check = null, words = '', sub = '';
+      const rnd = step === 3 && s.weights === 'random';   // the leak test on random weights says so
+      eqNote.hidden = !rnd;
+      let main = '', liveEq = '', checks = [], words = '', sub = '';
       if (step === 0) {
         let bad = 0;
         for (let i = 0; i < T; i++) for (let j = 0; j < T; j++) if ((traced[i * T + j] === LIT) !== maskAllows(cfg, i, j)) bad++;
         main = tex(ruleTex(cfg), true);
         liveEq = tex(`\\text{query } ${q}\\text{:}\\quad \\sum_{j} \\Mk_{${q}j} = ${nVis} \\text{ of } ${T}`, true);
-        check = checkBadge(bad, 0, { label: 'equals the traced mask' });
+        checks = [checkBadge(bad, 0, { label: 'equals the traced mask' })];
         words = (RULE_WORDS[cfg.mask] || RULE_WORDS.causal)(cfg);
         sub = `Live mask: <b>${maskName(cfg)}</b>. Query “<b>${ctx.label(q)}</b>” at position ${q} may see ${nVis} of its ${T} keys.`;
       } else if (step === 1) {
@@ -565,58 +658,63 @@ export default {
         let Z = 0;
         for (let j = 0; j < T; j++) if (traced[q * T + j] === LIT) Z += Math.exp(sc[off + q * T + j] - mx);
         const ek = Math.exp(sc[off + q * T + q] - mx), pq = pr[off + q * T + q];
-        main = tex('\\hat S_{ij} = \\begin{cases} \\tilde S_{ij} & \\Mk_{ij} = 1 \\\\ -\\infty & \\Mk_{ij} = 0 \\end{cases}', true);
+        const allVisible = nVis === T;            // no score of this row is masked
+        main = cfg.mask === 'none'
+          ? tex('\\hat S_{ij} = \\tilde S_{ij}', true)
+          : tex('\\hat S_{ij} = \\begin{cases} \\tilde S_{ij} & \\Mk_{ij} = 1 \\\\ -\\infty & \\Mk_{ij} = 0 \\end{cases}', true);
         const first = jm >= 0
           ? `\\hat S_{${q},${jm}} = -\\infty \\;\\Rightarrow\\; \\Aw_{${q},${jm}} = 0`
           : `\\text{every key is visible to query } ${q}`;
         liveEq = tex(`\\begin{aligned} ${first} \\\\ \\Aw_{${q},${q}} = \\frac{${num(ek, 3)}}{${num(Z, 3)}} = ${num(pq, 3)} \\end{aligned}`, true);
-        check = checkBadge(bad, 0, { label: 'masked: −∞ score, zero weight' });
-        words = 'Disallowed scores become <b>−∞</b> before the softmax. e<sup>−∞</sup> = 0, so those weights are exactly zero, and each row still sums to 1 over the keys it may see.';
-        sub = `Live mask: <b>${maskName(cfg)}</b>. Query “<b>${ctx.label(q)}</b>” at position ${q} keeps ${nVis} of its ${T} scores; the rest are −∞.`;
+        checks = [
+          checkBadge(bad, 0, { label: allVisible ? 'no score is masked' : 'masked: −∞ score, zero weight' }),
+          checkBadge(ek / Z, pq, { label: 'equals the traced weight', tol: 1e-6 }),
+        ];
+        words = allVisible
+          ? `No score in this row is masked, so the softmax runs over all ${T} keys and every weight is positive.`
+          : 'Disallowed scores become <b>−∞</b> before the softmax. e<sup>−∞</sup> = 0, so those weights are exactly zero, and each row still sums to 1 over the keys it may see.';
+        sub = allVisible
+          ? `Live mask: <b>${maskName(cfg)}</b>. Query “<b>${ctx.label(q)}</b>” at position ${q} keeps all ${T} scores, so none is −∞.`
+          : `Live mask: <b>${maskName(cfg)}</b>. Query “<b>${ctx.label(q)}</b>” at position ${q} keeps ${nVis} of its ${T} scores; the rest are −∞.`;
       } else if (step === 2) {
         main = tex(ruleTex(cfg), true);
-        words = 'Four masks, one trained model. Picking a mask changes only the mask: the weights stay the same, and the pattern and the probabilities follow it.';
+        words = 'One set of weights, four masks. Only causal is the rule the model is trained with; the other three show what the same weights do under another rule.';
         sub = `Live mask: <b>${maskName(cfg)}</b>. Click a card to switch the model.`;
+      } else if (T < 2) {
+        words = 'Use at least two tokens. The leak test needs an earlier position to look at.';
+        sub = `Live mask: <b>${maskName(cfg)}</b>. The leak test needs at least two tokens.`;
       } else {
-        const lk = leakRun();
-        sub = T > 1
-          ? `Live mask: <b>${maskName(cfg)}</b>. The last token “<b>${ctx.label(T - 1)}</b>” at position ${T - 1} is replaced by “<b>${s.tokenizer.label(pickTok())}</b>”.`
-          : `Live mask: <b>${maskName(cfg)}</b>. The leak test needs at least two tokens.`;
-        if (!lk && T < 2) {
-          words = 'Use at least two tokens. The leak test needs an earlier position to look at.';
-        } else if (!lk) {
-          // the passes are running; the equation column keeps its content until they finish
-          header.setSub(sub);
-          cap.set('Running the leak test on the same weights.');
-          return;
+        const tok = pickTok();
+        sub = `Live mask: <b>${maskName(cfg)}</b>. The last token “<b>${ctx.label(T - 1)}</b>” at position ${T - 1} is replaced by “<b>${s.tokenizer.label(tok)}</b>”.`;
+        // the replacement select lists every token but the last, whether or not the passes have finished
+        const vocab = s.tokenizer.vocab, lastId = s.ids[T - 1], optNow = `${lastId}|${vocab.length}`;
+        if (optKey !== optNow) {
+          charSel.replaceChildren(...vocab.map((_, id) => h('option', { value: String(id), disabled: id === lastId }, s.tokenizer.label(id))));
+          optKey = optNow;
+        }
+        charSel.value = String(tok);
+        leak.axisLabels[T - 1].textContent = s.tokenizer.label(tok);
+        leak.axisLabels[T - 1].classList.add('hot');
+        const rows = leakRows(cfg, rnd), lk = leakRun();
+        leak.rows.forEach((r, k) => { if (k < rows.length) r.title.textContent = rows[k].title; });
+        main = tex('\\Delta_i = \\max_{v} \\big|\\, \\ell_{iv}(x\') - \\ell_{iv}(x) \\,\\big|', true);
+        if (!lk) {
+          // the passes are running: no number from an earlier forward pass stays on the chart or in the equation
+          for (const r of leak.rows) {
+            r.flat.hidden = true;
+            for (const b of r.bars) { b.style.height = '0px'; b.firstChild.textContent = ''; }
+          }
+          liveEq = tex('\\text{running the leak passes}', true);
+          words = 'Running the leak test on the same weights.';
         } else {
-          const slot = BARS.w / T, every = Math.max(1, Math.ceil(VALUE_GAP / slot));
-          const scale = Math.max(...lk.dB, 1e-12), H = BARS.h - 24;     // headroom for the value labels
-          for (let i = 0; i < T - 1; i++) {
-            const show = i % every === 0;             // thin the labels so neighbours never touch
-            barsA[i].style.height = `${(lk.dC[i] / scale) * H}px`;
-            barsB[i].style.height = `${(lk.dB[i] / scale) * H}px`;
-            barsA[i].firstChild.textContent = show ? lk.dC[i].toFixed(2) : '';
-            barsB[i].firstChild.textContent = show ? lk.dB[i].toFixed(2) : '';
-          }
-          // the rows are named by the mask they compute: the live model is the row with its own mask
-          titleA.textContent = cfg.mask === 'causal' ? 'the model (mask: causal)' : 'causal mask · illustration, same weights';
-          titleB.textContent = cfg.mask === 'none' ? 'the model (mask: none)' : 'no mask · illustration, same weights';
-          const vocab = s.tokenizer.vocab, last = s.ids[T - 1], optNow = `${last}|${vocab.length}`;
-          if (optKey !== optNow) {
-            charSel.replaceChildren(...vocab.map((_, id) => h('option', { value: String(id), disabled: id === last }, s.tokenizer.label(id))));
-            optKey = optNow;
-          }
-          charSel.value = String(lk.tok);
-          axisLabels[T - 1].textContent = s.tokenizer.label(lk.tok);
-          axisLabels[T - 1].classList.add('hot');
-          main = tex('\\Delta_i = \\max_{v} \\big|\\, \\ell_{iv}(x\') - \\ell_{iv}(x) \\,\\big|', true);
-          // the row titles name the model; the equation keeps to the numbers so the lines fit the side column
-          const eqRow = (label, v) => `\\text{${label}: } & \\max_{i<${T - 1}} \\Delta_i = ${num(v, 2)}`;
-          const lines = [eqRow('causal', lk.mxC), eqRow('no mask', lk.mxB)];
-          if (cfg.mask !== 'causal' && cfg.mask !== 'none') lines.push(eqRow(cfg.mask, lk.mxL));
-          liveEq = tex(`\\begin{aligned} ${lines.join(' \\\\ ')} \\end{aligned}`, true);
-          check = checkBadge(lk.rep, 0, { label: 'reproduces the traced logits', tol: 1e-9 });
+          const H = leak.geo.H - 24;              // headroom for the value labels above the tallest bar
+          const series = rows.map((r) => lk[r.key]);
+          const scale = Math.max(1e-12, ...series.flat());
+          const every = Math.max(1, Math.ceil(VALUE_GAP / (BARS.w / T)));
+          leak.rows.forEach((r, k) => { if (k < rows.length) drawLeakRow(r, series[k], scale, every, H); });
+          const peak = { dC: lk.mxC, dB: lk.mxB, dL: lk.mxL };
+          liveEq = tex(`\\begin{aligned} ${rows.map((rw) => `\\text{${rw.eq}: } & \\max_{i<${T - 1}} \\Delta_i = ${num(peak[rw.key], 2)}`).join(' \\\\ ')} \\end{aligned}`, true);
+          checks = [checkBadge(lk.rep, 0, { label: 'reproduces the traced logits', tol: 1e-9 })];
           words = `Changing the last token moves the earlier logits by <b>${lk.mxC.toFixed(2)}</b> with the causal mask and by <b>${lk.mxB.toFixed(2)}</b> with no mask.`
             + (cfg.mask === 'sliding' || cfg.mask === 'prefix' ? ` The live mask (${maskName(cfg)}) moves them by <b>${lk.mxL.toFixed(2)}</b>.` : '');
         }
@@ -626,8 +724,8 @@ export default {
       eqMain.hidden = !main;
       setHTML(eqLive, liveEq);
       eqLive.hidden = !liveEq;
-      eqCheck.replaceChildren(...(check ? [check] : []));
-      eqCheck.hidden = !check;
+      eqCheck.replaceChildren(...checks);
+      eqCheck.hidden = !checks.length;
       header.setSub(sub);
       cap.set(words);
     }
@@ -636,7 +734,7 @@ export default {
       if (!autoDriving) stopAuto();            // a step the user picks (story dot, arrow or key) ends the autoplay
       step = i;
       if (i === 0) startBuild(); else stopBuild();
-      render();
+      render({ enter: true });
     }
 
     // ------------------------------------------------ mount
@@ -674,6 +772,8 @@ export default {
         stopAuto();
         cancelMorph();
         stopBuild();
+        for (const t of waiting.values()) clearTimeout(t);
+        waiting.clear();
         offTrace();
         offSel();
         for (const k of kids.splice(0)) { try { k.off?.(); } catch { /* ignore */ } }

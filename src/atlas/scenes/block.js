@@ -4,12 +4,13 @@
 //   post: x_mid = Norm(x + Attn(x)),   x_out = Norm(x_mid + MLP(x_mid))   (a norm sits on the river after each add)
 // With cfg.residual off the river is broken and each sub-layer replaces the stream (no add, no plus sign).
 // Every number comes from ctx.state.trace. Each sum is recomputed from the traced vectors and checked against
-// the traced sum (checkBadge). The norm is named from cfg.norm (LayerNorm or RMSNorm).
+// the traced sum (checkBadge). The norm is named from cfg.norm (LN or RMSNorm): one word in the chip, the captions and the pill.
 import { stage2d, card, op, vec, chip, appear, pulse, sceneHeader, sceneCaption, tokenPicker, checkBadge, useStyle, ZONES, MOTION } from '../kit.js';
 import { h, s, texHTML, num, reducedMotion, clamp } from '../../ui/index.js';
 
 const STEPS = ['Stream in', 'Attention reads & writes', 'MLP reads & writes', 'Stream out'];
-const TITLE = 'What one block does';
+const TITLE = 'One block';
+const TEXT_OUT = 140, TEXT_IN = 260;   // the equation, its check and the caption fade out, then in (as lm-head.js)
 const SUB_ON = 'The residual stream is a river. Attention and the MLP each read it, compute, and add their output back.';
 const SUB_OFF = 'The residual stream is broken. Attention and the MLP each read it, compute, and replace the stream.';
 
@@ -28,14 +29,25 @@ const READ_Y = RY - 36;              // arrowhead where the stream is read (fork
 const CHIP_Y = 388;                  // write chips beside the return legs
 const GAP_Y = RY - 40;               // "no skip" labels above a broken river
 const ST_Y = 512;                    // readout stations under the river
-const ST = { in: 210, mid: (J1 + F2) / 2, out: 1390 };
-// post-LN norms sit on the river between a join and the next fork (or the river end)
-const LN = { 1: (J1 + RING + F2 - 6) / 2, 2: (J2 + RING + X1 - 14) / 2 };
-const EQ_Y = 628;                    // equation band under the stations
+const ST = { in: 226, mid: (J1 + F2) / 2, out: 1390 };   // in: its strip starts on the text edge (x 110)
+// post-LN norms sit on the river between a join and the next fork (or the river end); the last one keeps air from the arrow
+const LN = { 1: (J1 + RING + F2 - 6) / 2, 2: (J2 + RING + X1 - 14) / 2 - 6 };
+const EQ_Y = 642;                    // equation band: 40 units under the station readouts (they end near 602)
 const CHECK_X = 1010;
 const ACT = { gelu: 'GELU', relu: 'ReLU', swiglu: 'SwiGLU' };
-const MASK = { causal: 'causal', none: 'bidirectional', sliding: 'sliding window', prefix: 'prefix' };
+const MASK = { causal: 'causal mask', none: 'no mask', sliding: 'sliding window mask', prefix: 'prefix mask' };
+const headWord = (n) => (n === 1 ? 'head' : 'heads');
+const normWord = (cfg) => (cfg.norm === 'rmsnorm' ? 'RMSNorm' : 'LN');   // the same two names as residual.js
 const X = '\\xres';                  // the residual stream symbol (coloured macro)
+
+// The live line rounds every number to three decimals. A sum shows '=' only when its printed operands add up to
+// the printed result; otherwise it shows '≈', so the reader is never shown arithmetic that does not add up.
+const r3 = (v) => Number(v.toFixed(3));
+const n3 = (v) => (r3(v) === 0 ? '0.000' : num(v, 3));    // a value that prints as zero never prints as -0.000
+const sumLine = (lhs, x0, y0, z0) => {
+  const adds = r3(r3(x0) + r3(y0)) === r3(z0);
+  return `${lhs} = ${n3(x0)} ${r3(y0) < 0 ? '-' : '+'} ${n3(Math.abs(y0))} ${adds ? '=' : '\\approx'} ${n3(z0)}`;
+};
 
 useStyle('block-scene', `
 .bl-wrap { position: absolute; left: 0; top: 0; width: 1600px; height: 900px; pointer-events: none; }
@@ -44,7 +56,8 @@ useStyle('block-scene', `
 .bl-svg { position: absolute; left: 0; top: 0; width: 1600px; height: 900px; overflow: visible; }
 .bl-river-base { fill: none; stroke: var(--c-resid); stroke-opacity: .2; stroke-width: 40; }
 .bl-river-line { fill: none; stroke: var(--c-resid); stroke-opacity: .45; stroke-width: 1.5; }
-.bl-river-beads { fill: none; stroke: var(--c-resid); stroke-width: 9; stroke-linecap: round; stroke-dasharray: 1 22; opacity: .6; animation: bl-flow 1.6s linear infinite; }
+.bl-river-beads { fill: none; stroke: var(--c-resid); stroke-width: 9; stroke-linecap: round; stroke-dasharray: 1 22; opacity: .6; }
+.bl-wrap[data-step="1"] .bl-river-beads, .bl-wrap[data-step="2"] .bl-river-beads { animation: bl-flow 1.6s linear infinite; }   /* the stream moves only while a sub-layer reads it */
 .bl-arrow-river { fill: var(--c-resid); opacity: .6; }
 .bl-gap { fill: none; stroke: var(--fg-3); stroke-width: 2; stroke-dasharray: 4 6; opacity: .8; }
 .bl-det-ghost { fill: none; stroke-width: 2; stroke-linecap: round; stroke-dasharray: 2 8; opacity: .4; }
@@ -58,13 +71,14 @@ useStyle('block-scene', `
 .bl-det-tip.bl-mlp { fill: var(--c-mlp); }
 .bl-fork.bl-attn { stroke: var(--c-attn); }
 .bl-fork.bl-mlp { stroke: var(--c-mlp); }
+/* the steps: 1 attention reads and writes, 2 the MLP reads and writes, 3 the stream out (both detours step back) */
 .bl-wrap[data-step="1"] .bl-det-solid.bl-attn { opacity: 1; stroke-dashoffset: 0; }
 .bl-wrap[data-step="2"] .bl-det-solid.bl-attn { opacity: .6; stroke-dashoffset: 0; }
-.bl-wrap[data-step="3"] .bl-det-solid.bl-attn { opacity: .6; stroke-dashoffset: 0; }
 .bl-wrap[data-step="2"] .bl-det-solid.bl-mlp { opacity: 1; stroke-dashoffset: 0; }
-.bl-wrap[data-step="3"] .bl-det-solid.bl-mlp { opacity: .6; stroke-dashoffset: 0; }
-.bl-wrap[data-step="1"] .bl-det-tip.bl-attn, .bl-wrap[data-step="2"] .bl-det-tip.bl-attn, .bl-wrap[data-step="3"] .bl-det-tip.bl-attn,
-.bl-wrap[data-step="2"] .bl-det-tip.bl-mlp, .bl-wrap[data-step="3"] .bl-det-tip.bl-mlp { opacity: 1; }
+.bl-wrap[data-step="3"] .bl-det-solid { opacity: .35; stroke-dashoffset: 0; }
+.bl-wrap[data-step="1"] .bl-det-tip.bl-attn, .bl-wrap[data-step="2"] .bl-det-tip.bl-attn,
+.bl-wrap[data-step="2"] .bl-det-tip.bl-mlp { opacity: 1; }
+.bl-wrap[data-step="3"] .bl-det-tip { opacity: .35; }
 .bl-wrap[data-step="1"] .bl-beads.bl-attn, .bl-wrap[data-step="2"] .bl-beads.bl-mlp { opacity: .95; }
 @keyframes bl-flow { to { stroke-dashoffset: -23px; } }
 @keyframes bl-flow-b { to { stroke-dashoffset: -18px; } }
@@ -75,6 +89,7 @@ useStyle('block-scene', `
 .bl-wrap[data-step="0"] .bl-card { opacity: .55; }
 .bl-wrap[data-step="1"] .bl-card-mlp { opacity: .55; }
 .bl-wrap[data-step="2"] .bl-card-attn { opacity: .7; }
+.bl-wrap[data-step="3"] .bl-card { opacity: .55; }
 .bl-wrap[data-step="1"] .bl-card-attn, .bl-wrap[data-step="2"] .bl-card-mlp { box-shadow: 0 0 0 2px color-mix(in srgb, var(--kind) 70%, transparent), 0 20px 44px rgba(0, 0, 0, .2); }
 
 .bl-pill { position: absolute; width: 112px; height: 28px; border-radius: 999px; background: var(--surface); border: 1.5px solid var(--c-norm); color: var(--c-norm); font: 600 15px/25px var(--font-mono); text-align: center; white-space: nowrap; box-shadow: var(--shadow-1); transition: box-shadow .4s, color .4s; }
@@ -86,6 +101,7 @@ useStyle('block-scene', `
 .bl-write.bl-attn { --kind: var(--c-attn); }
 .bl-write.bl-mlp { --kind: var(--c-mlp); }
 .bl-write.on { opacity: 1; pointer-events: auto; }
+.bl-wrap[data-step="3"] .bl-write.on { opacity: .5; }
 .bl-w-l { color: var(--fg-3); font-weight: 500; }
 .bl-w-v { color: var(--fg); font-weight: 650; }
 .bl-w-sym .katex { font-size: 1.12em; }
@@ -103,17 +119,14 @@ useStyle('block-scene', `
 .bl-st-norm b { color: var(--fg); font-weight: 650; }
 .bl-st.pending .bl-st-norm { opacity: 0; }
 .bl-st.hot .bl-st-box .k-cells { box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-resid) 40%, transparent), 0 6px 16px rgba(0, 0, 0, .12); }
+.bl-wrap[data-step="3"] .bl-st-out .bl-st-box .k-cells { box-shadow: 0 0 0 3px var(--accent), 0 6px 16px rgba(0, 0, 0, .12); }   /* the one accent: the stream out */
 
 .bl-readout { fill: none; stroke: var(--c-resid); stroke-width: 1.5; stroke-linecap: round; opacity: .6; }
 .bl-readout-tip { fill: var(--c-resid); opacity: .6; }
+.bl-readout, .bl-readout-tip { transition: opacity .6s cubic-bezier(.2,.7,.2,1); }
+.bl-readout.pending, .bl-readout-tip.pending { opacity: .2; }   /* a readout waits for its station */
 .bl-river-label { font: 600 15px/1 var(--font-mono); color: var(--c-resid); white-space: nowrap; }
 .bl-gap-label { font: 600 15px/1 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
-
-.bl-switch { display: inline-flex; align-items: center; gap: 2px; padding: 4px; border-radius: 999px; background: color-mix(in srgb, var(--surface) 80%, transparent); border: 1px solid var(--line); box-shadow: var(--shadow-1); }
-.bl-nav { border: 0; background: transparent; color: var(--fg-2); font: 600 15px/1 var(--font-mono); padding: 9px 12px; border-radius: 999px; cursor: pointer; white-space: nowrap; }
-.bl-nav:hover { background: var(--surface-2); color: var(--fg); }
-.bl-nav:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.bl-sep { color: var(--fg-3); font-size: 15px; padding: 0 2px; }
 
 .bl-eq { width: 860px; display: grid; gap: 10px; }
 .bl-eq-label { font: 650 15px/1.2 var(--font-mono); color: var(--c-resid); }
@@ -128,8 +141,8 @@ useStyle('block-scene', `
 .bl-dim { color: var(--fg-3); font-size: 15px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .bl-river-beads, .bl-beads { animation: none; }
-  .bl-det-solid, .bl-card, .bl-st-box .k-vec, .bl-st-ghost, .bl-st-norm, .bl-write { transition: none; }
+  .bl-river-beads, .bl-beads, .bl-wrap[data-step="1"] .bl-river-beads, .bl-wrap[data-step="2"] .bl-river-beads { animation: none; }
+  .bl-det-solid, .bl-card, .bl-st-box .k-vec, .bl-st-ghost, .bl-st-norm, .bl-write, .bl-readout, .bl-readout-tip { transition: none; }
 }
 `);
 
@@ -145,7 +158,7 @@ const nHTML = (v) => nfmt(v).replace('<', '&lt;');     // for text that is set t
 
 function setNum(el, v) { el._gen = (el._gen || 0) + 1; el.textContent = nfmt(v); }
 
-function tweenNum(el, to, ms = 800) {
+function tweenNum(el, to, ms = MOTION.move) {
   el._gen = (el._gen || 0) + 1;
   const gen = el._gen;
   if (reducedMotion()) { el.textContent = nfmt(to); return; }
@@ -235,16 +248,17 @@ export default {
       const S = ctx.state, c = S.config;
       const pre = c.norm_placement === 'pre', res = !!c.residual;
       const T = S.ids.length, q = clamp(S.sel.token ?? 0, 0, Math.max(0, T - 1)), d = c.d_model;
-      const nL = c.n_layer;
-      const normName = c.norm === 'rmsnorm' ? 'RMSNorm' : 'LayerNorm';
-      const attnSub = c.n_kv_head < c.n_head ? `${c.n_head} query · ${c.n_kv_head} KV heads` : `${c.n_head} heads · ${MASK[c.mask] ?? c.mask} mask`;
+      const nw = normWord(c);
+      const attnSub = c.n_kv_head < c.n_head
+        ? `${c.n_head} query ${headWord(c.n_head)} · ${c.n_kv_head} KV ${headWord(c.n_kv_head)}`
+        : `${c.n_head} ${headWord(c.n_head)} · ${MASK[c.mask] ?? `${c.mask} mask`}`;
       const mlpSub = `${ACT[c.activation] ?? c.activation} · ${c.d_ff} hidden units`;
       const inKey = L === 0 ? 'emb.out' : `L${L - 1}.resid_out`;
       curQ = q;
 
       // the header follows the config: chips and the context line
       header.el.querySelector('.k-eyebrow')?.replaceChildren(
-        chip(`Block ${L}`, 'resid'), chip(pre ? 'Pre-LN' : 'Post-LN', 'norm'), chip(res ? 'Residual on' : 'Residual off', 'resid'));
+        chip(`Block ${L}`, 'resid'), chip(`${pre ? 'Pre' : 'Post'}-${nw}`, 'norm'), chip(res ? 'Residual on' : 'Residual off', 'resid'));
       header.setSub(res ? SUB_ON : SUB_OFF);
 
       vecs.splice(0).forEach((v) => v.destroy?.());
@@ -287,7 +301,7 @@ export default {
       // Post-LN: on the river after each add, with no norm in front of a sub-layer; the pill zooms to the
       // residual add it normalises (the residual scene shows the sum and its norm) and traces that sum.
       const pill = (node, trace) => {
-        const p = h('div', { class: 'bl-pill' }, normName);
+        const p = h('div', { class: 'bl-pill' }, nw);
         p.dataset.node = node;
         if (trace) p.dataset.trace = trace;
         return p;
@@ -330,24 +344,20 @@ export default {
       const sMid = station('bl-st-mid', ST.mid, '\\xres^{\\text{mid}}', 'after attention', `L${L}.resid_mid`);
       const sOut = station('bl-st-out', ST.out, '\\xres^{\\text{out}}', 'after MLP', `L${L}.resid_out`);
       intro.push(sIn.node, sMid.node, sOut.node);
-      // readouts: a small arrow from the river down into each station
-      [ST.in, ST.mid, ST.out].forEach((x) => svg.append(
+      // readouts: a small arrow from the river down into each station. The block input is read at once; the other two wait for their station.
+      const readArrow = (x) => [
         s('path', { d: `M${x},${RY + 24} V${ST_Y - 16}`, class: 'bl-readout' }),
-        s('path', { d: `M${x - 5},${ST_Y - 16} L${x + 5},${ST_Y - 16} L${x},${ST_Y - 6} Z`, class: 'bl-readout-tip' })));
+        s('path', { d: `M${x - 5},${ST_Y - 16} L${x + 5},${ST_Y - 16} L${x},${ST_Y - 6} Z`, class: 'bl-readout-tip' }),
+      ];
+      const reads = { mid: readArrow(ST.mid), out: readArrow(ST.out) };
+      svg.append(...readArrow(ST.in), ...reads.mid, ...reads.out);
 
       // ---- labels on the river
-      put(h('div', { class: 'bl-river-label' }, 'residual stream'), X0, RY - 44, 'tl');
+      put(h('div', { class: 'bl-river-label' }, res ? 'residual stream' : 'residual stream (off)'), X0, RY - 44, 'tl');
       put(h('div', { class: 'bl-gap-label bl-res-off' }, 'no skip'), (F1 + J1) / 2, GAP_Y, 'c');
       put(h('div', { class: 'bl-gap-label bl-res-off' }, 'no skip'), (F2 + J2) / 2, GAP_Y, 'c');
 
-      // ---- block switcher, top right: ‹ Block l−1 · Block l+1 ›. At either end only the neighbour is shown.
-      const navs = [];
-      if (L > 0) navs.push(h('button', { type: 'button', class: 'bl-nav', 'aria-label': `Go to block ${L - 1}`, onClick: () => ctx.go(`block.${L - 1}`) }, `‹ Block ${L - 1}`));
-      if (L > 0 && L < nL - 1) navs.push(h('span', { class: 'bl-sep' }, '·'));
-      if (L < nL - 1) navs.push(h('button', { type: 'button', class: 'bl-nav', 'aria-label': `Go to block ${L + 1}`, onClick: () => ctx.go(`block.${L + 1}`) }, `Block ${L + 1} ›`));
-      if (navs.length) intro.push(put(h('div', { class: 'bl-switch' }, ...navs), X1, 28, 'tr'));
-
-      P = { cAttn, cMlp, pN1, pN2, join1, join2, wA, wM, sIn, sMid, sOut };
+      P = { cAttn, cMlp, pN1, pN2, join1, join2, wA, wM, sIn, sMid, sOut, reads };
       // path lengths drive the draw-in (the paths are in the DOM now)
       [solidA, solidM].forEach((p) => p.style.setProperty('--len', String(pathLen(p))));
 
@@ -356,7 +366,7 @@ export default {
       applyStep(step, { animate: false });
       if (!introDone) {
         introDone = true;
-        appear(intro, { stagger: 70 });
+        appear(intro, { stagger: MOTION.stagger });
       }
     }
 
@@ -388,51 +398,72 @@ export default {
       P.wM.querySelector('.bl-w-v').textContent = nfmt(D.n.m);
     }
 
+    // The equation, its live line, its check and the caption change in one step: they fade out together, are
+    // replaced together and fade back in. The swap is timed on the clock rather than on the end of the fade, so the
+    // text is never held up by a frame. A newer change cancels an older one that is still fading.
+    let textSig = '', textGen = 0, textTimer = null;
+    function swapText(sig, write, animate) {
+      if (sig === textSig) return;
+      textSig = sig;
+      const gen = ++textGen;
+      const group = [eqPanel, checksPanel, cap.el];
+      clearTimeout(textTimer);
+      group.forEach((el) => el.getAnimations().forEach((a) => a.cancel()));
+      if (!animate || reducedMotion()) { write(); return; }
+      group.forEach((el) => el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: TEXT_OUT, fill: 'forwards' }));
+      textTimer = setTimeout(() => {
+        if (gen !== textGen) return;
+        const held = group.flatMap((el) => el.getAnimations());   // the fade-out, held at 0 until the new text is in
+        write();
+        group.forEach((el) => el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: TEXT_IN, easing: MOTION.easeOut }));
+        held.forEach((a) => a.cancel());   // the new fade has taken over, so no fill can keep the text hidden
+      }, TEXT_OUT);
+    }
+
     // Text: the equation for the step, a live line for dimension 0, the caption and the check for this step.
-    function paintText({ animate = false } = {}) {
+    function paintText({ animate = true } = {}) {
       if (!P || !D) return;
       const { q, pre, res, n, xin, a, mid, m, out, add1, add2, sumA, sumM, d } = D;
       const c = ctx.state.config;
       const last = L === c.n_layer - 1;
       const act = ACT[c.activation] ?? c.activation;
       const NORM = c.norm === 'rmsnorm' ? '\\RMSNorm' : '\\LN';
-      const sgn = (v) => (v < 0 ? '-' : '+');
-      const line = (lhs, x0, y0, z0) => `${lhs} = ${num(x0, 3)} ${sgn(y0)} ${num(Math.abs(y0), 3)} = ${num(z0, 3)}`;
+      const nw = normWord(c);
       let eq = '', live = '', words = '';
 
       switch (step) {
         case 0:
           eq = `${X}_{t} \\in \\R^{${d}}`;
-          live = `${X}_{${q},0} = ${num(xin[0], 3)}`;
+          live = `${X}_{${q},0} = ${n3(xin[0])}`;
           words = res
-            ? `Each token’s vector is one row of the residual stream. It enters block ${L} as <b>x</b>, and each sub-layer adds to it rather than replacing it.`
-            : `Residual off: nothing carries <b>x</b> past a sub-layer. Each sub-layer replaces the stream with its own output.`;
+            ? `Each token’s vector is one row of the residual stream. It enters block ${L} as x, and each sub-layer adds to it rather than replacing it.`
+            : 'Residual off: nothing carries x past a sub-layer. Each sub-layer replaces the stream with its own output.';
           break;
         case 1:
           if (pre) {
             eq = res ? `${X}^{\\text{mid}} = ${X} + \\Attn(${NORM}(${X}))` : `${X}^{\\text{mid}} = \\Attn(${NORM}(${X}))`;
-            live = res ? line(`${X}^{\\text{mid}}_{${q},0}`, xin[0], a[0], mid[0]) : `${X}^{\\text{mid}}_{${q},0} = ${num(a[0], 3)}`;
+            live = res ? sumLine(`${X}^{\\text{mid}}_{${q},0}`, xin[0], a[0], mid[0]) : `${X}^{\\text{mid}}_{${q},0} = ${n3(a[0])}`;
             words = res
-              ? `Pre-LN: the norm comes first. Attention reads the normalised stream and returns its output <b>a</b>, with ‖a‖₂ = <b>${nHTML(n.a)}</b>, which is added to the river.`
-              : 'Residual off: attention reads the normalised stream, and its output <b>a</b> replaces the stream.';
+              ? `Pre-${nw}: the norm comes first. Attention reads the normalised stream and returns its output a, with ‖a‖₂&nbsp;=&nbsp;<b>${nHTML(n.a)}</b>, which is added to the river.`
+              : 'Residual off: attention reads the normalised stream, and its output a replaces the stream.';
           } else {
             eq = res ? `${X}^{\\text{mid}} = ${NORM}(${X} + \\Attn(${X}))` : `${X}^{\\text{mid}} = ${NORM}(\\Attn(${X}))`;
-            live = res ? line(`s^{(1)}_{${q},0}`, xin[0], a[0], add1[0]) : `a_{${q},0} = ${num(a[0], 3)}`;
+            live = res ? sumLine(`(${X} + \\Attn(${X}))_{${q},0}`, xin[0], a[0], add1[0]) : `a_{${q},0} = ${n3(a[0])}`;
             words = res
-              ? 'Post-LN: attention reads the raw stream. The sum goes through the norm, so the norm sits on the river after the add.'
+              ? `Post-${nw}: attention reads the raw stream. The sum goes through the norm, so the norm sits on the river after the add.`
               : 'Residual off: attention’s output replaces the stream, and the norm then rescales it.';
           }
           break;
         case 2:
           if (pre) {
             eq = res ? `${X}^{\\text{out}} = ${X}^{\\text{mid}} + \\MLP(${NORM}(${X}^{\\text{mid}}))` : `${X}^{\\text{out}} = \\MLP(${NORM}(${X}^{\\text{mid}}))`;
-            live = res ? line(`${X}^{\\text{out}}_{${q},0}`, mid[0], m[0], out[0]) : `${X}^{\\text{out}}_{${q},0} = ${num(m[0], 3)}`;
+            live = res ? sumLine(`${X}^{\\text{out}}_{${q},0}`, mid[0], m[0], out[0]) : `${X}^{\\text{out}}_{${q},0} = ${n3(m[0])}`;
             words = res
-              ? `The MLP does the same, one token at a time: normalise, expand to ${c.d_ff} hidden units, apply ${act}, and project back to d. It writes <b>m</b> with ‖m‖₂ = <b>${nHTML(n.m)}</b>.`
+              ? `The MLP reads the normalised stream, one token at a time: it expands to ${c.d_ff} hidden units, applies ${act}, and projects back to d. It writes m with ‖m‖₂&nbsp;=&nbsp;<b>${nHTML(n.m)}</b>.`
               : 'Residual off: the MLP reads the normalised stream, and its output replaces the stream.';
           } else {
             eq = res ? `${X}^{\\text{out}} = ${NORM}(${X}^{\\text{mid}} + \\MLP(${X}^{\\text{mid}}))` : `${X}^{\\text{out}} = ${NORM}(\\MLP(${X}^{\\text{mid}}))`;
-            live = res ? line(`s^{(2)}_{${q},0}`, mid[0], m[0], add2[0]) : `m_{${q},0} = ${num(m[0], 3)}`;
+            live = res ? sumLine(`(${X}^{\\text{mid}} + \\MLP(${X}^{\\text{mid}}))_{${q},0}`, mid[0], m[0], add2[0]) : `m_{${q},0} = ${n3(m[0])}`;
             words = res
               ? 'The MLP reads the stream directly. Its output is added, and the sum is normalised again.'
               : 'Residual off: the MLP reads the stream directly, and its output replaces it before the norm.';
@@ -456,23 +487,25 @@ export default {
         }
       }
 
-      // the check for this step: each sum recomputed from the traced inputs and compared with the traced sum.
-      // Only the check for the current step is shown; its formula is named in the badge text.
-      const attnName = pre ? (res ? 'x_mid = x + a' : 'x_mid = a') : (res ? 's_1 = x + a' : 's_1 = a');
-      const mlpName = pre ? (res ? 'x_out = x_mid + m' : 'x_out = m') : (res ? 's_2 = x_mid + m' : 's_2 = m');
-      const checkRow = (name, sumV, tracedV) => h('div', { class: 'bl-check-row' },
-        h('div', { class: 'bl-check-line' }, checkBadge(norm(sumV), norm(tracedV), { label: `${name}: equals the traced value` })),
-        h('div', { class: 'bl-dim' }, `max |Δ| over all ${d} entries: ${errText(maxDiff(sumV, tracedV))}`));
-      const rows = [];
-      if (step === 1) rows.push(checkRow(attnName, sumA, add1));
-      if (step >= 2) rows.push(checkRow(mlpName, sumM, add2));
+      // The check for this step: each sum recomputed from the traced inputs and compared entry by entry with the traced
+      // sum. Only the check for the current step is shown. Its label names the sum with symbols the equation shows.
+      const attnName = pre ? (res ? 'x_mid = x + a' : 'x_mid = a') : (res ? 'before the norm = x + a' : 'before the norm = a');
+      const mlpName = pre ? (res ? 'x_out = x_mid + m' : 'x_out = m') : (res ? 'before the norm = x_mid + m' : 'before the norm = m');
+      const check = step === 1 ? { name: attnName, sumV: sumA, tracedV: add1 } : step >= 2 ? { name: mlpName, sumV: sumM, tracedV: add2 } : null;
+      const err = check ? maxDiff(check.sumV, check.tracedV) : 0;
+      const rows = check ? [h('div', { class: 'bl-check-row' },
+        h('div', { class: 'bl-check-line' }, checkBadge(err, 0, { label: `${check.name}: equals the traced value`, tol: 1e-5 })),
+        h('div', { class: 'bl-dim' }, `max |Δ| over all ${d} entries: ${errText(err)}`))] : [];
 
-      eqLabel.textContent = `${STEPS[step]} · token “${ctx.label(q)}” at position ${q}`;
-      eqMain.innerHTML = texHTML(eq, { display: true });
-      eqLive.innerHTML = texHTML(live);
-      cap.set(words);
-      checksPanel.replaceChildren(...rows);
-      if (animate && !reducedMotion()) eqPanel.animate([{ opacity: 0.55 }, { opacity: 1 }], { duration: 380, easing: 'ease-out' });
+      const label = `${STEPS[step]} · token “${ctx.label(q)}” at position ${q}`;
+      const sig = [step, label, eq, live, words, check ? `${check.name}|${err}` : ''].join('\n');
+      swapText(sig, () => {
+        eqLabel.textContent = label;
+        eqMain.innerHTML = texHTML(eq, { display: true });
+        eqLive.innerHTML = texHTML(live);
+        cap.el.innerHTML = words;
+        checksPanel.replaceChildren(...rows);
+      }, animate);
     }
 
     // The step decides which parts are lit; the wiring itself is drawn by CSS from data-step.
@@ -490,6 +523,8 @@ export default {
       P.wM.classList.toggle('on', step >= 2);
       P.pN1.classList.toggle('hot', step === 1);
       P.pN2.classList.toggle('hot', step === 2);
+      P.reads.mid.forEach((el) => el.classList.toggle('pending', step < 1));
+      P.reads.out.forEach((el) => el.classList.toggle('pending', step < 2));
       if (animate && D) {
         if (step === 0) tweenNum(P.sIn.nv, D.n.in);
         if (step === 1) { pulse(P.join1); tweenNum(P.sMid.nv, D.n.mid); }
@@ -514,6 +549,7 @@ export default {
       };
       auto = setTimeout(advance, 1200);
       el.addEventListener('pointerdown', () => clearTimeout(auto), { once: true });
+      el.addEventListener('atlas:interrupt', () => clearTimeout(auto), { once: true });   // the story bar or the arrow keys took over
     }
 
     const offs = [
@@ -526,6 +562,7 @@ export default {
       pause() { clearTimeout(auto); },
       destroy() {
         clearTimeout(auto);
+        clearTimeout(textTimer);
         offs.forEach((f) => f());
         vecs.splice(0).forEach((v) => v.destroy?.());
         st.destroy();

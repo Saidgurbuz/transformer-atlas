@@ -2,21 +2,27 @@
 // The input text is split into character tiles; each tile flips to show its vocabulary id; the ids
 // drop into the integer row the model reads; the 32-entry vocabulary shows which entries this text
 // uses. A toy BPE, labelled as an illustration, shows subword pieces. Zoom target: vision.
-import { stage2d, sceneHeader, sceneCaption, checkBadge, card, token, chip, appear, useStyle, ZONES, MOTION } from '../kit.js';
+import { stage2d, sceneHeader, sceneCaption, checkBadge, token, chip, appear, useStyle, ZONES, MOTION } from '../kit.js';
 import { h, texHTML, reducedMotion, slider } from '../../ui/index.js';
 
 const STEPS = ['Text', 'Characters', 'Ids', 'Vocabulary', 'Subwords'];
 const EASE = MOTION.ease;
 const HX = ZONES.hero.x, HW = 1030;                  // hero column: the text, the tiles, the vocabulary
-const SX = ZONES.side.x, SW = ZONES.side.w;          // side column: this step's maths, a check, a note, the zoom card
+const SX = ZONES.side.x, SW = ZONES.side.w;          // side column: this step's maths, a check, a note, the zoom chip
 const Y_HERO = 420, Y_TEXT = 196;                    // the input: large in the middle (step 0), then compact
 const LAB_Y = 304;                                   // row labels sit 26 units above their row
 const Y_TOP = 330, Y_IDS = 500, IDS_LAB_Y = 472;     // characters, then the integer row they flip into
 const Y_VOCAB = 660, VOCAB_LAB_Y = 636;              // the 32-entry vocabulary, under the integer row
-const SIDE_Y = 330, CARD_Y = 630;
+const SIDE_Y = 280;                                  // the equation column starts where softmax's does
 const TILE_H = 50, ROW_GAP = 8, GAP = 6;             // tile height, row gap, column gap
 const PER_ROW = 32, SHOW = 64;                       // at most 32 tiles a row; longer runs elide the middle
 const VOCAB_COLS = 16, MAX_MERGES = 12;
+const FADE_OUT = 240;                                // the id row and the vocabulary leave in this time when Subwords opens
+const HAND = 260;                                    // and what follows waits this long, so the two never overlap
+const DROP = 260;                                    // ids: a character flips, then waits this long before it drops
+const SPAN = 800;                                    // a stagger over n tiles ends inside this many ms (MOTION.step is 1700)
+
+const ZOOM_ICON = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21M10.5 7.5v6M7.5 10.5h6"/></svg>';
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const show = (t) => String(t).replace(/ /g, '␣');   // a space as a visible glyph
@@ -24,16 +30,20 @@ const strong = (x) => h('b', null, String(x));
 const grouped = (n) => n.toLocaleString('en-US');    // 1050 -> "1,050"
 const plural = (n, one) => (n === 1 ? one : `${one}s`);
 const usedIds = (ids) => [...new Set(ids)];          // first-use order (a Set keeps insertion order)
+const setAria = (el, hidden) => (hidden ? el.setAttribute('aria-hidden', 'true') : el.removeAttribute('aria-hidden'));
 
 useStyle('tokens', `
-.tk-field { position: absolute; left: ${HX}px; width: ${HW}px; box-sizing: border-box; margin: 0; padding: 4px 2px 12px; border: 0; border-bottom: 2px solid var(--line-strong); border-radius: 0; outline: none; background: transparent; color: var(--fg); font: 500 36px/1.2 var(--font-mono); caret-color: var(--accent); cursor: text; transition: top ${MOTION.move}ms ${EASE}, font-size ${MOTION.move}ms ${EASE}, opacity .6s ease, border-color .25s ease; }
+.tk-field { position: absolute; left: ${HX}px; width: ${HW}px; box-sizing: border-box; margin: 0; padding: 4px 2px 12px; border: 0; border-bottom: 2px solid var(--line-strong); border-radius: 0; outline: none; background: transparent; color: var(--fg); font: 500 36px/1.2 var(--font-mono); text-overflow: ellipsis; caret-color: var(--accent); cursor: text; transition: top ${MOTION.move}ms ${EASE}, font-size ${MOTION.move}ms ${EASE}, opacity .6s ease, border-color .25s ease; }
 .tk-field:focus { border-bottom-color: var(--accent); }
 .tk-field::placeholder { color: var(--fg-3); opacity: .8; }
-.tk-scene:not([data-step="0"]) .tk-field { opacity: .4; }
+.tk-scene:not([data-step="0"]) .tk-field { opacity: .6; }
 .tk-scene .tk-field:hover, .tk-scene .tk-field:focus { opacity: 1; }
 .tk-measure { position: absolute; left: 0; top: 0; visibility: hidden; white-space: pre; font: 500 36px/1.2 var(--font-mono); }
-.tk-board { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+.tk-board { position: absolute; left: 0; top: 0; width: 0; height: 0; visibility: hidden; transition: visibility 0s linear .5s; }
+.tk-scene[data-step="1"] .tk-board, .tk-scene[data-step="2"] .tk-board, .tk-scene[data-step="3"] .tk-board { visibility: visible; transition: visibility 0s; }
+.tk-scene[data-step="4"] .tk-board { transition: visibility 0s linear ${FADE_OUT}ms; }
 .tk-tile { position: absolute; transition: left ${MOTION.move}ms ${EASE}, top ${MOTION.move}ms ${EASE}, opacity .5s ease, transform ${MOTION.move}ms ${EASE}; }
+.tk-scene[data-step="4"] .tk-tile { transition-duration: ${FADE_OUT}ms; }
 .tk-tile.off { pointer-events: none; }
 .tk-flip { position: absolute; inset: 0; transform-style: preserve-3d; transition: transform .6s ${EASE}; }
 .tk-face { position: absolute; inset: 0; box-sizing: border-box; border-radius: 11px; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
@@ -42,24 +52,33 @@ useStyle('tokens', `
 .tk-back { display: grid; place-items: center; align-content: center; gap: 3px; transform: rotateY(180deg); background: color-mix(in srgb, var(--c-embed) 22%, var(--surface)); border: 1px solid var(--c-embed); box-shadow: 0 4px 10px rgba(0, 0, 0, .12); font: 650 18px/1 var(--font-mono); color: var(--fg); }
 .tk-back small { font: 500 12px/1 var(--font-mono); color: var(--fg-3); }
 .tk-ell { display: grid; place-items: center; background: none; border: 0; box-shadow: none; font: 600 22px/1 var(--font-mono); color: var(--fg-3); }
-.tk-lab { position: absolute; font: 600 15px/1 var(--font-mono); color: var(--fg-3); letter-spacing: .02em; white-space: nowrap; opacity: 0; transition: opacity .5s ease; }
-.tk-scene[data-step="1"] .tk-lab-chars, .tk-scene[data-step="2"] .tk-lab-ids, .tk-scene[data-step="3"] .tk-lab-ids, .tk-scene[data-step="3"] .tk-lab-vocab, .tk-scene[data-step="4"] .tk-lab-bpe { opacity: 1; }
-.tk-vocab { position: absolute; display: grid; grid-template-columns: repeat(${VOCAB_COLS}, 58px); gap: 8px 6px; }
+.tk-lab { position: absolute; font: 600 15px/1 var(--font-mono); color: var(--fg-3); letter-spacing: .02em; white-space: nowrap; opacity: 0; visibility: hidden; transition: opacity .5s ease, visibility 0s linear .5s; }
+.tk-scene[data-step="1"] .tk-lab-chars, .tk-scene[data-step="2"] .tk-lab-ids, .tk-scene[data-step="3"] .tk-lab-ids, .tk-scene[data-step="3"] .tk-lab-vocab { opacity: 1; visibility: visible; transition: opacity .5s ease, visibility 0s; }
+.tk-scene[data-from="4"][data-step="2"] .tk-lab-ids, .tk-scene[data-from="4"][data-step="3"] .tk-lab-ids { transition-delay: ${HAND}ms; }
+.tk-scene[data-step="4"] .tk-lab { transition: opacity ${FADE_OUT}ms ease, visibility 0s linear ${FADE_OUT}ms; }
+.tk-scene[data-step="4"] .tk-lab-bpe { opacity: 1; visibility: visible; transition: opacity .6s ease ${HAND}ms, visibility 0s; }
+.tk-vocab { position: absolute; display: grid; grid-template-columns: repeat(${VOCAB_COLS}, 58px); gap: 8px 6px; visibility: hidden; transition: visibility 0s linear .5s; }
+.tk-scene[data-step="3"] .tk-vocab { visibility: visible; transition: visibility 0s; }
+.tk-scene[data-step="4"] .tk-vocab { transition: visibility 0s linear ${FADE_OUT}ms; }
 .tk-vc { display: grid; justify-items: center; align-content: center; height: 46px; box-sizing: border-box; border-radius: 9px; border: 1px solid var(--line); background: var(--surface-2); color: var(--fg-3); font: 600 20px/1 var(--font-mono); opacity: 0; transition: opacity .5s ease, background-color .5s ease, border-color .5s ease, color .5s ease, box-shadow .5s ease; }
 .tk-vc small { font: 500 12px/1 var(--font-mono); margin-top: 4px; opacity: .85; }
 .tk-vc.lit { background: color-mix(in srgb, var(--c-embed) 24%, var(--surface)); border-color: var(--c-embed); color: var(--fg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-embed) 18%, transparent); }
 .tk-scene[data-step="3"] .tk-vc { opacity: .42; }
 .tk-scene[data-step="3"] .tk-vc.lit { opacity: 1; }
+.tk-scene[data-step="4"] .tk-vc { transition-duration: ${FADE_OUT}ms; }
 .tk-side { position: absolute; width: ${SW}px; display: grid; gap: 12px; align-content: start; }
-.tk-step { font: 600 13px/1 var(--font-mono); color: var(--fg-3); text-transform: uppercase; letter-spacing: .08em; }
 .tk-eq-main { font-size: 22px; line-height: 1.3; color: var(--fg); white-space: nowrap; }
 .tk-eq-sub { font-size: 17px; color: var(--fg-2); white-space: nowrap; }
 .tk-note { font-size: 15px; line-height: 1.45; color: var(--fg-3); min-height: 20px; }
-.tk-bpe { position: absolute; width: ${HW}px; display: grid; gap: 16px; opacity: 0; pointer-events: none; transition: opacity .6s ease; }
-.tk-scene[data-step="4"] .tk-bpe { opacity: 1; pointer-events: auto; }
+.tk-zoom { justify-self: start; display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px 0 12px; border-radius: 999px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg-2); font: 600 15px/1 var(--font-mono); white-space: nowrap; cursor: zoom-in; transition: transform .25s ease, box-shadow .25s ease, color .25s ease, border-color .25s ease; }
+.tk-zoom:hover, .tk-zoom:focus-visible { color: var(--fg); border-color: var(--fg-3); transform: translateY(-2px); box-shadow: 0 8px 18px rgba(0, 0, 0, .12); outline: none; }
+.tk-zoom-icon { display: inline-flex; color: var(--fg-3); }
+.tk-bpe { position: absolute; width: ${HW}px; display: grid; gap: 16px; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity ${FADE_OUT}ms ease, visibility 0s linear ${FADE_OUT}ms; }
+.tk-scene[data-step="4"] .tk-bpe { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity .6s ease ${HAND}ms, visibility 0s; }
 .tk-pieces { display: flex; flex-wrap: wrap; gap: 8px; }
 .tk-piece { padding: 9px 12px 8px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg); font: 600 18px/1 var(--font-mono); white-space: pre; box-shadow: 0 3px 8px rgba(0, 0, 0, .08); transition: background-color .4s ease, border-color .4s ease; }
-.tk-piece.merged { background: var(--accent-soft); border-color: var(--accent); }
+.tk-piece.merged { background: color-mix(in srgb, var(--c-embed) 16%, var(--surface)); border-color: color-mix(in srgb, var(--c-embed) 55%, var(--line-strong)); }
+.tk-piece.latest { background: var(--accent-soft); border-color: var(--accent); }
 .tk-piece.new { animation: tkPop .6s cubic-bezier(.2, .7, .2, 1); }
 @keyframes tkPop { from { transform: scale(.7); opacity: 0; } to { transform: none; opacity: 1; } }
 .tk-stats { font: 500 16px/1.5 var(--font-mono); color: var(--fg-2); }
@@ -129,20 +148,55 @@ const CAPS = [
   () => 'Illustration, not this model: merging the most frequent neighbouring pair builds subword pieces. Real LLMs use vocabularies of about 32k to 256k entries, so many common words are one token.',
 ];
 
+// The row label under the characters: what the tiles are, and how many typed characters they stand for.
+function charsLabel(m, c) {
+  if (!c.enc) return c.chars ? 'characters · none in the vocabulary · one placeholder token' : 'empty input · one placeholder token';
+  if (c.cut) return `characters · first ${m.T} of ${grouped(c.chars)} · small number: position`;
+  if (c.enc < c.chars) return `tokens · ${m.T} (${c.chars - c.enc} characters skipped) · small number: position`;
+  return `characters · ${m.T} ${plural(m.T, 'token')} · small number: position`;
+}
+
+// The model's own input embeddings, read from the trace: every position must hold its own row of W_E.
+// Returns the largest difference, or null when the trace does not hold this forward pass.
+function embedErr(s) {
+  const tok = s.trace?.['emb.tok'], W = s.model?.params?.['wte.weight'];
+  const T = s.ids.length, d = W?.shape?.[1];
+  if (!tok || !W || tok.shape?.[0] !== T || tok.shape?.[1] !== d) return null;
+  let worst = 0;
+  for (let t = 0; t < T; t++) {
+    const at = t * d, row = s.ids[t] * d;
+    for (let c = 0; c < d; c++) worst = Math.max(worst, Math.abs(tok.data[at + c] - W.data[row + c]));
+  }
+  return worst;
+}
+
 export default {
   mount(el, ctx) {
     const st = stage2d(el);
     st.root.classList.add('tk-scene');
     st.root.dataset.step = '0';
-    let step = 0, prevStep = 0, lastM = null, dead = false, away = false;
+    let step = 0, prevStep = 0, lastM = null, lastC = null, dead = false, away = false;
     let pending = false, debounce = null, auto = null, autoTick = false;
     let tiles = [], tileKey = '';
     let vocabKey = '', cells = [];
-    let bpeK = 4, bpeKey = '', bpe = { syms: [], steps: [] }, shown = new Set();
+    let wantK = 4, bpeK = 4, bpeKey = '', bpe = { syms: [], steps: [] }, shown = new Set();   // the reader's merge count, and the count shown for this text
 
     // ------------------------------------------------------------ shared parts (kit)
     const header = sceneHeader(st, { chips: [], title: 'Tokens', sub: 'A tokenizer turns text into a sequence of integers; in this model, one token is one character.' });
     const cap = sceneCaption(st, { y: ZONES.caption.y, w: 1060 });
+    // The kit cross-fades captions. Here a newer caption cancels a fade still running, so only the latest text is ever written.
+    let capText = null;
+    const capSet = (html) => {
+      if (html === capText) return;
+      capText = html;
+      if (reducedMotion()) { cap.el.innerHTML = html; return; }
+      cap.el.getAnimations().forEach((a) => a.cancel());
+      cap.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140 }).finished.then(() => {
+        if (html !== capText) return;
+        cap.el.innerHTML = html;
+        cap.el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: MOTION.easeOut });
+      }).catch(() => {});
+    };
 
     // ------------------------------------------------------------ the input: an inline field styled as text
     const field = h('input', { class: 'tk-field', type: 'text', spellcheck: 'false', autocomplete: 'off', placeholder: 'type a sentence', 'aria-label': 'Input text', value: ctx.state.text });
@@ -154,7 +208,7 @@ export default {
     st.add(board, { x: 0, y: 0 });
 
     const labChars = h('div', { class: 'tk-lab tk-lab-chars' });
-    const labIds = h('div', { class: 'tk-lab tk-lab-ids' }, 'idx · the model’s input ids');
+    const labIds = h('div', { class: 'tk-lab tk-lab-ids' }, 'ids · the model’s input · bold: index in the vocabulary');
     const labVocab = h('div', { class: 'tk-lab tk-lab-vocab' });
     const labBpe = h('div', { class: 'tk-lab tk-lab-bpe' }, 'subword pieces · illustration');
     st.add(labChars, { x: HX, y: LAB_Y });
@@ -172,16 +226,16 @@ export default {
     const merges = slider({
       id: 'tokens-bpe-merges', label: 'Merges applied', min: 0, max: 0, step: 1, value: 0,
       format: (v) => `${v} ${v === 1 ? 'merge' : 'merges'}`,
-      onInput: (v) => { bpeK = v; renderBpe(); },
+      onInput: (v) => { wantK = v; bpeK = v; renderBpe(); },
     });
     const bpeBox = h('div', { class: 'tk-bpe' }, pieces, stats, h('div', { class: 'tk-ctl' }, merges.el), last);
     st.add(bpeBox, { x: HX, y: Y_TOP });
 
-    // side column: this step's maths, a check, a note; then the zoom card
+    // side column: this step's maths, a check, a note, and the zoom chip (vision) at its foot
     const side = h('div', { class: 'tk-side' });
     st.add(side, { x: SX, y: SIDE_Y });
-    const zoom = card({ title: 'Images as tokens', sub: 'A ViT cuts an image into patches, and each patch becomes a token.', kind: 'embed', node: 'vision', w: SW });
-    st.add(zoom, { x: SX, y: CARD_Y });
+    const zoom = h('button', { type: 'button', class: 'tk-zoom', dataset: { node: 'vision' }, title: 'Vision tokens: how images become tokens' },
+      'Images as tokens', h('span', { class: 'tk-zoom-icon', html: ZOOM_ICON }));
 
     // ------------------------------------------------------------ text editing (debounced setText)
     const cancelAuto = () => { clearTimeout(auto); auto = null; };
@@ -200,6 +254,7 @@ export default {
     const interact = () => cancelAuto();
     document.addEventListener('pointerdown', interact, true);
     window.addEventListener('keydown', interact, true);
+    el.addEventListener('atlas:interrupt', cancelAuto);   // the story bar and the arrow keys hand control to the reader
 
     // ------------------------------------------------------------ model -> geometry
     function model() {
@@ -236,12 +291,16 @@ export default {
       return { x, y: g.y(k, Y_IDS), o: 0, s: 0.6, flip: slot.t >= 0 };      // subwords: the illustration takes the stage
     }
 
-    // staggered timing: characters split out one by one; each flips to its id, then drops into the row
-    function delaysFor(stp, k, from) {
-      if (stp === 0) return { pos: k * 12, op: 0, flip: 0 };
-      if (stp === 1) return { pos: k * 24, op: k * 24, flip: 0 };
-      if (stp === 2) return from < 2 ? { pos: 260 + k * 30, op: 0, flip: k * 30 } : { pos: 0, op: k * 12, flip: 0 };
-      if (stp === 3) return { pos: 0, op: k * 12, flip: 0 };
+    // Staggers. A character splits out, flips to its id, then drops into the row. Each stagger ends
+    // inside one MOTION.step, so the walk never starts a step while the last tile is still landing.
+    // Coming back from Subwords (from = 4), the tiles wait until the subword block has faded out.
+    function delaysFor(stp, k, from, n) {
+      const lead = from === 4 && stp !== 4 ? HAND : 0;
+      const gap = (cap) => Math.min(cap, SPAN / Math.max(1, n - 1));
+      if (stp === 0) return { pos: lead + k * gap(12), op: lead, flip: 0 };
+      if (stp === 1) return { pos: lead + k * gap(24), op: lead + k * gap(24), flip: 0 };
+      if (stp === 2) return from < 2 ? { pos: DROP + k * gap(30), op: 0, flip: k * gap(30) } : { pos: 0, op: lead + k * 12, flip: 0 };
+      if (stp === 3) return { pos: 0, op: lead + k * 12, flip: 0 };
       return { pos: 0, op: 0, flip: 0 };
     }
 
@@ -276,7 +335,7 @@ export default {
       flip.style.transitionDelay = `${f}ms`;
     }
 
-    function syncTiles(m, g, adv, animate) {
+    function syncTiles(m, g, adv, animate, from) {
       const key = m.slots.map((sl) => `${sl.t}:${sl.id}`).join(',');
       if (key !== tileKey) {
         tileKey = key;
@@ -284,11 +343,11 @@ export default {
         tiles = m.slots.map((slot) => buildTile(slot, m));
         animate = false;                  // new tiles appear where they belong
       }
-      tiles.forEach((tile, k) => setTile(tile, target(step, k, tile.slot, g, adv), g.w, delaysFor(step, k, prevStep), animate));
+      tiles.forEach((tile, k) => setTile(tile, target(step, k, tile.slot, g, adv), g.w, delaysFor(step, k, from, tiles.length), animate));
     }
 
     // ------------------------------------------------------------ vocabulary (32 entries, used ones lit)
-    function paintVocab(m, usedList) {
+    function paintVocab(m, usedList, from) {
       const key = m.vocab.join('\u0001');
       if (key !== vocabKey) {
         vocabKey = key;
@@ -296,10 +355,12 @@ export default {
         cells = Array.from(vocabWrap.children);
       }
       const order = new Map(usedList.map((id, n) => [id, n]));
+      const lead = from === 4 && step !== 4 ? HAND : 0;               // coming back from Subwords: wait for its fade-out
+      const pace = Math.min(70, 900 / Math.max(1, usedList.length - 1));   // the last lit entry lands inside the step
       cells.forEach((cell, i) => {
         const n = order.get(i), lit = n !== undefined;
         cell.classList.toggle('lit', lit);
-        const fade = step === 3 ? i * 14 : 0, light = lit ? 240 + n * 70 : 0;
+        const fade = (step === 3 ? i * 14 : 0) + lead, light = lit ? lead + 240 + n * pace : 0;
         cell.style.transitionDelay = `${fade}ms, ${light}ms, ${light}ms, ${light}ms, ${light}ms`;
       });
     }
@@ -313,21 +374,26 @@ export default {
         bpe = { syms, steps: toyBpe(syms, MAX_MERGES) };
       }
       const max = bpe.steps.length;
-      bpeK = clamp(bpeK, 0, max);
+      bpeK = clamp(wantK, 0, max);                        // the reader's count, held to what this text can merge
       merges.input.max = String(max);
       merges.input.disabled = max === 0;
       merges.set(bpeK);
     }
 
     function renderBpe() {
-      if (!lastM) return;
+      if (!lastM || !lastC) return;
       const { syms, steps } = bpe, k = bpeK, V = lastM.V;
       const seq = k ? steps[k - 1].seq : syms;
-      pieces.replaceChildren(...seq.map((p) => h('span', { class: ['tk-piece', p.length > 1 && 'merged', k && !shown.has(p) && 'new'] }, show(p))));
+      const latest = k ? steps[k - 1].merged : null;          // only the newest merged piece takes the accent
+      pieces.replaceChildren(...seq.map((p) => h('span', { class: ['tk-piece', p.length > 1 && 'merged', p === latest && 'latest', k && !shown.has(p) && 'new'] }, show(p))));
       shown = new Set(seq);
-      const n = syms.length, np = seq.length;
-      stats.replaceChildren(strong(n), ` ${plural(n, 'character')} → `, strong(np),
-        ` ${plural(np, 'token')} (${(n / Math.max(1, np)).toFixed(2)} characters per token) · illustrative vocabulary ${V} + `, strong(k), ' = ', strong(V + k), ' entries');
+      const np = seq.length, { enc, chars, kept, cut } = lastC;
+      // the characters the model reads (in the vocabulary, inside the window), then the pieces they make
+      const read = !enc
+        ? [strong(0), ' characters · one placeholder token (id 0)']
+        : [...(cut ? ['first ', strong(kept), ` of ${grouped(chars)}`] : [strong(kept)]),
+          ` ${plural(kept, 'character')} → `, strong(np), ` ${plural(np, 'token')} (${(kept / Math.max(1, np)).toFixed(2)} characters per token)`];
+      stats.replaceChildren(...read, ` · illustrative vocabulary ${V} + `, strong(k), ' = ', strong(V + k), ' entries');
       if (!steps.length) last.textContent = 'No pair occurs twice in this text, so there is nothing to merge.';
       else if (!k) last.textContent = 'No merges applied: every character is its own token.';
       else {
@@ -364,6 +430,17 @@ export default {
       }
     }
 
+    // The parts that are off screen at this step are also out of the accessibility tree.
+    function syncAria() {
+      setAria(board, step === 0 || step === 4);
+      setAria(labChars, step !== 1);
+      setAria(labIds, step !== 2 && step !== 3);
+      setAria(labVocab, step !== 3);
+      setAria(labBpe, step !== 4);
+      setAria(vocabWrap, step !== 3);
+      setAria(bpeBox, step !== 4);
+    }
+
     // ------------------------------------------------------------ paint
     function paint({ animate = true } = {}) {
       if (dead) return;
@@ -372,34 +449,39 @@ export default {
       const m = model();
       lastM = m;
       const enc = s.tokenizer.encode(s.text).ids;          // every in-vocabulary character, before the context cut
-      const c = { chars: Array.from(s.text).length, enc: enc.length, cut: enc.length > m.T };
+      const block = s.config.block_size;
+      lastC = { chars: Array.from(s.text).length, enc: enc.length, kept: Math.min(enc.length, block), cut: enc.length > block };
+      const c = lastC;
       const n = usedIds(m.ids).length;
       const g = geometry(m.slots.length);
+      const from = animate ? prevStep : step;              // the step the motion starts from
       const w36 = measureAt36(field.value);
-      const fit = Math.floor((36 * HW) / w36);                // the size at which the text fills the column
+      const fit = Math.floor((36 * HW) / w36);             // the size at which the text fills the column
       const fsHero = clamp(fit, 18, 56), fsCompact = clamp(fit, 18, 36);
       const adv = (w36 / Math.max(1, field.value.length)) * (fsHero / 36);
       field.style.top = `${step === 0 ? Y_HERO : Y_TEXT}px`;
       field.style.fontSize = `${step === 0 ? fsHero : fsCompact}px`;
-      syncTiles(m, g, adv, animate);
+      syncTiles(m, g, adv, animate, from);
 
       header.el.querySelector('.k-eyebrow').replaceChildren(
         chip(`V = ${m.V}`, 'embed'), chip(`T = ${m.T}`, 'resid'), ...(step === 4 ? [chip('illustration')] : []));
-      labChars.textContent = c.cut ? `characters · first ${m.T} of ${grouped(c.chars)}` : `characters · ${m.T} ${plural(m.T, 'token')}`;
+      labChars.textContent = charsLabel(m, c);
       labVocab.textContent = `vocabulary · ${m.V} entries · ${n} used`;
-      paintVocab(m, usedIds(m.ids));
+      paintVocab(m, usedIds(m.ids), from);
       if (step === 4) { computeBpe(m); renderBpe(); }
+      syncAria();
 
       const [main, sub] = sideMaths(m, n);
-      const recon = (enc.length ? enc : [0]).slice(0, s.config.block_size).join(',');   // the ids the model should read, recomputed
+      const embedError = step === 2 ? embedErr(s) : null;  // the model's embedding rows, checked against W_E
       side.replaceChildren(...[                              // replaceChildren would print a null child as text
-        h('div', { class: 'tk-step' }, STEPS[step]),
+        h('div', { class: 'k-label', style: { textAlign: 'left' } }, STEPS[step]),
         h('div', { class: 'tk-eq-main', html: texHTML(main) }),
         h('div', { class: 'tk-eq-sub', html: texHTML(sub) }),
-        step === 2 ? checkBadge(recon, s.ids.join(','), { label: 'matches the model’s input ids' }) : null,
+        embedError == null ? null : checkBadge(embedError, 0, { label: 'every id reads its row of W_E' }),
         h('div', { class: 'tk-note' }, noteFor(s, m, c)),
+        zoom,
       ].filter(Boolean));
-      cap.set(CAPS[step](m, c, n));
+      capSet(CAPS[step](m, c, n));
     }
 
     function setStep(i) {
@@ -408,6 +490,7 @@ export default {
       prevStep = step;
       step = clamp(i, 0, STEPS.length - 1);
       st.root.dataset.step = String(step);
+      st.root.dataset.from = String(prevStep);   // the CSS hands over from Subwords: the id labels wait for its fade-out
       paint({ animate: true });
       if (!reducedMotion()) side.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 480, easing: 'ease-out' });
     }
@@ -415,9 +498,9 @@ export default {
     // ------------------------------------------------------------ start
     paint({ animate: false });
     ctx.setSteps(STEPS, setStep);
-    appear([header.el, field, side, zoom], { stagger: MOTION.stagger });
+    appear([header.el, field, side], { stagger: MOTION.stagger });
     document.fonts?.ready.then(() => { if (!dead && !away) paint({ animate: false }); });   // re-measure once the mono face is loaded
-    // explain itself once: one step every 1.7 s until the reader takes over
+    // explain itself once: one step every MOTION.step until the reader takes over
     const walk = () => {
       if (step >= STEPS.length - 1) return;
       autoTick = true;

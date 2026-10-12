@@ -2,21 +2,25 @@
 // The input is a procedurally drawn app window (or an upload), resized to a multiple of the
 // patch size, cut into patches, flattened, embedded, joined with the text tokens and counted.
 //
-// Illustrations, always labelled: the encoder and projector matrices and the 2-D position
-// vectors are seeded random, and the image block of the mask is a VLM design (this app's LLM has
-// no image input). Everything the LLM computes is real: the text rows are its emb.out, the text
-// block of the mask follows its own mask setting, and every count comes from the patch grid.
+// Illustrations, always labelled: the encoder and projector matrices, the 2-D position vectors and
+// the stacked embeddings X are seeded random, and the image block of the mask is a VLM design (this
+// app's LLM has no image input). Everything the LLM computes is real: the text rows are its emb.out,
+// the text block of the mask follows its own mask setting, and every count comes from the patch grid.
 //
 // Choices, stated in the captions: the encoder works at half the LLM width, so the projector
 // widens it (real encoders are narrower than their LLM). First-view steps wait for their own
 // animation (STEP_MS), the one documented exception to docs/STYLE_GUIDE.md section 6. The matrix
 // fill is the slowest at 1.6 s; bar fills use MOTION.move.
+//
+// Layout: one top line (TOP) for the image, the patch, the matrices, the mask, the bars and the
+// equation column. The image controls sit in the controls zone above the image, and show only
+// while the image is shown.
 import { stage2d, sceneHeader, sceneCaption, tokenPicker, vec, op, checkBadge, texLabel, useStyle, MOTION, ZONES } from '../kit.js';
 import { h, clamp, parseColor, diverging, onThemeChange, reducedMotion, showTip, hideTip, button, texHTML, num, fmt, heatmap } from '../../ui/index.js';
 import { mulberry32, gaussian, maskAllows } from '../../engine/index.js';
 
 const STEPS = ['Patches', 'Flatten', 'Embed', 'Into the LLM', 'How many tokens'];
-const STEP_MS = [2600, 3600, 3200, 3000, 2800];   // first-view pace: the time each step's own animation needs
+const STEP_MS = [2600, 3000, 3200, 3000, 2800];   // first-view pace: the time each step's own animation needs (Flatten's own move is 2.6 s)
 const SIZES = [224, 336];
 const PATCH_SIZES = [14, 16, 32];
 const CLIP_MEAN = [0.48145466, 0.4578275, 0.40821073];   // CLIP's normalisation constants (RGB)
@@ -28,16 +32,21 @@ const SEED_W = 1729, SEED_PROJ = 4242, SEED_ROW = 9001, SEED_COL = 9013;   // se
 const POS_SCALE = 0.5;                                   // size of the random 2-D position vectors (illustration)
 const SLICE_MS = 8;                                      // work per frame while a result is computed
 const FXR = 2;                                           // backing-store scale of the animation canvas
-const IMG = { x: 110, y: 262, s: 440 };                  // the input image (design units)
-const STRIP_Y = 728;                                     // the image controls, under the image
-const FX = { y: 260, h: 520 };                           // the animation layer under the header
-const TILE = { x: 740, y: 296, s: 240 };                 // the patch, enlarged
-const VEC_X = 600, VEC_Y = 556;                          // the flattened vector, right of the image (label above)
-const EMB = { x: 800, y: 296, w: 240, maxH: 420 };       // the N × dv embedding matrix (step 2)
-const MASK = { x: 110, y: 300, img: 176, cell: 20, labelW: 60, labelH: 44 };   // step 3
-const SEQ = { x: 690, y: 296, w: 380 };                  // the stacked sequence (step 3)
+const TOP = 290;                                         // the one top line: image, patch, matrices, mask, bars and the equation column
+const STRIP_Y = ZONES.controls.y;                        // the image controls, in the controls zone above the image
+const IMG = { x: 110, y: TOP, s: 440 };                  // the input image (design units)
+const FX = { y: 280, h: 480 };                           // the animation layer (covers the image, the patch and the vector)
+const TILE = { x: 740, y: TOP, s: 240 };                 // the patch, enlarged
+const VEC_X = 600, VEC_Y = 560;                          // the flattened vector, below the patch (label above)
+const EMB = { x: 800, y: TOP, w: 240, maxH: 420 };       // the N × dv matrix X (step 2)
+const WP_H = 100;                                        // the W_p strip: a wide matrix drawn at a readable height (step 2)
+const MASK = { x: 110, y: 320, img: 176, cell: 20, labelW: 60, labelH: 44 };   // the mask (step 3); its label sits on the top line
+const SEQ = { x: 690, y: TOP, w: 380 };                  // the stacked sequence (step 3)
 const SEQ_IMG_H = 180;
-const BARS = { x: 110, y0: 300, dy: 72 };                // the token bars (step 4)
+const BARS = { x: 110, y0: TOP, dy: 72 };                // the token bars (step 4)
+const SIDE = { x: ZONES.side.x, y: TOP, w: ZONES.side.w };   // the equation column, every step
+// A 1080p screenshot rounded down to multiples of 28 (2 × 2 blocks of 14 px patches): 1904 × 1064, so every patch and every merged block is whole.
+const SHOT = { w: Math.floor(1920 / 28) * 28, h: Math.floor(1080 / 28) * 28 };
 
 useStyle('vision', `
 .vz-group { position: absolute; left: 0; top: 0; width: 0; height: 0; opacity: 0; visibility: hidden; transition: opacity .35s var(--ease), visibility 0s linear .35s; }
@@ -59,8 +68,8 @@ useStyle('vision', `
 .vz-imgwrap.on { opacity: 1; visibility: visible; transition: opacity .6s var(--ease) .12s, visibility 0s; }
 .vz-img { position: absolute; left: 0; top: 0; width: ${IMG.s}px; height: ${IMG.s}px; image-rendering: pixelated; }
 .vz-cells { position: absolute; inset: 0; display: grid; }
-.vz-cell { box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); cursor: pointer; transition: background-color .2s; }
-.vz-cell:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.vz-cell { box-sizing: border-box; border: 1px solid color-mix(in srgb, var(--c-embed) 45%, transparent); cursor: pointer; transition: background-color .2s; }
+.vz-cell:hover { background: color-mix(in srgb, var(--c-embed) 16%, transparent); }
 .vz-cell.sel { background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: inset 0 0 0 2px var(--accent); }
 .vz-scan { position: absolute; left: 0; top: 0; width: 3px; height: 100%; background: var(--accent); box-shadow: 0 0 16px 4px color-mix(in srgb, var(--accent) 45%, transparent); opacity: 0; }
 .vz-fx { position: absolute; left: 0; top: ${FX.y}px; width: 1600px; height: ${FX.h}px; pointer-events: none; }
@@ -73,6 +82,8 @@ useStyle('vision', `
 .vz-selrow { position: absolute; border: 2px solid var(--accent); border-radius: 3px; opacity: 0; pointer-events: none; transition: opacity .4s var(--ease); }
 .vz-rowlbl { font: 500 15px/1.2 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
 .vz-selLbl { color: var(--fg); }
+.vz-tl { font: 500 15px/20px var(--font-mono); color: var(--fg-3); text-align: right; white-space: nowrap; }
+.vz-tl.sel { color: var(--fg); font-weight: 650; }
 .vz-mask { position: absolute; }
 .vz-mb { position: absolute; box-sizing: border-box; display: grid; place-content: center; text-align: center; border-radius: 8px; font: 600 15px/1.3 var(--font-mono); }
 .vz-mb.allow { background: color-mix(in srgb, var(--c-attn) 82%, transparent); color: var(--surface); }
@@ -91,10 +102,10 @@ useStyle('vision', `
 .vz-track { position: relative; height: 26px; background: var(--surface-2); border-radius: 7px; }
 .vz-fill { position: absolute; left: 0; top: 0; height: 100%; border-radius: 7px; transition: width 600ms cubic-bezier(.65,0,.35,1); }
 .vz-row.hot .vz-track { box-shadow: 0 0 0 2px var(--accent); }
-.vz-val { font: 600 18px/1 var(--font-mono); text-align: right; padding-right: 4px; }
+.vz-val { font: 600 14px/1 var(--font-mono); text-align: right; padding-right: 4px; }
 .vz-kv { display: grid; gap: 3px; }
 .vz-kv span { font: 500 15px/1.3 var(--font-mono); color: var(--fg-3); }
-.vz-kv b { font: 600 19px/1.3 var(--font-mono); color: var(--fg); }
+.vz-kv b { font: 600 16px/1.3 var(--font-mono); color: var(--fg); }
 `);
 
 // ------------------------------------------------------------------ numbers and helpers
@@ -253,7 +264,7 @@ function* prepareSteps(S, P, src, d) {
   // patches: every pixel is read once, patch by patch (raster order inside each patch)
   const X = new Float64Array(N * D), contrast = new Float64Array(N);
   const perPatch = Math.max(1, Math.floor(20000 / (P * P)));
-  let covered = 0;
+  let covered = 0;                                       // R + G + B summed over the patches (integers, so the sum is exact)
   for (let i = 0; i < N; i++) {
     const pr = Math.floor(i / g), pc = i % g;
     let at = i * D, s1 = 0, s2 = 0;
@@ -262,12 +273,14 @@ function* prepareSteps(S, P, src, d) {
         const o = ((pr * P + y) * E + pc * P + x) * 4;
         for (let ch = 0; ch < 3; ch++) X[at++] = (px[o + ch] / 255 - CLIP_MEAN[ch]) / CLIP_STD[ch];
         const lum = 0.299 * px[o] + 0.587 * px[o + 1] + 0.114 * px[o + 2];
-        s1 += lum; s2 += lum * lum; covered++;
+        s1 += lum; s2 += lum * lum; covered += px[o] + px[o + 1] + px[o + 2];
       }
     }
     contrast[i] = s2 - (s1 * s1) / (P * P);              // the most varied patch is the default pick
     if ((i + 1) % perPatch === 0) yield;
   }
+  let total = 0;                                         // the same sum, read straight off the resized image
+  for (let q = 0; q < px.length; q += 4) total += px[q] + px[q + 1] + px[q + 2];
   yield;
   // embedding: e_i = W_p x_i + p_i, where p_i is the row vector plus the column vector (illustrations)
   const Wp = cachedMat(`wp|${dv}|${D}|${P}`, () => randMatrix(dv, D, SEED_W + P));
@@ -290,7 +303,7 @@ function* prepareSteps(S, P, src, d) {
     for (let j = 0; j < d; j++) Hi[i * d + j] = dotAt(Xv, i * dv, Wq, j * dv, dv);
     if ((i + 1) % perHi === 0) yield;
   }
-  return { S, P, g, E, N, D, d, dv, can, X, Xv, Wp, Rp, Cp, Wq, Hi, wpMax: maxAbs(Wp), covered, pick: argmax(contrast) };
+  return { S, P, g, E, N, D, d, dv, can, X, Xv, Wp, Rp, Cp, Wq, Hi, wpMax: maxAbs(Wp), covered, total, pick: argmax(contrast) };
 }
 
 // The text positions shown in the mask and the sequence: TEXT_SHOW consecutive ones that hold the query.
@@ -330,14 +343,14 @@ export default {
 
     // ---------------------------------------------------- header, pickers, caption (shared kit parts)
     sceneHeader(st, {
-      chips: [['Image → tokens', 'embed'], ['ViT · VLM', 'pos']], title: 'Vision tokens',
+      chips: [['Image → tokens', 'embed'], ['ViT · VLM', null]], title: 'Vision tokens',
       sub: 'A vision-language model turns pixels into vectors that sit in the same sequence as the text.',
     });
     const cap = sceneCaption(st, { y: ZONES.caption.y, w: 1060 });
     const picker = tokenPicker(st, ctx, { label: 'query' });   // step 3: which query row the mask shows
     picker.el.classList.add('vz-fade');
 
-    // ---------------------------------------------------- the image controls, under the image
+    // ---------------------------------------------------- the image controls, above the image (steps 0 and 1)
     const patchPick = h('div', { class: 'k-picker' });
     const sizePick = h('div', { class: 'k-picker' });
     const sampleBtn = button('Sample', () => { userImg = null; srcVer++; sync(true); render({ animate: true }); }, { variant: 'ghost', title: 'Go back to the drawn sample image' });
@@ -446,19 +459,19 @@ export default {
 
     // ---------------------------------------------------- step 0: the grid and N
     function buildPatches(G0) {
-      const { S: s, E, g, N, P: p, D, covered } = cur;
+      const { S: s, E, g, N, P: p, D, covered, total } = cur;
       const resized = s === E ? null : `${s} px is not a multiple of ${p}, so the image is first resized to ${E} px.`;
       place(G0, h('div', { class: 'vz-stack' },
         h('div', { class: 'vz-k' }, 'patch grid'),
         kvLine('rows: H ÷ P', `${E} ÷ ${p} = ${g}`, 470),
         kvLine('columns: W ÷ P', `${E} ÷ ${p} = ${g}`, 470),
         kvLine('image tokens: rows × columns', `${g} × ${g} = ${N}`, 470),
-        kvLine(`numbers per patch: ${p} × ${p} × 3`, `${D}`, 470)), 600, 296, 470);
+        kvLine(`numbers per patch: ${p} × ${p} × 3`, `${D}`, 470)), 600, TOP, 470);
       place(G0, h('div', { class: 'vz-eqs' },
         h('div', { class: 'vz-k' }, 'one token per patch'),
         tx(String.raw`N=\left\lfloor\tfrac{H}{P}\right\rfloor\left\lfloor\tfrac{W}{P}\right\rfloor=${N}`, 24),
-        checkBadge(covered, E * E, { label: 'every pixel is in one patch' }),
-        resized && h('div', { class: 'vz-note' }, resized)), 1180, 296, 340);
+        checkBadge(covered, total, { label: 'the patches add up to the image' }),
+        resized && h('div', { class: 'vz-note' }, resized)), SIDE.x, SIDE.y, SIDE.w);
       return { start: null };
     }
     function captionPatches() {
@@ -494,8 +507,8 @@ export default {
       place(G1, h('div', { class: 'vz-eqs' },
         h('div', { class: 'vz-k' }, `patch ${sel} → one vector`),
         tx(String.raw`\mathbf{x}=\operatorname{flatten}(\mathbf{p}_{${sel}})\in\mathbb{R}^{${D}}`, 22),
-        checkBadge(x.length, 3 * p * p, { label: 'length is 3 · P · P' }),
-        h('div', { class: 'vz-note' }, 'Read row by row, R, G, B inside each pixel. A patch embedding is a Conv2d with kernel P and stride P: one linear map on this vector.')), 1180, 296, 340);
+        checkBadge(x[D - 1], (img.data[(p * p - 1) * 4 + 2] / 255 - CLIP_MEAN[2]) / CLIP_STD[2], { label: 'last number: bottom-right blue' }),
+        h('div', { class: 'vz-note' }, 'Read row by row, R, G, B inside each pixel. A patch embedding is a Conv2d with kernel P and stride P: one linear map on this vector.')), SIDE.x, SIDE.y, SIDE.w);
       // slots of the vector's cells, measured on the page (design units)
       const slots = [...xv.querySelectorAll('.k-cell')].map((n) => {
         const q = st.center(n);
@@ -579,49 +592,56 @@ export default {
     }
 
     // ---------------------------------------------------- step 2: W_p, the positions, the matrix X
+    // One centre line carries W_p, the operator, x_i, e_i and the arrow. It is X's middle, so the arrow enters X at its centre.
     function buildEmbed(G2, animate) {
       const { D, dv, N, g, X, Xv, Wp, Rp, Cp, wpMax } = cur;
       const r = Math.floor(sel / g), c = sel % g;
       const xs = X.subarray(sel * D, (sel + 1) * D), es = Xv.subarray(sel * dv, (sel + 1) * dv);
+      const rowH = Math.min(EMB.w / dv, EMB.maxH / N);     // one row of X per patch, in raster order
+      const xH = rowH * N;
+      const cy = Math.round((EMB.y + xH / 2) / 10) * 10;
+      // a column of cells, centred on the line by its cells (the label above it does not move them)
+      const centre = (node) => {
+        const cells = node.querySelector('.k-cells');
+        node.style.top = `${Math.round((cy - (cells.offsetTop + cells.offsetHeight / 2)) / 10) * 10}px`;
+        return node;
+      };
       const wc = canvasOf(D, dv);
       fillRows(wc, Wp, dv, D, wpMax, dv);
       wc.className = 'vz-tex';
-      place(G2, wc, 110, 452, 400, Math.max(40, 400 * dv / D));
-      place(G2, h('div', { class: 'vz-k' }, `W_p  ${dv} × ${D}  ·  illustration · colour ±${fmt(wpMax, 2)}`), 110, 420);
-      place(G2, op('\\times', { kind: 'embed', size: 44 }), 548 - 22, 500 - 22);
-      place(G2, mkVec(2, xs, { orientation: 'v', cell: 13, gap: 2, head: 12, tail: 4, range: RANGE, kind: 'embed', tex: String.raw`\mathbf{x}_i` }), 600, 292);
-      place(G2, mkVec(2, es, { orientation: 'v', cell: 13, gap: 2, head: 12, tail: 4, range: RANGE, kind: 'embed', tex: String.raw`\mathbf{e}_i` }), 700, 292);
-      place(G2, h('div', { class: 'vz-arrow' }), 748, 470, 36, 2);
+      place(G2, wc, 110, cy - WP_H / 2, 400, WP_H);
+      place(G2, h('div', { class: 'vz-k' }, `W_p  ${dv} × ${D}  ·  illustration · colour ±${fmt(wpMax, 2)}`), 110, cy - WP_H / 2 - 30);
+      place(G2, op('\\times', { kind: 'embed', size: 48 }), 531, cy - 24);
+      centre(place(G2, mkVec(2, xs, { orientation: 'v', cell: 13, gap: 2, head: 12, tail: 4, range: RANGE, kind: 'embed', tex: String.raw`\mathbf{x}_i` }), 600, 0));
+      const eNode = centre(place(G2, mkVec(2, es, { orientation: 'v', cell: 13, gap: 2, head: 12, tail: 4, range: RANGE, kind: 'embed', label: texHTML(String.raw`\mathbf{e}_i`) }), 700, 0));
+      // e_i is an illustration: its word sits under the column, where the arrow and X do not reach
+      const eCells = eNode.querySelector('.k-cells');
+      place(G2, h('div', { class: 'vz-k', style: { textAlign: 'center' } }, 'illustration'), eNode.offsetLeft + eCells.offsetLeft + eCells.offsetWidth / 2 - 60, cy + eCells.offsetHeight / 2 + 12, 120);
+      place(G2, h('div', { class: 'vz-arrow' }), 748, cy - 1, 36, 2);
       // X: one row per patch, in raster order
-      const rowH = Math.min(EMB.w / dv, EMB.maxH / N);
       const xc = canvasOf(dv, N);
       xc.className = 'vz-tex';
-      place(G2, xc, EMB.x, EMB.y, EMB.w, rowH * N);
-      place(G2, h('div', { class: 'vz-k' }, `X  ${N} × ${dv}  ·  colour ±${RANGE}`), EMB.x, EMB.y - 26);
-      // a label every few patch rows; the selected patch's (row, column) sits beside its own row
-      const every = g * Math.max(1, Math.ceil(18 / (rowH * g)));
+      place(G2, xc, EMB.x, EMB.y, EMB.w, xH);
+      place(G2, h('div', { class: 'vz-k' }, `X  ${N} × ${dv}  ·  illustration · colour ±${RANGE}`), EMB.x, EMB.y - 26);
+      place(G2, h('div', { class: 'vz-k' }, `X rows follow the patch grid: patch row r holds rows ${g}r to ${g}r + ${g - 1}`), EMB.x, EMB.y + xH + 12);
+      // the selected patch: its row band, and its label beside the row (no per-row list)
       const selY = EMB.y + sel * rowH;
-      for (let rI = 0; rI < N; rI += every) {
-        const y = EMB.y + rI * rowH;
-        if (Math.abs(y - selY) < 36) continue;
-        place(G2, h('div', { class: 'vz-rowlbl' }, `row ${Math.floor(rI / g)}`), EMB.x + EMB.w + 10, y - 6);
-      }
-      place(G2, h('div', { class: 'vz-rowlbl vz-selLbl' }, h('b', null, `patch ${sel}`), h('br'), `row ${r} · col ${c}`), EMB.x + EMB.w + 10, selY - 14);
+      place(G2, h('div', { class: 'vz-rowlbl vz-selLbl' }, h('b', null, `patch ${sel}`), h('br'), `X row ${sel}`, h('br'), `row ${r}, col ${c}`), EMB.x + EMB.w + 10, selY - 14);
       const band = place(G2, h('div', { class: 'vz-band' }), EMB.x - 3, EMB.y, EMB.w + 6, rowH + 2);
       const selRow = place(G2, h('div', { class: 'vz-selrow' }), EMB.x - 3, selY - 1, EMB.w + 6, rowH + 2);
       if (!animate) { fillRows(xc, Xv, N, dv, RANGE, N); selRow.style.opacity = '1'; }
       const k = Math.min(5, dv - 1);
       const expect = dotAt(X, sel * D, Wp, k * D, D) + Rp[r * dv + k] + Cp[c * dv + k];
       place(G2, h('div', { class: 'vz-eqs' },
-        h('div', { class: 'vz-k' }, `patch ${sel} → one row`),
+        h('div', { class: 'vz-k' }, `patch ${sel}, component ${k} → one row`),
         tx(String.raw`\mathbf{e}_i=W_p\,\mathbf{x}_i+\mathbf{p}_i\in\mathbb{R}^{${dv}}`, 22),
-        checkBadge(Xv[sel * dv + k], expect, { label: `equals W_p x_i + p_i, component ${k}` }),
-        h('div', { class: 'vz-note' }, 'p_i is the row vector plus the column vector of patch i. W_p and both position tables are seeded random (illustration). A trained encoder learns them; the shapes are the same.')), 1180, 296, 340);
+        checkBadge(Xv[sel * dv + k], expect, { label: 'arithmetic check, illustration' }),
+        h('div', { class: 'vz-note' }, 'p_i is the row vector plus the column vector of patch i. W_p and both position tables are seeded random (illustration). A trained encoder learns them; the shapes are the same.')), SIDE.x, SIDE.y, SIDE.w);
       return { xc, N, dv, rowH, band, selRow, Xv, animate, start: () => runFill({ xc, N, dv, rowH, band, selRow, Xv }) };
     }
     function captionEmbed() {
       const { D, dv, d, N } = cur;
-      return `A random linear map <b>W_p</b> takes each ${D}-vector to <b>${dv}</b> numbers, and a 2-D position is added. The ${N} rows stack into X. The width is a choice: half the LLM width of ${d}.`;
+      return `An illustrative random linear map <b>W_p</b> takes each ${D}-vector to <b>${dv}</b> numbers, and a 2-D position is added. The ${N} rows stack into X. The width is a choice: half the LLM width of ${d}.`;
     }
     function runFill({ xc, N, dv, rowH, band, selRow, Xv }) {
       const t0 = performance.now(), dur = 1600;           // the one slower fill (documented above)
@@ -651,10 +671,13 @@ export default {
       const { w0, Ts } = windowOf(T, selTok), q = selTok - w0;      // the window of text positions, and the query's row in it
       const rule = textRule(cfg);
       const fades = [];
+      const j3 = Math.min(3, d - 1);                       // the entry that the check reads
 
       // The mask. Image rows and columns: bidirectional within the image, masked from the text.
       // Text rows and columns: this model's own mask (cfg.mask), on the window of text positions.
-      const w = MASK.img, c = Math.max(MASK.cell, Math.round(160 / Ts)), Wt = Ts * c, L = MASK.labelW, Lh = MASK.labelH;
+      // A 20-unit cell at every length: the text footprint is Ts cells, so one token gives a small block.
+      const w = MASK.img, c = MASK.cell, Wt = Ts * c, L = MASK.labelW, Lh = MASK.labelH;
+      const wide = Wt >= 120, mid = Wt >= 60;               // a narrow footprint keeps only the words that fit
       place(G3, h('div', { class: 'vz-k' }, 'VLM mask · illustration: this app’s LLM has no image input'), MASK.x, MASK.y - 30);
       const box = place(G3, h('div', { class: 'vz-mask' }), MASK.x, MASK.y, L + w + Wt, Lh + w + Wt);
       const blk = (cls, X, Y, W, H, kids) => {
@@ -662,11 +685,13 @@ export default {
         box.append(b); fades.push(b); return b;
       };
       blk('allow', L, Lh, w, w, [h('b', null, 'bidirectional'), h('small', null, `N = ${N} tokens`)]);
-      blk('hide', L + w, Lh, Wt, w, [h('b', null, 'masked'), h('small', null, 'image cannot see text')]);
-      blk('allow', L, Lh + w, w, Wt, [h('b', null, 'text → image'), h('small', null, 'all visible')]);
+      blk('hide', L + w, Lh, Wt, w, wide ? [h('b', null, 'masked'), h('small', null, 'image cannot see text')] : mid ? [h('b', null, 'masked')] : []);
+      blk('allow', L, Lh + w, w, Wt, Wt >= 44 ? [h('b', null, 'text → image'), h('small', null, 'all visible')] : []);
       box.append(h('div', { class: 'vz-ml', style: { left: '0px', top: '0px', width: `${L - 10}px`, textAlign: 'right' } }, 'query'));
       box.append(h('div', { class: 'vz-ml', style: { left: `${L}px`, top: '0px', width: `${w}px`, textAlign: 'center' } }, 'keys: image'));
-      box.append(h('div', { class: 'vz-ml', style: { left: `${L + w}px`, top: '0px', width: `${Wt}px`, textAlign: 'center' } }, 'keys: text →'));
+      box.append(wide
+        ? h('div', { class: 'vz-ml', style: { left: `${L + w}px`, top: '0px', width: `${Wt}px`, textAlign: 'center' } }, 'keys: text →')
+        : h('div', { class: 'vz-ml', style: { left: `${L + w}px`, top: '0px' } }, 'keys: text →'));
       box.append(h('div', { class: 'vz-ml', style: { left: '0px', top: `${Lh + w / 2 - 8}px`, width: `${L - 10}px`, textAlign: 'right' } }, 'image'));
       for (let j = 0; j < Ts; j++) box.append(h('div', { class: 'vz-ml', style: { left: `${L + w + j * c}px`, top: `${Lh - 20}px`, width: `${c}px`, textAlign: 'center' } }, ctx.label(w0 + j)));
       for (let i = 0; i < Ts; i++) {
@@ -678,7 +703,7 @@ export default {
           fades.push(cl);
         }
       }
-      place(G3, h('div', { class: 'vz-k' }, `text → text: ${rule.short} · positions ${w0}–${w0 + Ts - 1} of ${T}, query ${selTok}`), MASK.x, MASK.y + Lh + w + Wt + 8);
+      place(G3, h('div', { class: 'vz-k' }, `text → text: ${rule.short}`, h('br'), `positions ${w0}–${w0 + Ts - 1} of ${T} · query ${selTok}`), MASK.x, MASK.y + Lh + w + Wt + 8);
 
       // one sequence: the image rows, then the text rows (the same window as the mask)
       const tc = canvasOf(d, N);
@@ -686,31 +711,34 @@ export default {
       tc.className = 'vz-tex';
       place(G3, tc, SEQ.x, SEQ.y, SEQ.w, SEQ_IMG_H);
       place(G3, h('div', { class: 'vz-k' }, `image tokens · ${N} × ${d} · illustration`), SEQ.x, SEQ.y - 26);
+      const TM_Y = SEQ.y + SEQ_IMG_H + 80;                  // the text heatmap; its token labels sit beside its rows
       place(G3, h('div', { class: 'vz-k' }, T > Ts ? `text tokens ${w0}–${w0 + Ts - 1} of ${T} · emb.out` : `text tokens · ${T} × ${d} · emb.out`), SEQ.x, SEQ.y + SEQ_IMG_H + 56);
       const tm = heatmap({
         data: emb ? emb.data.subarray(w0 * d, (w0 + Ts) * d) : new Float64Array(Ts * d), rows: Ts, cols: d,
         mode: 'diverging', showValues: false, range, cell: SEQ.w / d, cellH: 20, traceKey: 'emb.out',
-        rowLabels: Array.from({ length: Ts }, (_, i) => ctx.label(w0 + i)), highlight: { rows: [q] },
-        ariaLabel: 'text token embeddings, emb.out',
+        highlight: { rows: [q] }, ariaLabel: 'text token embeddings, emb.out',
       });
       heat = tm;
       tm.el.style.maxWidth = 'none';                     // the kit's max-width:100% would resolve against the zero-width group
-      place(G3, tm.el, SEQ.x, SEQ.y + SEQ_IMG_H + 80, 400);
-      place(G3, kvLine('one sequence: image + text tokens', `${N} + ${T} = ${N + T} tokens of ${d}`), SEQ.x, SEQ.y + SEQ_IMG_H + 80 + 176);
+      place(G3, tm.el, SEQ.x, TM_Y, 400);
+      // the token labels, in HTML at 15 px, on the heatmap's rows (its canvas starts under the empty title line)
+      const rowsTop = TM_Y + (tm.el.querySelector('canvas')?.offsetTop ?? 0);
+      for (let i = 0; i < Ts; i++) place(G3, h('div', { class: ['vz-tl', i === q && 'sel'] }, ctx.label(w0 + i)), SEQ.x - 46, rowsTop + i * 20, 40, 20);
+      place(G3, kvLine('one sequence: image + text tokens', `${N} + ${T} = ${N + T} tokens of ${d}`), SEQ.x, TM_Y + Ts * 20 + 16);
 
-      // the side: one equation, its check, one note
+      // the side: one equation, its self-check, one note
       place(G3, h('div', { class: 'vz-eqs' },
         h('div', { class: 'vz-k' }, 'one sequence'),
         tx(String.raw`\mathbf{x}_0=\begin{bmatrix}\hat{\mathbf{X}}\,W_{\text{proj}}^{\top}\\ \mathbf{E}_{\text{text}}\end{bmatrix}`, 22),
-        checkBadge(Hi[sel * d + 3], dotAt(Xv, sel * dv, Wq, 3 * dv, dv), { label: 'equals the dot product, row 3' }),
+        checkBadge(Hs[sel * d + j3], ratio * dotAt(Xv, sel * dv, Wq, j3 * dv, dv), { label: `self-check: image token ${sel}, entry ${j3}` }),
         h('div', { class: 'vz-note' }, emb
-          ? `Text rows are the model’s own emb.out, the x₀ of model.py. The projector is random, rescaled to the text rows. Both share one colour scale, ±${fmt(range, 2)}.`
-          : 'Run a forward pass to see the text rows.')), 1180, 296, 340);
+          ? `Text rows are the model’s own emb.out, the x₀ of model.py. The projector (illustration) is random, rescaled to the text rows. Both share one colour scale, ±${fmt(range, 2)}.`
+          : 'Run a forward pass to see the text rows.')), SIDE.x, SIDE.y, SIDE.w);
       return { fades, animate, start: () => fadeIn(fades) };
     }
     function captionLLM() {
       const { d, dv } = cur;
-      return `A projector maps the ${dv}-wide rows to the LLM width <b>${d}</b>. Image tokens see each other both ways. Each text token sees every image token and, under this model’s mask, ${textRule(ctx.cfg).phrase}.`;
+      return `A projector (random, an illustration) maps the ${dv}-wide rows to the LLM width <b>${d}</b>. Image tokens see each other both ways. Each text token sees every image token and, under this model’s mask, ${textRule(ctx.cfg).phrase}.`;
     }
     function fadeIn(els) {
       els.forEach((el, i) => {
@@ -722,11 +750,11 @@ export default {
 
     // ---------------------------------------------------- step 4: how many tokens
     const COUNTS = (() => {
-      const shot = (1920 * 1080) / (14 * 14);
+      const gw = SHOT.w / 14, gh = SHOT.h / 14, shot = gw * gh;   // whole patches of the resized screenshot: 136 × 76
       return [
         { label: 'ViT-L/14 · 224 px', sub: '16 × 16 patches', v: (224 / 14) ** 2 },
         { label: 'LLaVA-1.5 · 336 px', sub: '24 × 24 patches, CLS dropped', v: (336 / 14) ** 2 },
-        { label: '1080p screenshot · 14 px', sub: '137.1 × 77.1 patches', v: shot, hot: true },
+        { label: '1080p screenshot · 14 px', sub: `${gw} × ${gh} patches · ${SHOT.w} × ${SHOT.h} px`, v: shot, hot: true },
         { label: '2 × 2 merge (pixel shuffle)', sub: '÷ 4 tokens', v: shot / 4 },
         { label: '4 × 4 merge', sub: '÷ 16 tokens', v: shot / 16 },
       ];
@@ -742,24 +770,25 @@ export default {
         return { r, fill, val };
       });
       const exact = COUNTS[2].v, kv = 2 * 32 * 4096 * 2;            // K and V, 32 layers, d = 4096, fp16: bytes per token
-      const seqN = 20 * exact;
+      const seqN = 20 * exact;                                       // an assumed episode of 20 screenshots, all kept in context
       const n1 = Math.round(exact), n2 = Math.round(exact / 4);
       const att1 = exact * exact, att2 = (exact / 4) * (exact / 4);
+      const kk = (n) => `${Math.round(n / 1000)}k`;
       place(G4, h('div', { class: 'vz-note', style: { maxWidth: '1030px' }, html:
         `Attention work per head and layer grows with N<sup>2</sup>, so the 2 × 2 merge cuts it ${Math.round(att1 / att2)}×: ${texHTML(`${grp(n1)}^2\\approx${num(att1, 2)}`)} entries before, ${texHTML(`${grp(n2)}^2\\approx${num(att2, 1)}`)} after.` }),
         BARS.x, BARS.y0 + 5 * BARS.dy + 14, 1030);
       place(G4, h('div', { class: 'vz-note', style: { maxWidth: '1030px' } },
-        `If every screenshot stays in context, a 20-step episode holds about ${Math.round(seqN / 1000)}k image tokens, or ${Math.round(seqN / 4000)}k after the 2 × 2 merge.`), BARS.x, BARS.y0 + 5 * BARS.dy + 72, 1030);
+        `An assumed episode of 20 screenshots, all kept in context, holds about ${kk(seqN)} image tokens, or ${kk(seqN / 4)} after the 2 × 2 merge.`), BARS.x, BARS.y0 + 5 * BARS.dy + 72, 1030);
       const gib = (n) => (n * kv / 2 ** 30).toFixed(1);
       place(G4, h('div', { class: 'vz-eqs' },
         h('div', { class: 'vz-k' }, 'one 1080p screenshot'),
-        tx(String.raw`N=\frac{1920\cdot1080}{14^2}\approx${grp(exact)}`, 24),
-        h('div', { class: 'vz-note' }, `Whole patches, after resizing to 1918 × 1078 px: ${Math.floor(1920 / 14)} × ${Math.floor(1080 / 14)} = ${fmtInt(Math.floor(1920 / 14) * Math.floor(1080 / 14))}.`),
+        tx(String.raw`N=\frac{${SHOT.w}\cdot${SHOT.h}}{14^2}=${grp(exact)}`, 24),
+        h('div', { class: 'vz-note' }, `1920 × 1080 is resized down to ${SHOT.w} × ${SHOT.h} px: whole 14 px patches, and whole 2 × 2 blocks of them.`),
         h('div', { class: 'vz-card' },
           h('div', { class: 'vz-k' }, 'KV cache · Llama-2-7B shape, fp16'),
           kvLine('per token: 2 × 32 × 4096 × 2 B', `${(kv / 2 ** 20).toFixed(1)} MiB`, 312),
           kvLine(`one screenshot, ${fmtInt(exact)} tokens`, `≈ ${gib(exact)} GiB`, 312),
-          kvLine(`after 2 × 2 merge, ${fmtInt(exact / 4)} tokens`, `≈ ${gib(exact / 4)} GiB`, 312))), 1180, 296, 340);
+          kvLine(`after 2 × 2 merge, ${fmtInt(exact / 4)} tokens`, `≈ ${gib(exact / 4)} GiB`, 312))), SIDE.x, SIDE.y, SIDE.w);
       return {
         rows, animate,
         start: () => {
@@ -779,7 +808,7 @@ export default {
       };
     }
     function captionCount() {
-      return `A 1080p screenshot at 14 px is about <b>${(COUNTS[2].v / 1000).toFixed(1)}k</b> patches. Merging 2 × 2 patches into one token cuts the tokens 4× and the attention work 16×.`;
+      return `A 1080p screenshot, resized to ${SHOT.w} × ${SHOT.h} px, is <b>${fmtInt(COUNTS[2].v)}</b> patches of 14 px. Merging 2 × 2 patches into one token cuts the tokens 4× and the attention work 16×.`;
     }
 
     // ---------------------------------------------------- rendering and steps
@@ -788,7 +817,7 @@ export default {
       animate = animate && !reducedMotion();            // reduced motion: jump to each end state
       paintControls();
       picker.el.classList.toggle('on', step === 3);
-      strip.classList.toggle('on', step <= 3);
+      strip.classList.toggle('on', step <= 1);          // the image controls go with the image
       G.forEach((g, i) => g.classList.toggle('on', i === step && !!cur));
       wrap.classList.toggle('on', step <= 1 && !!cur);
       if (!cur) return;                                 // still computing: the busy caption says so
@@ -824,18 +853,22 @@ export default {
     }
 
     // ---------------------------------------------------- boot
+    cap.set('An image is cut into patches, and each patch becomes one token.');   // a neutral line until the first result is ready
     sync(true);
     ctx.setSteps(STEPS, (i) => goto(i));
     goto(0, { animate: true });
-    // First view only: walk the steps, each one given the time its animation needs.
+    // First view only: walk the steps, each one given the time its animation needs. A reader's
+    // interaction (a pointer press, the story bar, a step dot) stops the walk.
     let auto = null;
     const advance = (i) => {
       if (stopped || i >= STEPS.length) return;
       ctx.setStep(i);
       auto = setTimeout(() => advance(i + 1), STEP_MS[i]);
     };
+    const stopAuto = () => { clearTimeout(auto); auto = null; };
     auto = setTimeout(() => advance(1), STEP_MS[0]);
-    el.addEventListener('pointerdown', () => clearTimeout(auto), { once: true });
+    el.addEventListener('pointerdown', stopAuto, { once: true });
+    el.addEventListener('atlas:interrupt', stopAuto);
 
     return {
       destroy() {
