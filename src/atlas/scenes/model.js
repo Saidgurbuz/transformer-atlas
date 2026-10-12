@@ -1,945 +1,695 @@
-// Root scene: the decoder-only Transformer as a 3D figure, built on the logic of the
-// diagram in "Attention Is All You Need": inputs at the bottom, embedding ⊕ positions,
-// one expanded block (its other layers stacked in the stream as thin wafers, the whole
-// stack bracketed N×), Linear and Softmax, and the model's real output distribution.
+// Root scene: the decoder-only Transformer as a calm, jewel-like 3D stack. (Chosen over an
+// alternative, scenes/model-b.js, still previewable with ?root=b, in a blind design review.)
 //
-// Everything drawn is live data for the selected token: the stream is a ribbon showing
-// its residual vector at each depth, attention heads show their patterns on cards, the
-// feed-forward band shows every hidden unit's activation. The view opens as a flat,
-// paper-like front view and dolly-zooms into 3D. Every part zooms into its own level.
+// Every layer is present as a pair: attention (left, lower) and the MLP (right, higher: it runs
+// second), on a thin glass plate. The residual stream is the luminous spine between them; each
+// sub-layer hangs off it by one connector and adds back at a ⊕ (x + f(x)). Live data, drawn as
+// geometry rather than busy textures: each head is a small screen with its real attention pattern,
+// the MLP's hidden units stand as a field of pins whose heights are their real activations, and
+// the LM head carries the real next-token distribution. Nothing moves on its own except one calm
+// forward pass (a light travelling up the stream); hover only changes colour.
 import { SceneEngine, THREE, label } from '../../scene/engine3d.js';
 import { RoundedBoxGeometry } from '../../vendor/three/RoundedBoxGeometry.js';
 import { RoomEnvironment } from '../../vendor/three/RoomEnvironment.js';
+import { EffectComposer } from '../../vendor/three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from '../../vendor/three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from '../../vendor/three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from '../../vendor/three/addons/postprocessing/OutputPass.js';
+import { Line2 } from '../../vendor/three/addons/lines/Line2.js';
+import { LineMaterial } from '../../vendor/three/addons/lines/LineMaterial.js';
+import { LineGeometry } from '../../vendor/three/addons/lines/LineGeometry.js';
 import { h, reducedMotion, cssVar } from '../../ui/index.js';
 import { useStyle } from '../kit.js';
 
-const W = 7.2;              // slab width (x)
-const D = 2.4;              // slab depth (z)
-const RX = W / 2 + 1.0;     // x of the residual loops (right side: things that bypass)
-const RAIL = -W / 2 - 1.5;  // x of the label rail (left side: names, things that join)
-const RIB = 0.75;           // width of the residual-stream ribbon
-const FOV = 24;
-let revealed = false;       // the paper-to-3D opening plays once per page load
+// ------------------------------------------------------------------ geometry (world units)
+const MW = 4.4, MD = 2.75, MH = 0.5, MR = 0.17;   // a module body (the MLP; attention widens with its heads)
+const GAP = 1.05;                                  // from the stream to each module: room for the arrows into the ⊕
+const PD = MD + 0.55, PT = 0.09;                   // layer plate depth and thickness (its width follows the modules)
+const HEAD_W = 1.55;                               // world width per attention head: each pattern stays readable
+const RISE = 0.92;                                 // the MLP sits this much higher: it runs second
+const PITCH = 2.95;                                // layer to layer
+const SPINE_R = 0.15;                              // the residual stream: the hero of the figure
+const TOPK_UNITS = 28;                             // the MLP shows its most active units, not all of them
+// body colours: the saturated (light-theme) palette in both themes, so dark mode never turns pastel
+const BODY = { embed: '#0e8f86', pos: '#2b8bc9', attn: '#8250df', mlp: '#c98a06', norm: '#6b7a90', resid: '#4b54d6', head: '#d4435f' };
+const FOV = 27;
+const VIEW = new THREE.Vector3(Math.sin(0.4), 0.3, Math.cos(0.4)).normalize();   // a calm three-quarter view
 
-useStyle('model3d', `
-.m3 { position: absolute; inset: 0; }
-.m3-rail { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; pointer-events: none; transition: color .15s; }
-.m3-rail b { font: 600 13px/1.2 var(--font-body); color: var(--fg); }
-.m3-rail span { font: 500 11px/1.2 var(--font-mono); color: var(--fg-3); }
-.m3-rail.hot b { color: var(--accent); }
-.m3-rail.hot b::after { content: '  open →'; font: 600 11px var(--font-mono); color: var(--accent); }
-.m3-cap { display: grid; justify-items: center; gap: 2px; white-space: nowrap; pointer-events: none; }
-.m3-cap b { font: 650 14px/1.2 var(--font-display); color: var(--fg); }
-.m3-cap span { font: 500 11.5px/1.2 var(--font-mono); color: var(--fg-3); }
-.m3-cap button { pointer-events: auto; margin-top: 6px; font: 600 11.5px/1 var(--font-mono); color: var(--accent); background: var(--surface); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 6px 12px; cursor: pointer; }
-.m3-cap button:hover { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
-.m3-land { font: 600 11px/1 var(--font-mono); color: var(--c-head); white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .3s; }
-.m3-mini { font: 600 11px/1 var(--font-mono); color: var(--fg-3); pointer-events: none; }
-.m3-qkv { font: 700 12px/1 var(--font-mono); pointer-events: none; }
-.m3-prob { font: 600 12px/1.2 var(--font-mono); color: var(--fg); white-space: nowrap; pointer-events: none; }
-.m3-prob.top { font-size: 15px; padding: 3px 9px; border-radius: 6px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--c-head); }
-.m3-nx { display: grid; gap: 8px; pointer-events: auto; user-select: none; }
-.m3-nx b { font: 700 34px/1 var(--font-display); color: var(--fg-2); }
-.m3-nx .pips { display: flex; gap: 5px; }
-.m3-nx .pip { width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); cursor: pointer; font: 600 10px/1 var(--font-mono); color: var(--fg-3); padding: 0; }
-.m3-nx .pip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-.m3-nx span { font: 600 11.5px/1 var(--font-mono); color: var(--fg-3); }
+useStyle('model-a', `
+.ma { position: absolute; inset: 0; }
+.ma-lab { display: grid; justify-items: end; gap: 2px; white-space: nowrap; pointer-events: none; text-align: right; }
+.ma-lab b { font: 650 13.5px/1.15 var(--font-display); color: var(--fg); letter-spacing: -.005em; }
+.ma-lab span { font: 500 11px/1.2 var(--font-mono); color: var(--fg-3); }
+.ma-lab i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--kind); margin-right: 7px; vertical-align: 1px; }
+.ma-lab.sel b { color: var(--accent); }
+.ma-hover { pointer-events: none; padding: 7px 11px; border-radius: 9px; background: color-mix(in srgb, var(--surface) 92%, transparent); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0,0,0,.12); white-space: nowrap; opacity: 0; transition: opacity .16s; }
+.ma-hover.on { opacity: 1; }
+.ma-hover b { display: block; font: 650 13px/1.2 var(--font-body); color: var(--fg); }
+.ma-hover span { font: 500 11px/1.3 var(--font-mono); color: var(--fg-3); }
+.ma-next { pointer-events: none; display: grid; gap: 7px; padding: 12px 14px 13px; min-width: 190px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 88%, transparent); border: 1px solid var(--line); box-shadow: 0 12px 34px rgba(0,0,0,.10); opacity: 0; transition: opacity .5s; }
+.ma-next.on { opacity: 1; }
+.ma-next .t { font: 600 10.5px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); }
+.ma-next .r { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 9px; font: 600 13px/1 var(--font-mono); color: var(--fg); }
+.ma-next .r em { font-style: normal; color: var(--fg-3); font-weight: 500; }
+.ma-next .bar { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--c-head) 22%, transparent); overflow: hidden; min-width: 70px; }
+.ma-next .bar > div { height: 100%; border-radius: 3px; background: var(--c-head); }
+.ma-next .r.win { color: var(--c-head); }
+.ma-cap { display: grid; justify-items: center; gap: 4px; white-space: nowrap; }
+.ma-cap span { font: 500 11.5px/1.2 var(--font-mono); color: var(--fg-3); pointer-events: none; }
+.ma-cap button { pointer-events: auto; margin-top: 4px; font: 600 11.5px/1 var(--font-mono); color: var(--accent); background: var(--surface); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 999px; padding: 7px 13px; cursor: pointer; }
+.ma-cap button:hover { background: color-mix(in srgb, var(--accent) 10%, var(--surface)); }
+.ma-win { pointer-events: none; display: grid; justify-items: center; gap: 3px; white-space: nowrap; opacity: 0; transition: opacity .5s; }
+.ma-win.on { opacity: 1; }
+.ma-win b { font: 700 30px/1 var(--font-mono); color: var(--fg); letter-spacing: -.02em; }
+.ma-win span { font: 650 13px/1 var(--font-mono); color: var(--c-head); }
+.ma-win em { font: 500 11px/1.2 var(--font-mono); font-style: normal; color: var(--fg-3); }
+.ma-win b .sp { font-size: .5em; opacity: .4; font-style: normal; margin-right: 1px; }
+.ma-legend { display: flex; gap: 12px; justify-content: center; font: 600 11px/1 var(--font-mono); color: var(--fg-2); pointer-events: none; margin-top: 6px; }
+.ma-legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
+.ma-lab .d { display: block; font: 500 10.5px/1.35 var(--font-mono); color: var(--fg-3); }
+.ma-side { display: grid; gap: 2px; white-space: nowrap; pointer-events: none; }
+.ma-side b { font: 650 13.5px/1.15 var(--font-display); color: var(--fg); }
+.ma-side span { font: 500 11px/1.2 var(--font-mono); color: var(--fg-3); }
+.ma-side i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--c-resid); margin-right: 7px; vertical-align: 1px; }
 `);
 
 export default {
   mount(el, ctx) {
-    const host = h('div', { class: 'm3' });
+    const host = h('div', { class: 'ma' });
     el.append(host);
-    const engine = new SceneEngine(host, { onHover: (info) => setHover(info), onHoverMove: () => {}, onPick: () => {}, onTheme: () => { applyLook(); build(); } });
-    const R = engine.renderer;
+    const engine = new SceneEngine(host, { onHover: (info) => setHover(info), onPick: () => {}, onTheme: () => { look(); build(); } });
+    const R = engine.renderer, cam = engine.camera;
+    cam.fov = FOV; cam.near = 0.5; cam.far = 600;          // a tight depth range: no z-fighting on thin faces
+    cam.updateProjectionMatrix();
     R.shadowMap.enabled = true;
-    R.shadowMap.type = THREE.VSMShadowMap;
-    engine.camera.fov = FOV;
-    engine.camera.updateProjectionMatrix();
-    engine.controls.minDistance = 8;
-    engine.controls.maxDistance = 140;
-    engine.controls.maxPolarAngle = Math.PI * 0.62;
-    engine.hemi.intensity = 0.35;
-    engine.sun.intensity = 0;
+    R.shadowMap.type = THREE.PCFSoftShadowMap;
+    engine.controls.minDistance = 10;
+    engine.controls.maxDistance = 160;
+    engine.controls.maxPolarAngle = Math.PI * 0.6;
+    engine.controls.enablePan = false;
+    engine.hemi.intensity = 0.0;
+    engine.sun.intensity = 0.0;
     const pmrem = new THREE.PMREMGenerator(R);
     const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     engine.scene.environment = envTex;
 
-    const key = new THREE.DirectionalLight(0xffffff, 2.2);
-    key.position.set(5, 26, 9);
+    const key = new THREE.DirectionalLight(0xffffff, 2.0);
+    key.position.set(-7, 26, 14);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
-    key.shadow.radius = 10;
-    key.shadow.blurSamples = 16;
     key.shadow.bias = -0.0004;
-    Object.assign(key.shadow.camera, { left: -12, right: 12, top: 30, bottom: -4, near: 1, far: 70 });
-    const rim = new THREE.DirectionalLight(0xa9b8ff, 0.9);
-    rim.position.set(-6, 10, -16);
-    engine.scene.add(key, key.target, rim);
+    key.shadow.normalBias = 0.03;
+    key.shadow.radius = 4;
+    const fill = new THREE.DirectionalLight(0xdfe6ff, 0.6);
+    fill.position.set(12, 8, 10);
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x8a93a6, 0.7);
+    const rim = new THREE.DirectionalLight(0xc9d4ff, 1.0);             // outlines the silhouettes from behind
+    rim.position.set(6, 10, -16);
+    engine.scene.add(key, key.target, fill, hemi, rim);
 
     const root = new THREE.Group();
     engine.scene.add(root);
-    let parts = [], labels = [], disposables = [], billboards = [], faceCam = [], bounds = null, hot = null;
-    let interacted = false, pointerIn = false, settleUntil = 0;
-    let flow = [], play = null, flyer = null;   // the forward-pass animation: parts in the order data reaches them
-    engine.controls.addEventListener('start', () => { interacted = true; });
-    R.domElement.addEventListener('pointerenter', () => { pointerIn = true; });
-    R.domElement.addEventListener('pointerleave', () => { pointerIn = false; });
 
-    // ---------------------------------------------------------------- look
+    // ---------------------------------------------------------------- look: theme, tone, bloom
     const dark = () => engine.isDark;
     const tok = (name, fb = '#888888') => { const c = new THREE.Color(); try { c.setStyle(cssVar(name) || fb); } catch { c.setStyle(fb); } return c; };
-    const hue = (kind) => tok(`--c-${kind}`);
-    const bodyTone = () => new THREE.Color(dark() ? '#1b212c' : '#f6f4f1');
-    function applyLook() {
-      // ACES keeps the dark theme's glow; on the light page it greys the hues, so plain linear there
-      R.toneMapping = dark() ? THREE.ACESFilmicToneMapping : THREE.LinearToneMapping;
-      R.toneMappingExposure = dark() ? 1.15 : 0.85;
+    const hue = (kind) => tok(`--c-${kind}`);                          // UI tokens: data and accents
+    const bodyHue = (kind) => new THREE.Color(BODY[kind] ?? cssVar(`--c-${kind}`) ?? '#888888');
+    const hex = (c) => `#${c.getHexString()}`;
+    let composer = null, bloom = null, bgTex = null;
+    function look() {
+      R.toneMapping = dark() ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+      R.toneMappingExposure = dark() ? 1.0 : 1;
+      key.intensity = dark() ? 1.9 : 2.0;
+      rim.intensity = dark() ? 1.4 : 0.5;
+      hemi.intensity = dark() ? 0.5 : 0.75;
+      hemi.groundColor.set(dark() ? 0x1a2030 : 0x9aa3b4);
       engine.scene.fog = null;
+      // a soft studio backdrop (screen-space, so it never moves), dithered against banding
+      bgTex?.dispose();
+      const c = document.createElement('canvas'); c.width = c.height = 512;
+      const g = c.getContext('2d'), base = tok('--bg');
+      const mid = dark() ? new THREE.Color('#151b29') : new THREE.Color('#ffffff');
+      const grad = g.createRadialGradient(256, 210, 10, 256, 256, 400);
+      grad.addColorStop(0, hex(mid)); grad.addColorStop(1, hex(base));
+      g.fillStyle = grad; g.fillRect(0, 0, 512, 512);
+      const img = g.getImageData(0, 0, 512, 512);
+      for (let i = 0; i < img.data.length; i += 4) { const n = (Math.random() - 0.5) * 3; img.data[i] += n; img.data[i + 1] += n; img.data[i + 2] += n; }
+      g.putImageData(img, 0, 0);
+      bgTex = new THREE.CanvasTexture(c);
+      bgTex.colorSpace = THREE.SRGBColorSpace;
+      engine.scene.background = bgTex;
+      // dark: a gentle bloom on the luminous data only (the stream, patterns, active units, the winner); light: plain MSAA
+      if (dark() && !composer) {
+        const w = Math.max(1, host.clientWidth), hh = Math.max(1, host.clientHeight);
+        const rt = new THREE.WebGLRenderTarget(w, hh, { type: THREE.HalfFloatType, samples: 4 });
+        composer = new EffectComposer(R, rt);
+        composer.setPixelRatio(R.getPixelRatio());
+        composer.addPass(new RenderPass(engine.scene, cam));
+        bloom = new UnrealBloomPass(new THREE.Vector2(w, hh), 0.55, 0.4, 0.97);   // high threshold: only emissive data glows
+        composer.addPass(bloom);
+        composer.addPass(new OutputPass());
+        composer.setSize(w, hh);
+      }
+      engine.setRenderFn(dark() ? () => composer.render() : null);
+      engine.invalidate();
     }
-    applyLook();
-    const muted = (kind, k) => hue(kind).lerp(bodyTone(), k ?? (dark() ? 0.4 : 0.26));
-    function bodyMat(kind, { k, opacity = 1, glass = false } = {}) {
+    const offResize = engine.onResize((w, hh) => { composer?.setSize(w, hh); });
+
+    // ---------------------------------------------------------------- materials and helpers
+    let parts = [], labels = [], disposables = [], flow = [], faceCam = [], hot = null, play = null, bounds = null, hoverLab = null, nextCard = null, winLab = null;
+    let camKey = '';                                                   // the ⊕ badges turn to the viewer only when the camera moves
+    function bodyMat(kind, { k = 0, opacity = 1, rough = 0.32 } = {}) {
+      const c = bodyHue(kind).lerp(tok('--bg'), k);
       return new THREE.MeshPhysicalMaterial({
-        color: muted(kind, k), roughness: glass ? 0.3 : 0.38, metalness: 0, clearcoat: 0.6, clearcoatRoughness: 0.2,
-        envMapIntensity: 0.6, sheen: 0.25, sheenColor: hue(kind), emissive: hue(kind), emissiveIntensity: 0,
-        transparent: opacity < 1, opacity,
+        color: c, roughness: rough, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.18, envMapIntensity: dark() ? 0.75 : 0.9,
+        emissive: bodyHue(kind), emissiveIntensity: 0, transparent: opacity < 1, opacity,
       });
     }
-    function outline(mesh, kind) {
-      const c = hue(kind).lerp(tok('--bg'), 0.5);
-      const mat = new THREE.LineBasicMaterial({ color: c, transparent: true, opacity: dark() ? 0.35 : 0.22 });
-      const lines = new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry, 30), mat);
-      mesh.add(lines);
-      mesh.userData.outline = lines;
-      return lines;
-    }
-    function slab(kind, w, hgt, d, opts = {}) {
-      const m = new THREE.Mesh(new RoundedBoxGeometry(w, hgt, d, 4, Math.min(opts.r ?? 0.12, hgt / 2.2)), bodyMat(kind, opts));
-      m.castShadow = true;
+    function body(kind, w, hgt, d, opts = {}) {
+      const m = new THREE.Mesh(new RoundedBoxGeometry(w, hgt, d, 5, Math.min(opts.r ?? MR, hgt / 2.05, w / 2.05, d / 2.05)), opts.mat ?? bodyMat(kind, opts));
+      m.castShadow = opts.cast ?? true;
       m.receiveShadow = true;
-      outline(m, kind);
-      return m;
-    }
-    function addPart(mesh, data) {
-      Object.assign(mesh.userData, data);
-      engine.addPickable(mesh);
-      parts.push(mesh);
-      return mesh;
-    }
-    const V3 = (x, y, z = 0) => new THREE.Vector3(x, y, z);
-    function css(html, pos, { cls = '', center = [0.5, 0.5], interactive = false } = {}) {
-      const l = label(html, { className: cls, interactive });
-      l.position.copy(pos);
-      l.center.set(...center);
-      root.add(l);
-      labels.push(l);
-      return l;
-    }
-    // name on the left rail, with a leader line to the part's front-left corner
-    function rail(mesh, name, dims, y, x0, z = D / 2) {
-      const pts = [V3(x0 - 0.05, y, z), V3(RAIL + 0.15, y, z)];
-      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial({ color: tok('--fg-3'), transparent: true, opacity: 0.45 }));
-      root.add(line);
-      const l = css(`<b>${name}</b>${dims ? `<span>${dims}</span>` : ''}`, V3(RAIL, y, z), { cls: 'm3-rail', center: [1, 0.5] });
-      if (mesh) mesh.userData.railEl = l.userData.el;
-      return l;
-    }
-    function tube(path, radius, color, segs = 64) {
-      const m = new THREE.Mesh(new THREE.TubeGeometry(path, segs, radius, 10, false), new THREE.MeshStandardMaterial({ color, roughness: 0.4, envMapIntensity: 0.5 }));
-      m.castShadow = true;
       root.add(m);
       return m;
     }
-    function cone(pos, color, dir = 'up', s = 1) {
-      const c = new THREE.Mesh(new THREE.ConeGeometry(0.12 * s, 0.24 * s, 20), new THREE.MeshStandardMaterial({ color, roughness: 0.4 }));
-      c.position.copy(pos);
-      if (dir === 'left') c.rotation.z = Math.PI / 2;
-      root.add(c);
-      return c;
+    function part(mesh, data) { Object.assign(mesh.userData, data); engine.addPickable(mesh); parts.push(mesh); return mesh; }
+    const V3 = (x, y, z = 0) => new THREE.Vector3(x, y, z);
+    function css(html, pos, { cls = '', center = [0.5, 0.5], interactive = false, kind = null } = {}) {
+      const l = label(html, { className: cls, interactive, kind });
+      l.position.copy(pos); l.center.set(...center);
+      root.add(l); labels.push(l);
+      return l;
     }
-    function arrowUp(y0, y1, color, x = 0) {
-      const path = new THREE.LineCurve3(V3(x, y0), V3(x, y1 - 0.2));
-      tube(path, 0.05, color, 4);
-      cone(V3(x, y1 - 0.12), color);
+    const lineMats = [];
+    function line(points, color, width = 2.2, opacity = 1) {
+      const geo = new LineGeometry();
+      geo.setPositions(points.flatMap((p) => [p.x, p.y, p.z]));
+      const mat = new LineMaterial({ color, linewidth: width, transparent: opacity < 1, opacity, worldUnits: false });
+      mat.resolution.set(host.clientWidth || 1, host.clientHeight || 1);
+      lineMats.push(mat);
+      const l = new Line2(geo, mat);
+      l.computeLineDistances();
+      root.add(l);
+      return l;
     }
-    function plusNode(y, kind = 'resid', r = 0.3) {
-      const g = new THREE.Group();
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.05, 14, 48), new THREE.MeshStandardMaterial({ color: hue(kind), roughness: 0.35 }));
-      const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 48), new THREE.MeshStandardMaterial({ color: tok('--surface'), roughness: 0.7 }));
-      const bm = new THREE.MeshStandardMaterial({ color: hue(kind) });
-      g.add(disc, ring, new THREE.Mesh(new THREE.BoxGeometry(r * 1.15, 0.065, 0.02), bm), new THREE.Mesh(new THREE.BoxGeometry(0.065, r * 1.15, 0.02), bm));
-      g.position.set(0, y, 0.02);
-      root.add(g);
-      faceCam.push(g);
-      flow.push({ type: 'pulse', obj: g });
-      const hit = new THREE.Mesh(new THREE.SphereGeometry(r * 1.25, 12, 8), new THREE.MeshBasicMaterial({ visible: false }));
-      g.add(hit);
-      return { g, hit };
-    }
-    function fork(y) {
-      const s = new THREE.Mesh(new THREE.SphereGeometry(0.1, 20, 14), new THREE.MeshStandardMaterial({ color: hue('resid'), roughness: 0.35 }));
-      s.position.set(0, y, 0);
-      root.add(s);
-    }
-    // residual loop: leaves the stream at y0, around the right, back into the ⊕ at y1
-    function loop(y0, y1, xIn = 0.36) {
-      const r = 0.35, P = (x, y) => V3(x, y);
-      const path = new THREE.CurvePath();
-      path.add(new THREE.LineCurve3(P(0.1, y0), P(RX - r, y0)));
-      path.add(new THREE.QuadraticBezierCurve3(P(RX - r, y0), P(RX, y0), P(RX, y0 + r)));
-      path.add(new THREE.LineCurve3(P(RX, y0 + r), P(RX, y1 - r)));
-      path.add(new THREE.QuadraticBezierCurve3(P(RX, y1 - r), P(RX, y1), P(RX - r, y1)));
-      path.add(new THREE.LineCurve3(P(RX - r, y1), P(xIn + 0.22, y1)));
-      tube(path, 0.06, hue('resid'), 180);
-      cone(V3(xIn + 0.12, y1, 0), hue('resid'), 'left');
-    }
-
-    // diverging ramp for vector values (theme tokens)
-    function ramp() {
-      const neg = tok('--heat-neg'), mid = tok('--heat-mid'), pos = tok('--heat-pos');
-      return (v) => { const t = Math.max(-1, Math.min(1, v)), e = Math.pow(Math.abs(t), 0.5); return (t < 0 ? mid.clone().lerp(neg, e) : mid.clone().lerp(pos, e)); };
-    }
-    function vectorTexture(vals, range) {
-      const f = ramp(), n = vals.length, px = new Uint8Array(n * 4);
-      vals.forEach((v, i) => { const c = f(v / range); c.convertLinearToSRGB?.(); px[i * 4] = c.r * 255; px[i * 4 + 1] = c.g * 255; px[i * 4 + 2] = c.b * 255; px[i * 4 + 3] = 255; });
-      const t = new THREE.DataTexture(px, n, 1, THREE.RGBAFormat);
-      t.magFilter = THREE.NearestFilter;
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.needsUpdate = true;
-      disposables.push(t);
-      return t;
-    }
-    // the stream between y0 and y1 as a camera-facing ribbon showing a real vector
-    function ribbon(y0, y1, vals, range, edgeKind = 'resid', withArrow = true) {
-      const len = y1 - y0 - (withArrow ? 0.2 : 0);
-      if (len <= 0.05) return;
-      const g = new THREE.Group();
-      const plane = new THREE.Mesh(new THREE.PlaneGeometry(RIB, len), new THREE.MeshBasicMaterial({ map: vectorTexture(vals, range), toneMapped: false, side: THREE.DoubleSide }));
-      plane.position.y = len / 2;
-      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(plane.geometry), new THREE.LineBasicMaterial({ color: hue(edgeKind), transparent: true, opacity: 0.3 }));
-      edge.position.y = len / 2;
-      g.add(plane, edge);
-      if (withArrow) {                       // a flat arrowhead in the ribbon's plane
-        const tri = new THREE.Shape();
-        tri.moveTo(-RIB * 0.4, 0); tri.lineTo(RIB * 0.4, 0); tri.lineTo(0, 0.24); tri.closePath();
-        const head = new THREE.Mesh(new THREE.ShapeGeometry(tri), new THREE.MeshBasicMaterial({ color: hue(edgeKind), toneMapped: false, side: THREE.DoubleSide }));
-        head.position.y = len - 0.02;
-        g.add(head);
-      }
-      g.position.set(0, y0, 0);
-      root.add(g);
-      billboards.push(g);
-      flow.push({ type: 'grow', obj: g });
-    }
-
-    // attention pattern drawn on a canvas: masked cells hatched, the selected query row outlined
-    function patternTexture(probs, mask, hh, q) {
-      const T = probs.shape[1], S = 256, c = document.createElement('canvas');
-      c.width = c.height = S;
-      const g = c.getContext('2d');
-      const lo = tok('--heat-lo'), hi = tok('--heat-hi');
-      if (!dark()) lo.multiplyScalar(0.95);
-      const cell = S / T;
-      g.fillStyle = `#${lo.getHexString()}`;
-      g.fillRect(0, 0, S, S);
-      for (let i = 0; i < T; i++) {
-        let rowMax = 0;
-        for (let j = 0; j < T; j++) rowMax = Math.max(rowMax, probs.data[(hh * T + i) * T + j]);
-        for (let j = 0; j < T; j++) {
-        const allowed = mask ? mask.data[i * T + j] > 0 : true;
-        if (!allowed) continue;
-        const v = Math.pow(probs.data[(hh * T + i) * T + j] / (rowMax || 1), 0.6);
-        g.fillStyle = `#${lo.clone().lerp(hi, v).getHexString()}`;
-        g.fillRect(j * cell, i * cell, cell + 0.6, cell + 0.6);
-        }
-      }
-      g.strokeStyle = `#${tok('--c-mask').getHexString()}`;
-      g.globalAlpha = 0.5;
-      g.lineWidth = 1;
-      g.beginPath();
-      for (let k = -S; k < S; k += 7) { g.moveTo(k, 0); g.lineTo(k + S, S); }
-      g.save();
-      g.beginPath();
-      for (let i = 0; i < T; i++) for (let j = 0; j < T; j++) if (mask && !(mask.data[i * T + j] > 0)) g.rect(j * cell, i * cell, cell, cell);
-      g.clip();
-      for (let k = -S; k < S; k += 7) { g.moveTo(k, 0); g.lineTo(k + S, S); }
-      g.stroke();
-      g.restore();
-      g.globalAlpha = 1;
-      g.strokeStyle = `#${tok('--accent').getHexString()}`;
-      g.lineWidth = Math.max(2, cell * 0.25);
-      g.strokeRect(1, q * cell, S - 2, cell);
+    const offLineRes = engine.onResize((w, hh) => lineMats.forEach((m) => m.resolution.set(w, hh)));
+    function canvasTex(c) {
       const t = new THREE.CanvasTexture(c);
       t.colorSpace = THREE.SRGBColorSpace;
-      t.anisotropy = 8;
+      t.anisotropy = R.capabilities.getMaxAnisotropy();
       disposables.push(t);
       return t;
     }
-    // printed text on a card face
-    function glyphTexture(text, w, hgt, fg, bg) {
-      const c = document.createElement('canvas'), sc = 200;
+    function glyph(text, w, hgt, fg) {
+      const c = document.createElement('canvas'), sc = 220;
       c.width = Math.round(w * sc); c.height = Math.round(hgt * sc);
       const g = c.getContext('2d');
-      void bg;
-      g.clearRect(0, 0, c.width, c.height);
       g.fillStyle = fg;
-      g.font = `700 ${Math.round(hgt * sc * 0.52)}px "JetBrains Mono", ui-monospace, monospace`;
+      g.font = `650 ${Math.round(hgt * sc * 0.5)}px "JetBrains Mono", ui-monospace, monospace`;
       g.textAlign = 'center'; g.textBaseline = 'middle';
       g.fillText(text, c.width / 2, c.height / 2 + 2);
-      const t = new THREE.CanvasTexture(c);
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.anisotropy = 8;
-      disposables.push(t);
-      return t;
+      return canvasTex(c);
     }
-    // a collapsed layer: its fingerprint (attention thumbnails + MLP strip) printed on the front
-    function waferTexture(l, st) {
-      const c = document.createElement('canvas'), Wp = 1400, Hp = 64;
-      c.width = Wp; c.height = Hp;
-      const g = c.getContext('2d');
-      g.fillStyle = `#${muted('norm', dark() ? 0.7 : 0.55).getHexString()}`;
-      g.fillRect(0, 0, Wp, Hp);
-      const probs = st.trace[`L${l}.attn.probs`];
-      if (probs) {
-        const H = probs.shape[0], T = probs.shape[1], s = 48, lo = tok('--heat-lo'), hi = tok('--heat-hi');
-        for (let hh = 0; hh < H && hh < 8; hh++) {
-          const x0 = 60 + hh * (s + 12);
-          for (let i = 0; i < T; i++) for (let j = 0; j < T; j++) {
-            let rowMax = 0;
-            for (let jj = 0; jj < T; jj++) rowMax = Math.max(rowMax, probs.data[(hh * T + i) * T + jj]);
-            const v = Math.pow(probs.data[(hh * T + i) * T + j] / (rowMax || 1), 0.6);
-            g.fillStyle = `#${lo.clone().lerp(hi, v).getHexString()}`;
-            g.fillRect(x0 + (j * s) / T, 8 + (i * s) / T, s / T + 0.5, s / T + 0.5);
-          }
-        }
-      }
-      const act = st.trace[`L${l}.mlp.act`];
-      if (act) {
-        const F = act.shape[1], t = Math.min(st.sel.token, act.shape[0] - 1), x0 = 760, w = Wp - x0 - 30;
+    // a head's pattern: each query row scaled to its own max, masked cells flat (no hatching: it shimmers)
+    function patternTex(probs, mask, hh, q) {
+      const T = probs.shape[1], S = 192, c = document.createElement('canvas');
+      c.width = c.height = S;
+      const g = c.getContext('2d'), cell = S / T;
+      const lo = new THREE.Color(dark() ? '#0e0c1a' : '#ffffff'), hi = new THREE.Color(dark() ? '#cdb8ff' : '#5b21b6');
+      const off = new THREE.Color(dark() ? '#08070f' : '#eef0f5');       // masked cells: the causal triangle shows as a quiet tint
+      g.fillStyle = hex(off); g.fillRect(0, 0, S, S);
+      for (let i = 0; i < T; i++) {
         let mx = 0;
-        for (let f = 0; f < F; f++) mx = Math.max(mx, Math.abs(act.data[t * F + f]));
-        const m = hue('mlp');
-        for (let f = 0; f < F; f++) {
-          const v = Math.abs(act.data[t * F + f]) / (mx || 1);
-          g.fillStyle = `#${tok('--surface-3').lerp(m, v).getHexString()}`;
-          g.fillRect(x0 + (f * w) / F, 22, w / F + 0.5, 20);
+        for (let j = 0; j < T; j++) mx = Math.max(mx, probs.data[(hh * T + i) * T + j]);
+        for (let j = 0; j < T; j++) {
+          if (mask && !(mask.data[i * T + j] > 0)) continue;
+          const v = Math.pow(probs.data[(hh * T + i) * T + j] / (mx || 1), dark() ? 0.5 : 0.4);
+          g.fillStyle = hex(lo.clone().lerp(hi, v));
+          g.fillRect(Math.floor(j * cell), Math.floor(i * cell), Math.ceil(cell) + 1, Math.ceil(cell) + 1);
         }
       }
-      const t = new THREE.CanvasTexture(c);
-      t.colorSpace = THREE.SRGBColorSpace;
-      t.anisotropy = 8;
-      disposables.push(t);
-      return t;
+      g.strokeStyle = hex(tok('--accent')); g.lineWidth = Math.max(3, cell * 0.35);
+      g.strokeRect(1.5, q * cell, S - 3, cell);
+      return canvasTex(c);
     }
 
     // ---------------------------------------------------------------- build
     function clear() {
       for (const p of parts) engine.removePickable(p);
-      parts = []; billboards = []; faceCam = []; flow = []; play = null; flyer = null;
+      parts = []; flow = []; faceCam = []; play = null; hot = null; camKey = '';
       for (const l of labels) l.userData.el.remove();
-      labels = [];
-      disposables.forEach((t) => t.dispose());
-      disposables = [];
-      root.traverse((o) => { o.geometry?.dispose?.(); if (o.material) [].concat(o.material).forEach((m) => { m.map?.dispose?.(); m.dispose(); }); });
+      labels = []; hoverLab = null; nextCard = null; winLab = null;
+      disposables.forEach((t) => t.dispose()); disposables = [];
+      lineMats.length = 0;
+      root.traverse((o) => { o.geometry?.dispose?.(); if (o.material) [].concat(o.material).forEach((m) => m.dispose()); });
       root.clear();
-      hot = null;
     }
 
     function build() {
       clear();
-      const st = ctx.state, cfg = st.config, T = st.ids.length, L = cfg.n_layer, tr = st.trace;
-      const layer = Math.min(st.sel.layer, L - 1), q = Math.min(st.sel.token, T - 1);
-      const pre = cfg.norm_placement === 'pre';
+      const st = ctx.state, cfg = st.config, tr = st.trace, T = st.ids.length, L = cfg.n_layer, H = cfg.n_head;
+      const q = Math.min(st.sel.token, T - 1), selL = Math.min(st.sel.layer, L - 1), selH = Math.min(st.sel.head, H - 1);
+      const pre = cfg.norm_placement === 'pre', res = cfg.residual !== false;
       const normName = cfg.norm === 'rmsnorm' ? 'RMSNorm' : 'LayerNorm';
-      const attnName = { causal: 'Masked Multi-Head Attention', none: 'Multi-Head Attention', sliding: 'Sliding-Window Attention', prefix: 'Prefix-LM Attention' }[cfg.mask] || 'Multi-Head Attention';
       const actName = cfg.activation === 'swiglu' ? 'SwiGLU' : cfg.activation === 'gelu' ? 'GELU' : 'ReLU';
-      const row = (key) => { const t = tr[key]; if (!t || t.shape.length !== 2) return null; const n = t.shape[1]; return Array.from(t.data.subarray(q * n, (q + 1) * n)); };
-      // one colour range for the whole stream, so a LayerNorm visibly evens out the contrast
-      const streamKeys = ['emb.tok', 'emb.out', ...Array.from({ length: L }, (_, l) => [`L${l}.resid_mid`, `L${l}.resid_out`, `L${l}.ln1`, `L${l}.ln2`, `L${l}.attn.out`, `L${l}.mlp.out`]).flat(), 'lnf'];
-      const all = streamKeys.flatMap((k) => row(k) || []).map(Math.abs).sort((a, b) => a - b);
-      const range = all.length ? all[Math.floor(0.92 * (all.length - 1))] || 1 : 1;
-      const streamBefore = (l) => (l === 0 ? 'emb.out' : `L${l - 1}.resid_out`);
-      let y = 0;
+      const maskName = { causal: 'causal', none: 'bidirectional', sliding: `sliding window ${cfg.window}`, prefix: 'prefix-LM' }[cfg.mask] || cfg.mask;
+      const ink = tok('--fg'), narrow = host.clientWidth < 760;
+      const V = cfg.vocab_size, d = cfg.d_model;
+      const MWA = Math.min(7.2, Math.max(MW, H * HEAD_W + 0.4));     // attention slab: wide enough for readable heads
+      const AX = -(GAP + MWA / 2), MXR = GAP + MW / 2;             // module centres: attention left of the stream, MLP right
+      const PW = MWA + MW + 2 * GAP + 0.5, CX = (MW - MWA) / 2;    // plate width and centre (the stream stays at x = 0)
 
-      // ------------------------------------------------ inputs: upright cards with the token printed on
+      // ------------------------------------------------ input tokens: a neat row of cards
       const lab = (i) => ctx.label(i);
-      const cw = (i) => Math.max(0.56, 0.17 * Array.from(lab(i)).length + 0.3);
+      const big = narrow ? 1.3 : 1.4;                                 // cards large enough to read; fewer of them on phones
+      const cw = (i) => Math.max(0.5, 0.15 * Array.from(lab(i)).length + 0.26) * big;
       let show = [...Array(T).keys()];
-      const budget = W + 1.2, total = () => show.reduce((a, i) => a + cw(i) + 0.12, 0);
-      if (total() > budget) {
+      const budget = narrow ? PW * 0.58 : Math.min(PW * 0.74, 9.5), rowW = (ids) => ids.reduce((a, i) => a + cw(i) + 0.1, 0);
+      if (rowW(show) > budget) {
         const keep = new Set([q]);
-        let a = 0, b = T - 1, side = 1;
-        const width = () => [...keep].reduce((s, i) => s + cw(i) + 0.12, 0) + 0.6;
-        while (width() < budget && (a <= b)) {
-          const cand = side > 0 ? b-- : a++;
-          keep.add(cand);
-          if (width() > budget) { keep.delete(cand); break; }
-          side = -side;
+        let a = 0, b = T - 1, right = true;
+        while (a <= b) {
+          const c2 = right ? b-- : a++;
+          keep.add(c2);
+          if (rowW([...keep]) + 0.5 > budget) { keep.delete(c2); break; }
+          right = !right;
         }
         show = [...keep].sort((x, z) => x - z);
       }
-      let x = -total() / 2, prev = -1;
-      const cardY = 0.36, embY0 = 1.35;
-      const fgHex = `#${tok('--fg').getHexString()}`;
+      const total = rowW(show) + (show.some((i, k) => k && i !== show[k - 1] + 1) ? 0.4 : 0);
+      let x = CX - total / 2, prev = -1;
+      const cardH = 0.6 * big, cardY = 0.36, cardZ = PD / 2 + 0.75, embY = 0.95, embH = 0.44;
+      const cardBg = dark() ? new THREE.Color('#1d2433') : new THREE.Color('#ffffff');
       show.forEach((i) => {
-        if (prev >= 0 && i !== prev + 1) {          // a gap in the sequence: three dots
-          for (let k = 0; k < 3; k++) {
-            const d = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), new THREE.MeshStandardMaterial({ color: tok('--fg-3') }));
-            d.position.set(x + 0.08 + k * 0.12, cardY, 0.6);
-            root.add(d);
-          }
-          x += 0.45;
+        if (prev >= 0 && i !== prev + 1) {
+          for (let k = 0; k < 3; k++) { const dd = new THREE.Mesh(new THREE.SphereGeometry(0.03, 12, 8), new THREE.MeshBasicMaterial({ color: tok('--fg-3') })); dd.position.set(x + 0.08 + k * 0.11, cardY, cardZ); root.add(dd); }
+          x += 0.4;
         }
         const w = cw(i), sel = i === q, cx = x + w / 2;
-        const card = slab('embed', w, 0.72, 0.07, { r: 0.05, k: dark() ? 0.5 : 0.55 });
-        card.position.set(cx, cardY + (sel ? 0.18 : 0), 0.6);
-        const face = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.92, 0.64), new THREE.MeshBasicMaterial({ map: glyphTexture(lab(i), w * 0.92, 0.64, sel ? `#${tok('--accent').getHexString()}` : fgHex, ''), toneMapped: false, transparent: true }));
-        face.position.z = 0.04;
+        const card = body('embed', w, cardH, 0.06, { r: 0.05, mat: new THREE.MeshPhysicalMaterial({ color: sel ? tok('--accent').lerp(cardBg, 0.8) : cardBg, roughness: 0.4, clearcoat: 0.6, envMapIntensity: 0.6, emissive: bodyHue('embed'), emissiveIntensity: 0 }) });
+        card.position.set(cx, cardY + (sel ? 0.1 : 0), cardZ);
+        const face = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.92, cardH * 0.86), new THREE.MeshBasicMaterial({ map: glyph(lab(i), w * 0.92, cardH * 0.86, hex(sel ? tok('--accent') : ink)), transparent: true, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+        face.position.z = 0.031;
         card.add(face);
-        if (sel) { card.userData.outline.material.color = tok('--accent'); card.userData.outline.material.opacity = 1; }
-        root.add(card);
-        addPart(card, { node: 'tokens', title: `“${lab(i)}” · position ${i}`, token: i });
-        // each token is embedded on its own: a thread from its card into the embedding
-        const xe = cx * 0.85;
-        const thread = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V3(cx, cardY + 0.36 + (sel ? 0.18 : 0), 0.6), V3(xe, embY0, 0.5)]),
-          new THREE.LineBasicMaterial({ color: sel ? tok('--accent') : tok('--fg-3'), transparent: true, opacity: sel ? 0.95 : 0.25 }));
-        root.add(thread);
-        x += w + 0.12;
-        prev = i;
+        part(card, { node: 'tokens', title: `“${lab(i)}”`, sub: `position ${i} · id ${st.ids[i]}`, token: i, trace: 'emb.tok' });
+        line([V3(cx, cardY + cardH / 2 + (sel ? 0.1 : 0), cardZ), V3(CX + (cx - CX) * 0.82, embY, PD / 2 - 0.2)], sel ? tok('--accent') : tok('--fg-3'), sel ? 1.6 : 1, sel ? 0.9 : 0.35);
+        x += w + 0.1; prev = i;
       });
-      const rowEnd = x;
-      const capIn = css(`<b>Inputs</b><span>${T} tokens${show.length < T ? ` · ${show.length} shown` : ''} · ${st.tokenizer.kind === 'bpe' ? 'subword BPE' : 'characters'}</span>${reducedMotion() ? '' : '<button type="button">▶ run a forward pass</button>'}`, V3(0, cardY - 1.2, 1.3), { cls: 'm3-cap', interactive: true });
+      const capIn = css(`<span><b style="font:650 13px var(--font-display);color:var(--fg)">Input tokens</b>&nbsp;&nbsp;${T} tokens${narrow ? '' : `${show.length < T ? ` · ${show.length} shown` : ''} · ${st.tokenizer.kind === 'bpe' ? 'subword BPE' : 'characters'}`}</span>${reducedMotion() ? '' : '<button type="button">▶ Run a forward pass</button>'}${narrow ? `<div class="ma-legend">${[['attn', 'Attention'], ['mlp', 'MLP'], ['resid', 'Stream'], ['head', 'LM head']].map(([k, n]) => `<span><i style="background:${BODY[k]}"></i>${n}</span>`).join('')}</div>` : ''}`,
+        V3(CX, cardY - 1.45, cardZ + 1.6), { cls: 'ma-cap', interactive: true });
       capIn.userData.el.querySelector('button')?.addEventListener('click', (e) => { e.stopPropagation(); forwardPass(); });
 
-      // ------------------------------------------------ embedding ⊕ positions
-      y = embY0;
-      const embH = 0.55, emb = slab('embed', W, embH, D);
-      emb.position.set(0, y + embH / 2, 0);
-      root.add(emb);
-      addPart(emb, { node: 'embedding', trace: 'emb.out', title: 'Input Embedding' });
+      // ------------------------------------------------ embedding, with the positions engraved on its face
+      const embW = PW * 0.9, embD = PD * 0.92;
+      const emb = body('embed', embW, embH, embD, { r: 0.18 });
+      emb.position.set(CX, embY + embH / 2, 0);
+      part(emb, { node: 'embedding', trace: 'emb.out', title: 'Embedding', sub: `token row of W_E${cfg.pos_encoding === 'learned' || cfg.pos_encoding === 'sinusoidal' ? ' + position' : ''}` });
       flow.push({ type: 'glow', obj: emb });
-      rail(emb, 'Input Embedding', `${cfg.vocab_size} → ${cfg.d_model}`, y + embH / 2, -W / 2);
-      y += embH;
+      const posNote = { learned: '+ learned positions', sinusoidal: '+ sinusoidal positions', rope: 'positions: RoPE, inside attention', alibi: 'positions: ALiBi, inside attention', none: 'no positions' }[cfg.pos_encoding] || '';
+      railLabel('Embedding', [`${V.toLocaleString()} → ${d}`, posNote], 'embed', embY + embH / 2);
       const absPos = cfg.pos_encoding === 'learned' || cfg.pos_encoding === 'sinusoidal';
       if (absPos) {
-        const yP = y + 0.65;
-        ribbon(y, yP - 0.3, row('emb.tok'), range, 'embed', false);
-        const pn = plusNode(yP, 'pos');
-        addPart(pn.hit, { node: 'positional', trace: 'emb.pos', title: 'Positional Encoding', group: pn.g });
-        // the circled sine joins from the left (left = things that join)
-        const pts = [];
-        for (let k = 0; k <= 48; k++) pts.push(V3(-2.18 + (k / 48) * 0.86, yP + Math.sin((k / 48) * Math.PI * 2) * 0.16));
-        tube(new THREE.CatmullRomCurve3(pts), 0.035, hue('pos'), 80);
-        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.04, 12, 64), new THREE.MeshStandardMaterial({ color: hue('pos') }));
-        ring.position.set(-1.75, yP, 0);
-        root.add(ring);
-        tube(new THREE.LineCurve3(V3(-1.2, yP), V3(-0.42, yP)), 0.035, hue('pos'), 2);
-        cone(V3(-0.36, yP, 0), hue('pos'), 'left', 0.7).rotation.z = -Math.PI / 2;
-        const hit = new THREE.Mesh(new THREE.SphereGeometry(0.62, 12, 8), new THREE.MeshBasicMaterial({ visible: false }));
-        hit.position.set(-1.75, yP, 0);
+        // the positional encoding: its own click target on the embedding's face; a sine engraved only when it is one
+        const pts = [], wx = embW * 0.3, x0 = CX - embW / 2 + 0.6, zf = embD / 2 + 0.006;
+        for (let k = 0; k <= 60; k++) pts.push(V3(x0 + wx * k / 60, embY + embH / 2 + 0.11 * Math.sin(k / 60 * Math.PI * 4), zf));
+        if (cfg.pos_encoding === 'sinusoidal') line(pts, bodyHue('embed').lerp(new THREE.Color(dark() ? '#bff7ef' : '#033b37'), 0.6), 2.6);
+        const hit = new THREE.Mesh(new THREE.BoxGeometry(wx + 0.3, embH, 0.2), new THREE.MeshBasicMaterial({ visible: false }));
+        hit.position.set(x0 + wx / 2, embY + embH / 2, embD / 2);
         root.add(hit);
-        addPart(hit, { node: 'positional', trace: 'emb.pos', title: 'Positional Encoding' });
-        rail(hit, 'Positional Encoding', cfg.pos_encoding, yP, -2.32);
-        y = yP + 0.3;
+        part(hit, { node: 'positional', trace: 'emb.pos', title: 'Positional encoding', sub: `${cfg.pos_encoding}, added to each token's row` });
+      }
+      const ySpine0 = embY + embH;
+
+      // ------------------------------------------------ the layers
+      const Y0 = ySpine0 + 1.0;
+      for (let l = 0; l < L; l++) {
+        const yP = Y0 + l * PITCH, sel = l === selL;
+        const plate = body('norm', PW, PT, PD, { r: 0.045, cast: false, mat: new THREE.MeshPhysicalMaterial({
+          color: dark() ? new THREE.Color('#252d42') : new THREE.Color('#ffffff'), roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.1,
+          transparent: true, opacity: dark() ? 0.05 : 0.4, envMapIntensity: 0.8, emissive: bodyHue('resid'), emissiveIntensity: 0, depthWrite: false }) });
+        plate.position.set(CX, yP + PT / 2, 0);
+        plate.receiveShadow = false;
+        plate.renderOrder = -1;
+        part(plate, { node: `block.${l}`, trace: `L${l}.resid_out`, title: `Layer ${l}`, sub: 'click to open the block', selectLayer: l });
+        const e = PD / 2, w2 = PW / 2, yE = yP + PT + 0.004;
+        line([V3(CX - w2, yE, e), V3(CX + w2, yE, e), V3(CX + w2, yE, -e), V3(CX - w2, yE, -e), V3(CX - w2, yE, e)], sel ? tok('--accent') : hue('resid'), sel ? 2 : 1.2, sel ? 0.95 : (dark() ? 0.35 : 0.3));
+        const attDetail = `${H} heads · ${maskName}${cfg.n_kv_head < H ? ` · ${cfg.n_kv_head === 1 ? 'MQA' : `GQA ${H}/${cfg.n_kv_head}`}` : ''}${cfg.pos_encoding === 'rope' ? ' · RoPE' : cfg.pos_encoding === 'alibi' ? ' · ALiBi' : ''}`;
+        const mlpDetail = `${actName} · ${d} → ${cfg.d_ff} → ${d}`;
+        railLabel(`Layer ${l}`, sel ? [`attention: ${attDetail}`, `then MLP: ${mlpDetail}`] : [], 'resid', yP + (sel ? 0.95 : 0.7), PD / 2, CX - w2 - 0.25, sel);
+
+        // attention: the body, and its heads standing along the back as screens with their real patterns
+        const yA = yP + PT + MH / 2 + 0.02;
+        const att = body('attn', MWA, MH, MD);
+        att.position.set(AX, yA, 0);
+        part(att, { node: `attention.${l}`, trace: `L${l}.attn.out`, title: `Attention · layer ${l}`, sub: attDetail });
+        flow.push({ type: 'glow', obj: att });
+        const probs = tr[`L${l}.attn.probs`];
+        const span = MWA - 0.3, slot = span / H, sw = Math.min(1.5, slot * 0.92), sh = sw * 1.02;
+        for (let hh = 0; hh < H; hh++) {
+          const isSel = sel && hh === selH;
+          const scr = body('attn', sw, sh, 0.04, { r: 0.035, cast: true, mat: new THREE.MeshPhysicalMaterial({ color: isSel ? tok('--accent') : bodyHue('attn').lerp(new THREE.Color(dark() ? '#000000' : '#ffffff'), dark() ? 0.25 : 0.1), roughness: 0.3, clearcoat: 1, envMapIntensity: 0.6, emissive: bodyHue('attn'), emissiveIntensity: 0 }) });
+          scr.position.set(AX - span / 2 + (hh + 0.5) * slot, yA + MH / 2 + 0.03 + sh / 2, -MD / 2 + 0.36);
+          if (probs) {
+            const face = new THREE.Mesh(new THREE.PlaneGeometry(sw * 0.9, sh * 0.9), new THREE.MeshBasicMaterial({ map: patternTex(probs, tr.mask, hh, q), toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2 }));
+            face.position.z = 0.022;
+            face.userData.lit = dark() ? 1.35 : 1;                       // dark: the patterns themselves glow a little
+            face.material.color.setScalar(face.userData.lit);
+            scr.add(face);
+            flow.push({ type: 'screen', obj: face });
+          }
+          part(scr, { node: `head.${l}.${hh}`, trace: `L${l}.attn.probs`, title: `Head ${hh} · layer ${l}`, sub: 'its real attention pattern' });
+        }
+
+        // the MLP: the body with an inset tray, and its most active units standing as thin bars
+        const yM = yA + RISE;
+        const mlp = body('mlp', MW, MH, MD);
+        mlp.position.set(MXR, yM, 0);
+        part(mlp, { node: `mlp.${l}`, trace: `L${l}.mlp.out`, title: `MLP · layer ${l}`, sub: mlpDetail });
+        flow.push({ type: 'glow', obj: mlp });
+        const tray = body('mlp', MW - 0.34, 0.05, MD - 0.34, { r: 0.025, cast: false, mat: new THREE.MeshPhysicalMaterial({ color: new THREE.Color(dark() ? '#120f08' : '#fffaf0'), roughness: 0.55, envMapIntensity: 0.4 }) });
+        tray.position.set(MXR, yM + MH / 2 + 0.012, 0);
+        const act = tr[`L${l}.mlp.act`];
+        if (act) units(act, q, V3(MXR, yM + MH / 2 + 0.04, 0), l);
+
+        // each sub-layer writes back into the stream: an arrow into a ⊕ on the rod (x + f(x));
+        // the norm it reads through sits on the rod just below (pre-LN), or just above the ⊕ (post-LN)
+        arrowIn(V3(-GAP, yA, 0), V3(-0.34, yA, 0), bodyHue('attn'));
+        arrowIn(V3(GAP, yM, 0), V3(0.34, yM, 0), bodyHue('mlp'));
+        plus(yA, 'attn', { node: `residual.${l}.1`, trace: `L${l}.resid_mid`, title: res ? 'x + attention' : 'attention output', sub: pre ? 'the residual add' : `add & ${normName}` });
+        plus(yM, 'mlp', { node: `residual.${l}.2`, trace: `L${l}.resid_out`, title: res ? 'x + MLP' : 'MLP output', sub: pre ? 'the residual add' : `add & ${normName}` });
+        if (pre) {
+          normRing(yA - 0.36, `norm.${l}.1`, `L${l}.ln1`, `${normName} before attention`, 'normalises what attention reads');
+          normRing(yM - 0.36, `norm.${l}.2`, `L${l}.ln2`, `${normName} before the MLP`, 'normalises what the MLP reads');
+        } else {
+          normRing(yA + 0.36, `residual.${l}.1`, `L${l}.resid_mid`, `Add & ${normName}`, 'post-LN: after the add');
+          normRing(yM + 0.36, `residual.${l}.2`, `L${l}.resid_out`, `Add & ${normName}`, 'post-LN: after the add');
+        }
       }
 
-      // ------------------------------------------------ the layers: wafers + one expanded block
-      const blockY0 = y + 0.25;
-      y = blockY0 + 0.3;
-      const waferH = 0.32, wafers = [];
-      const putWafer = (l) => {
-        ribbon(y - 0.55 + 0.05, y, row(streamBefore(l)), range);
-        const m = new THREE.Mesh(new RoundedBoxGeometry(W * 0.92, waferH, D * 0.9, 3, 0.08), bodyMat('norm', { k: dark() ? 0.7 : 0.55 }));
-        m.castShadow = true; m.receiveShadow = true;
-        outline(m, 'norm');
-        const face = new THREE.Mesh(new THREE.PlaneGeometry(W * 0.9, waferH * 0.9), new THREE.MeshBasicMaterial({ map: waferTexture(l, st), toneMapped: false }));
-        face.position.z = D * 0.45 + 0.005;
-        m.add(face);
-        m.position.set(0, y + waferH / 2, 0);
-        root.add(m);
-        addPart(m, { node: `block.${l}`, title: `Layer ${l} · click to open it here`, selectLayer: l });
-        rail(m, `Layer ${l}`, 'collapsed', y + waferH / 2, -W * 0.46, D * 0.45);
-        flow.push({ type: 'glow', obj: m });
-        wafers.push(m);
-        y += waferH + 0.55;
-      };
-      for (let l = 0; l < layer; l++) putWafer(l);
-
-      // expanded layer
-      const yIn = y;
-      const forkAndLoop = [];                        // [fork y, sub-layer name] to close with loops at the ⊕
+      // ------------------------------------------------ the head: final norm, LM head, the distribution
+      const yTopLayer = Y0 + (L - 1) * PITCH + PT + MH / 2 + 0.02 + RISE + MH / 2 + 0.45;
+      let y = yTopLayer + 1.45;
+      const ySide = yTopLayer + 0.95;
       if (pre) {
-        // attention sub-layer: fork, norm, Q/K/V, heads, ⊕
-        ribbon(y - 0.55 + 0.05, y, row(streamBefore(layer)), range);
-        const f1 = y + 0.12; fork(f1);
-        y = f1 + 0.3;
-        const ln1 = slab('norm', W * 0.9, 0.12, D * 0.5, { r: 0.04, glass: true, opacity: 0.6 });
-        ln1.position.set(0, y + 0.06, 0); root.add(ln1);
-        flow.push({ type: 'glow', obj: ln1 });
-        addPart(ln1, { node: `norm.${layer}.1`, trace: `L${layer}.ln1`, title: `${normName} before attention` });
-        rail(ln1, normName, 'pre-attention', y + 0.06, -W * 0.45, D * 0.25);
-        y += 0.12;
-        y = qkvFork(y, layer) ;
-        y = attention(y, layer, q, attnName);
-        const yAdd1 = y + 1.0;
-        ribbon(y, yAdd1 - 0.3, row(`L${layer}.attn.out`), range, 'attn');
-        const a1 = plusNode(yAdd1, 'resid');
-        addPart(a1.hit, { node: `residual.${layer}.1`, trace: `L${layer}.resid_mid`, title: 'Add: x + attention', group: a1.g });
-        if (cfg.residual) loop(f1, yAdd1);
-        y = yAdd1 + 0.3;
-        // MLP sub-layer
-        ribbon(y, y + 0.5, row(`L${layer}.resid_mid`), range, 'resid', false);
-        const f2 = y + 0.55; fork(f2);
-        y = f2 + 0.3;
-        const ln2 = slab('norm', W * 0.9, 0.12, D * 0.5, { r: 0.04, glass: true, opacity: 0.6 });
-        ln2.position.set(0, y + 0.06, 0); root.add(ln2);
-        flow.push({ type: 'glow', obj: ln2 });
-        addPart(ln2, { node: `norm.${layer}.2`, trace: `L${layer}.ln2`, title: `${normName} before the MLP` });
-        rail(ln2, normName, 'pre-MLP', y + 0.06, -W * 0.45, D * 0.25);
-        y += 0.12;
-        ribbon(y, y + 0.3, row(`L${layer}.ln2`), range, 'norm');
-        y += 0.3;
-        y = ffn(y, layer, q, actName);
-        const yAdd2 = y + 1.0;
-        ribbon(y, yAdd2 - 0.3, row(`L${layer}.mlp.out`), range, 'mlp');
-        const a2 = plusNode(yAdd2, 'resid');
-        addPart(a2.hit, { node: `residual.${layer}.2`, trace: `L${layer}.resid_out`, title: 'Add: x + MLP', group: a2.g });
-        if (cfg.residual) loop(f2, yAdd2);
-        y = yAdd2 + 0.3;
-        void forkAndLoop;
-      } else {
-        // post-LN (2017): sub-layer, then Add & Norm
-        ribbon(y - 0.55 + 0.05, y, row(streamBefore(layer)), range);
-        const f1 = y + 0.12; fork(f1);
-        y = qkvFork(f1 + 0.1, layer);
-        y = attention(y, layer, q, attnName);
-        ribbon(y, y + 0.8, row(`L${layer}.attn.out`), range, 'attn');
-        y += 0.85;
-        const an1 = slab('norm', W, 0.3, D, { r: 0.08 });
-        an1.position.set(0, y + 0.15, 0); root.add(an1);
-        flow.push({ type: 'glow', obj: an1 });
-        addPart(an1, { node: `residual.${layer}.1`, trace: `L${layer}.resid_mid`, title: `Add & ${normName}` });
-        rail(an1, `Add & ${normName}`, 'after attention', y + 0.15, -W / 2);
-        if (cfg.residual) loop(f1, y + 0.15, W / 2);
-        y += 0.3;
-        ribbon(y, y + 0.5, row(`L${layer}.resid_mid`), range);
-        const f2 = y + 0.55; fork(f2);
-        y = f2 + 0.3;
-        y = ffn(y, layer, q, actName);
-        ribbon(y, y + 0.8, row(`L${layer}.mlp.out`), range, 'mlp');
-        y += 0.85;
-        const an2 = slab('norm', W, 0.3, D, { r: 0.08 });
-        an2.position.set(0, y + 0.15, 0); root.add(an2);
-        flow.push({ type: 'glow', obj: an2 });
-        addPart(an2, { node: `residual.${layer}.2`, trace: `L${layer}.resid_out`, title: `Add & ${normName}` });
-        rail(an2, `Add & ${normName}`, 'after the MLP', y + 0.15, -W / 2);
-        if (cfg.residual) loop(f2, y + 0.15, W / 2);
-        y += 0.3 + 0.25;
+        const fn = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.08, 24, 72), new THREE.MeshPhysicalMaterial({ color: bodyHue('norm'), roughness: 0.18, clearcoat: 1, envMapIntensity: 1, emissive: bodyHue('norm'), emissiveIntensity: 0 }));
+        fn.rotation.x = Math.PI / 2; fn.castShadow = true;
+        root.add(fn);
+        fn.position.set(0, y, 0);
+        part(fn, { node: 'final-norm', trace: 'lnf', title: `Final ${normName}`, sub: 'before the LM head' });
+        flow.push({ type: 'glow', obj: fn });
+        railLabel(`Final ${normName}`, [], 'norm', y);
+        y += 0.8;
       }
-      const yOut = y;
-      y += 0.25;
-      for (let l = layer + 1; l < L; l++) putWafer(l);
-      const blockY1 = y - 0.2;
-
-      // backplate tray + the N× bracket (the paper's grey frame, as an object you can see behind the block)
-      const bx0 = -W / 2 - 1.1, bx1 = RX + 0.55, fhgt = blockY1 - blockY0 + 0.3;
-      const plate = new THREE.Mesh(new RoundedBoxGeometry(bx1 - bx0, fhgt, 0.08, 4, 0.35),
-        dark()
-          ? new THREE.MeshLambertMaterial({ color: new THREE.Color('#0f131a'), emissive: new THREE.Color('#171d28'), emissiveIntensity: 1 })
-          : new THREE.MeshLambertMaterial({ color: new THREE.Color('#e9edf4'), emissive: new THREE.Color('#e9edf4'), emissiveIntensity: 0.6, transparent: true, opacity: 0.6 }));
-      plate.position.set((bx0 + bx1) / 2, (blockY0 + blockY1) / 2, -(D / 2 + 0.15));
-      if (dark()) plate.add(new THREE.LineSegments(new THREE.EdgesGeometry(plate.geometry, 30), new THREE.LineBasicMaterial({ color: new THREE.Color('#2f3747') })));
-      root.add(plate);
-      const bxN = RX + 0.95;
-      const bracket = new THREE.CurvePath();
-      bracket.add(new THREE.LineCurve3(V3(bxN - 0.3, blockY0), V3(bxN, blockY0)));
-      bracket.add(new THREE.LineCurve3(V3(bxN, blockY0), V3(bxN, blockY1)));
-      bracket.add(new THREE.LineCurve3(V3(bxN, blockY1), V3(bxN - 0.3, blockY1)));
-      tube(bracket, 0.03, tok('--fg-3'), 12);
-      const nx = h('div', { class: 'm3-nx' },
-        h('b', null, `${L}×`),
-        h('div', { class: 'pips' }, Array.from({ length: L }, (_, l) => h('button', { type: 'button', class: ['pip', l === layer && 'on'], title: `Open layer ${l}`, onClick: (e) => { e.stopPropagation(); ctx.store.select({ layer: l }); } }, String(l)))),
-        h('span', null, `layer ${layer} open · ${L} in the stack`));
-      const nxl = label('', { interactive: true });
-      nxl.userData.el.append(nx);
-      nxl.position.set(bxN + 0.35, (blockY0 + blockY1) / 2, 0);
-      nxl.center.set(0, 0.5);
-      root.add(nxl);
-      labels.push(nxl);
-      const blockHit = new THREE.Mesh(new THREE.BoxGeometry(0.5, Math.max(0.5, yOut - yIn), 0.5), new THREE.MeshBasicMaterial({ visible: false }));
-      blockHit.position.set(bxN, (yIn + yOut) / 2, 0);
-      root.add(blockHit);
-      addPart(blockHit, { node: `block.${layer}`, title: `Block ${layer}` });
-
-      // ------------------------------------------------ head: final norm, Linear, Softmax, distribution
-      y = blockY1 + 0.35;
-      if (pre) {
-        ribbon(y - 0.5, y + 0.25, row(`L${L - 1}.resid_out`), range);
-        y += 0.3;
-        const lnf = slab('norm', W * 0.9, 0.12, D * 0.5, { r: 0.04, glass: true, opacity: 0.6 });
-        lnf.position.set(0, y + 0.06, 0); root.add(lnf);
-        flow.push({ type: 'glow', obj: lnf });
-        addPart(lnf, { node: 'final-norm', trace: 'lnf', title: `Final ${normName}` });
-        rail(lnf, `Final ${normName}`, '', y + 0.06, -W * 0.45, D * 0.25);
-        y += 0.12;
-        ribbon(y, y + 0.45, row('lnf'), range, 'norm');
-        y += 0.45;
-      } else {
-        ribbon(y - 0.5, y + 0.4, row(`L${L - 1}.resid_out`), range);
-        y += 0.45;
+      // the stream's own label, where the rod runs free above the last layer
+      if (!narrow) {
+        line([V3(SPINE_R + 0.06, ySide, 0), V3(CX + PW / 2 + 0.15, ySide, 0)], hue('resid'), 1.2, 0.55);
+        css(`<div><i></i><b>Residual stream</b></div><span>one ${d}-vector per token${res ? ', carried up' : ' · residual off'}</span>`, V3(CX + PW / 2 + 0.3, ySide, 0), { cls: 'ma-side', center: [0, 0.5] });
       }
-      const lin = slab('head', W * 0.95, 0.42, D);
-      lin.position.set(0, y + 0.21, 0); root.add(lin);
-      flow.push({ type: 'glow', obj: lin });
-      addPart(lin, { node: 'lm-head', trace: 'logits', title: 'Linear (LM head)' });
-      rail(lin, 'Linear', `${cfg.d_model} → ${cfg.vocab_size}${cfg.tie_weights ? ' · tied' : ''}`, y + 0.21, -W * 0.475);
-      y += 0.42;
-      arrowUp(y, y + 0.4, hue('head'));
-      y += 0.4;
-      const sm = slab('head', W * 0.95, 0.3, D, { r: 0.08, k: dark() ? 0.45 : 0.5 });
-      sm.position.set(0, y + 0.15, 0); root.add(sm);
-      flow.push({ type: 'glow', obj: sm });
-      addPart(sm, { node: 'sampling', trace: 'probs', title: 'Softmax' });
-      rail(sm, 'Softmax', '', y + 0.15, -W * 0.475);
-      y += 0.3;
+      const lmH = 0.44, lmW = PW * 0.9;
+      const lm = body('head', lmW, lmH, PD * 0.92, { r: 0.18 });
+      lm.position.set(CX, y + lmH / 2, 0);
+      part(lm, { node: 'lm-head', trace: 'logits', title: 'LM head', sub: `${d} → ${V.toLocaleString()}${cfg.tie_weights ? ' · tied to the embedding' : ''}` });
+      flow.push({ type: 'glow', obj: lm });
+      railLabel('LM head · softmax', [`${d} → ${V.toLocaleString()}${cfg.tie_weights ? ' · tied' : ''}`], 'head', y + lmH / 2);
+      const ySpine1 = y;
+      y += lmH;
 
-      // distribution comb, ranked from the centre out so the winner sits on the stream axis:
-      // every token above 0.2% when V is small, else the top 24 above 0.2%
-      const V = cfg.vocab_size, pr = Array.from(tr.probs.data.subarray(q * V, (q + 1) * V));
+      // the distribution: the most likely next tokens, ranked from the centre out (the winner on the stream)
+      const pr = Array.from(tr.probs.data.subarray(q * V, (q + 1) * V));
       const order = [...pr.keys()].sort((a, b) => pr[b] - pr[a]);
-      const n = V <= 64 ? V : 24, ids = order.slice(0, n).filter((v, r) => r === 0 || pr[v] >= 0.002);
-      const span = W * 0.9, step = span / n, bw = step * 0.7;
+      const ids = order.slice(0, Math.min(V, 13)).filter((v, r) => r === 0 || pr[v] >= 0.003);
+      const step = 0.56;
       let topY = y;
       ids.forEach((v, r) => {
-        const p = pr[v], bh = 0.03 + 1.6 * p, w = r === 0 ? bw * 1.5 : bw;
-        const geo = new RoundedBoxGeometry(w, bh, 1.0, 2, Math.min(0.04, bh / 2.2));
-        geo.translate(0, bh / 2, 0);              // grows from its base
-        const bar = new THREE.Mesh(geo, r === 0
-          ? new THREE.MeshPhysicalMaterial({ color: hue('head'), emissive: hue('head'), emissiveIntensity: 0.4, roughness: 0.35, clearcoat: 0.6 })
-          : bodyMat('head', { k: dark() ? 0.5 : 0.45 }));
-        if (r === 0) bar.userData.keepEmissive = true;
+        const p = pr[v], bh = 0.06 + 3.0 * p, win = r === 0, bw = win ? 0.5 : 0.32;
+        const geo = new RoundedBoxGeometry(bw, bh, bw, 3, Math.min(0.06, bh / 2.1));
+        geo.translate(0, bh / 2, 0);
+        const bar = new THREE.Mesh(geo, win
+          ? new THREE.MeshPhysicalMaterial({ color: bodyHue('head'), emissive: hue('head'), emissiveIntensity: dark() ? 1.6 : 0.25, roughness: 0.25, clearcoat: 1, envMapIntensity: 0.8 })
+          : bodyMat('head', { k: dark() ? 0.35 : 0.45 }));
+        if (win) bar.userData.keepEmissive = true;
         bar.castShadow = true;
-        const bxp = (r % 2 ? -1 : 1) * Math.ceil(r / 2) * step;
-        bar.position.set(bxp, y + 0.01, 0);
+        bar.position.set((r % 2 ? -1 : 1) * Math.ceil(r / 2) * step, y + 0.01, 0);
         root.add(bar);
-        addPart(bar, { node: 'sampling', trace: 'probs', title: `“${st.tokenizer.label(v)}” ${pct(p)}%` });
-        flow.push({ type: 'bar', obj: bar });
-        if (r === 0) css(`<span class="m3-prob top">${esc(st.tokenizer.label(v))} ${pct(p)}%</span>`, V3(bxp, y + bh + 0.32, 0), { center: [0.5, 0.5] });
-        topY = Math.max(topY, y + bh + (r === 0 ? 0.5 : 0));
+        part(bar, { node: 'sampling', trace: 'probs', title: `“${st.tokenizer.label(v)}”`, sub: `${pct(p)}% next` });
+        flow.push({ type: 'bar', obj: bar, r });
+        topY = Math.max(topY, y + bh);
       });
-      // a faint 100% line: the scale the bars are read against
-      const tick = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V3(-span / 2, y + 1.63, 0), V3(span / 2, y + 1.63, 0)]),
-        new THREE.LineDashedMaterial({ color: tok('--fg-3'), transparent: true, opacity: 0.35, dashSize: 0.12, gapSize: 0.1 }));
-      tick.computeLineDistances();
-      root.add(tick);
-      css('<span class="m3-mini">100%</span>', V3(span / 2 + 0.1, y + 1.63, 0), { center: [0, 0.5] });
-      topY = Math.max(topY, y + 1.63);
-      const runners = ids.slice(1, 3).map((v) => `${esc(st.tokenizer.label(v))} ${pct(pr[v])}%`).join(' · ');
-      const shown = V > 64 ? ` · top ${ids.length} of ${V.toLocaleString()}` : ids.length < V ? ` · ${ids.length} of ${V} above 0.2%` : '';
-      css(`<b>Output probabilities</b><span>next token after “${esc(ctx.label(q))}”${runners ? ` · then ${runners}` : ''}${shown}</span>`, V3(0, topY + 1.0, 0), { cls: 'm3-cap' });
-
-      // the predicted token, which the forward pass sends back to the end of the input
-      {
-        const win = ids[0], wl = st.tokenizer.label(win), w = Math.max(0.56, 0.17 * Array.from(wl).length + 0.3);
-        const card = slab('head', w, 0.72, 0.07, { r: 0.05, k: 0.2 });
-        const face = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.92, 0.64), new THREE.MeshBasicMaterial({ map: glyphTexture(wl, w * 0.92, 0.64, '#ffffff', ''), toneMapped: false, transparent: true }));
-        face.position.z = 0.04;
-        card.add(face);
-        card.visible = false;
-        root.add(card);
-        const from = V3(0, topY - 0.2, 0.3), to = V3(rowEnd + 0.25 + w / 2, cardY, 0.6);
-        const land = css('<span class="m3-land">appended · the next step reads it</span>', V3(to.x, cardY + 0.55, 0.6), { center: [0.5, 1] });
-        flyer = { card, land, curve: new THREE.QuadraticBezierCurve3(from, V3(RX + 2.6, (from.y + to.y) / 2, 3.4), to) };
+      winLab = css(`<div class="ma-win"><b>${spaceMark(st.tokenizer.label(ids[0]))}</b><span>${pct(pr[ids[0]])}%</span><em>next after “${esc(lab(q))}”</em></div>`, V3(0, topY + 0.35, 0), { center: [0.5, 1] });
+      const rows = order.slice(0, 3).map((v, r) => `<div class="r${r ? '' : ' win'}"><span>${esc(st.tokenizer.label(v))}</span><div class="bar"><div style="width:${Math.max(2, pr[v] * 100).toFixed(1)}%"></div></div><em>${pct(pr[v])}%</em></div>`).join('');
+      if (!narrow) {
+        nextCard = css(`<div class="ma-next"><div class="t">most likely next</div>${rows}<div class="t" style="text-transform:none;letter-spacing:0">of ${V.toLocaleString()} tokens</div></div>`,
+          V3(CX + lmW / 2 + 0.6, y + 0.9, -PD * 0.3), { center: [0, 0.5] });
       }
+      [winLab, nextCard].forEach((lb) => lb?.userData.el.firstElementChild.classList.add('on'));
 
-      // contact shadow under the inputs
-      const cs = document.createElement('canvas');
-      cs.width = cs.height = 128;
-      const cg = cs.getContext('2d'), grad = cg.createRadialGradient(64, 64, 4, 64, 64, 64);
-      grad.addColorStop(0, 'rgba(0,0,0,1)'); grad.addColorStop(1, 'rgba(0,0,0,0)');
-      cg.fillStyle = grad; cg.fillRect(0, 0, 128, 128);
-      const ct = new THREE.CanvasTexture(cs);
-      disposables.push(ct);
-      const contact = new THREE.Mesh(new THREE.PlaneGeometry(W + 3, 3.2), new THREE.MeshBasicMaterial({ map: ct, transparent: true, opacity: dark() ? 0.5 : 0.18, depthWrite: false }));
-      contact.rotation.x = -Math.PI / 2;
-      contact.position.set(0, -0.02, 0.4);
-      root.add(contact);
+      // ------------------------------------------------ the residual stream: a thick, luminous rod from embedding to LM head
+      const spineCol = new THREE.Color(dark() ? '#5c66ee' : BODY.resid);
+      const spineMat = new THREE.MeshPhysicalMaterial({ color: spineCol, emissive: spineCol, emissiveIntensity: dark() ? 0.55 : 0.2, roughness: 0.25, clearcoat: 1, transparent: !res, opacity: res ? 1 : 0.35 });
+      const spine = new THREE.Mesh(new THREE.CylinderGeometry(SPINE_R, SPINE_R, ySpine1 - ySpine0, 40, 1, true), spineMat);
+      spine.position.set(0, (ySpine0 + ySpine1) / 2, 0);
+      spine.castShadow = true;
+      root.add(spine);
+      part(spine, { node: `block.${selL}`, trace: `L${selL}.resid_out`, title: 'Residual stream', sub: `one ${d}-vector per token, layer to layer` });
+      const bead = new THREE.Mesh(new THREE.SphereGeometry(SPINE_R * 1.9, 32, 16), new THREE.MeshBasicMaterial({ color: dark() ? new THREE.Color('#ffffff') : hue('resid'), toneMapped: false, transparent: true, opacity: 0 }));
+      bead.position.set(0, ySpine0, 0);
+      root.add(bead);
+      flow.bead = { mesh: bead, y0: ySpine0, y1: ySpine1 };
 
-      bounds = new THREE.Box3(V3(RAIL - 2.6, -1.5, -D / 2), V3(bxN + 2.6, topY + 1.3, D / 2 + 0.9));
-      key.target.position.set(0, (blockY0 + blockY1) / 2, 0);
+      // ------------------------------------------------ hover card, floor shadow, framing
+      hoverLab = css('<div class="ma-hover"><b></b><span></span></div>', V3(0, 0, 0), { center: [0.5, 1.15] });
+      const cs = document.createElement('canvas'); cs.width = cs.height = 256;
+      const cg = cs.getContext('2d'), gr = cg.createRadialGradient(128, 128, 6, 128, 128, 128);
+      gr.addColorStop(0, 'rgba(0,0,0,1)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      cg.fillStyle = gr; cg.fillRect(0, 0, 256, 256);
+      const floor = new THREE.Mesh(new THREE.PlaneGeometry(PW + 6, PD + 6), new THREE.MeshBasicMaterial({ map: canvasTex(cs), transparent: true, opacity: dark() ? 0.55 : 0.16, depthWrite: false }));
+      floor.rotation.x = -Math.PI / 2; floor.position.set(CX, 0.01, 0.6);
+      root.add(floor);
+
+      // the geometry only: room for the HTML labels is kept by the framing (fit), in screen space
+      bounds = new THREE.Box3(V3(CX - PW / 2, -1.5, -PD / 2), V3(CX + PW / 2, topY + 1.45, cardZ + 1.6));
+      key.target.position.set(0, topY / 2, 0);
+      key.shadow.camera.left = CX - PW; key.shadow.camera.right = CX + PW; key.shadow.camera.top = topY + 4; key.shadow.camera.bottom = -4;
+      key.shadow.camera.near = 1; key.shadow.camera.far = 90;
+      key.shadow.camera.updateProjectionMatrix();
       engine.invalidate();
 
-      // ---- builders used above (hoisted function declarations close over this build)
-      function qkvFork(y0, l) {
-        const y1 = y0 + 0.95;
-        const xs = [['q', -1.6], ['k', 0], ['v', 1.6]];
-        for (const [kind, xx] of xs) {
-          const path = new THREE.QuadraticBezierCurve3(V3(0, y0, 0), V3(xx * 0.15, y0 + 0.5, 0.5), V3(xx, y1 - 0.18, 0.7));
-          tube(path, 0.04, hue(kind), 24);
-          cone(V3(xx, y1 - 0.1, 0.7), hue(kind), 'up', 0.75);
-          css(`<span class="m3-qkv" style="color: var(--c-${kind})">${kind.toUpperCase()}</span>`, V3(xx + 0.2, y1 - 0.22, 0.7), { center: [0, 0.5] });
-        }
-        const hit = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.9, 1.2), new THREE.MeshBasicMaterial({ visible: false }));
-        hit.position.set(0, y0 + 0.47, 0.35);
-        root.add(hit);
-        addPart(hit, { node: `qkv.${l}`, trace: `L${l}.attn.q`, title: 'Q, K, V projections' });
-        return y1;
+      // ---- builders (hoisted)
+      function railLabel(name, sub, kind, yy, z = PD / 2, xEdge = CX - PW / 2 - 0.25, sel = false) {
+        if (narrow) return;                                           // phones: the hover card names each part
+        const lines = (Array.isArray(sub) ? sub : [sub]).filter(Boolean);
+        css(`<div><i></i><b>${esc(name)}</b></div>${lines.map((t, k) => `<span${k ? ' class="d"' : ''}>${esc(t)}</span>`).join('')}`, V3(xEdge, yy, z), { cls: `ma-lab${sel ? ' sel' : ''}`, center: [1, 0.5], kind });
       }
-      function attention(y0, l, qq, name) {
-        const baseH = 0.22;
-        const base = slab('attn', W, baseH, D);
-        base.position.set(0, y0 + baseH / 2, 0);
-        root.add(base);
-        addPart(base, { node: `attention.${l}`, trace: `L${l}.attn.out`, title: name });
-        flow.push({ type: 'glow', obj: base });
-        const tags = [];
-        if (cfg.pos_encoding === 'rope') tags.push('RoPE');
-        if (cfg.pos_encoding === 'alibi') tags.push('ALiBi');
-        if (cfg.n_kv_head < cfg.n_head) tags.push(`GQA ${cfg.n_head}/${cfg.n_kv_head} KV`);
-        rail(base, name, `${cfg.n_head} heads · d_h ${cfg.d_model / cfg.n_head}${tags.length ? ' · ' + tags.join(' · ') : ''}`, y0 + baseH / 2, -W / 2);
-        const probs = tr[`L${l}.attn.probs`], H = cfg.n_head;
-        const pw = Math.min(1.6, (W - 0.4) / H - 0.18), chh = pw * 0.95;
-        for (let hh = 0; hh < H; hh++) {
-          const card = slab('attn', pw, chh, 0.08, { r: 0.06, k: dark() ? 0.6 : 0.7 });
-          const cx = -W / 2 + 0.2 + (hh + 0.5) * ((W - 0.4) / H);
-          card.position.set(cx, y0 + baseH + chh / 2 + 0.02, -0.1);
-          card.rotation.x = -0.22;
-          if (probs) {
-            const face = new THREE.Mesh(new THREE.PlaneGeometry(pw * 0.9, chh * 0.9), new THREE.MeshBasicMaterial({ map: patternTexture(probs, tr.mask, hh, qq), toneMapped: false }));
-            face.position.z = 0.045;
-            card.add(face);
-          }
-          root.add(card);
-          addPart(card, { node: `head.${l}.${hh}`, trace: `L${l}.attn.probs`, title: `Head ${hh}` });
-          flow.push({ type: 'glow', obj: card });
-        }
-        return y0 + baseH + chh * Math.cos(0.22) + 0.08;
+      // a ⊕ badge on the rod, turned to the viewer
+      function plus(yy, kind, data) {
+        const g = new THREE.Group();
+        const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.27, 0.05, 48), new THREE.MeshStandardMaterial({ color: tok('--surface'), roughness: 0.45 }));
+        disc.rotation.x = Math.PI / 2;
+        disc.position.z = SPINE_R + 0.06;
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.045, 16, 56), new THREE.MeshStandardMaterial({ color: bodyHue(kind), emissive: hue(kind), emissiveIntensity: dark() ? 0.9 : 0.1, roughness: 0.3 }));
+        const bm = new THREE.MeshStandardMaterial({ color: bodyHue(kind), emissive: hue(kind), emissiveIntensity: dark() ? 0.9 : 0.1 });
+        const b1 = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.055, 0.03), bm), b2 = new THREE.Mesh(new THREE.BoxGeometry(0.055, 0.3, 0.03), bm);
+        ring.position.z = SPINE_R + 0.06;
+        b1.position.z = b2.position.z = SPINE_R + 0.095;
+        g.add(disc, ring, b1, b2);
+        g.position.set(0, yy, 0);
+        root.add(g);
+        faceCam.push(g);
+        const hit = new THREE.Mesh(new THREE.SphereGeometry(0.32, 16, 10), new THREE.MeshBasicMaterial({ visible: false }));
+        g.add(hit);
+        part(hit, { ...data, group: g });
+        flow.push({ type: 'pulse', obj: g, y: yy });
       }
-      function ffn(y0, l, qq, act) {
-        const fh = 1.1, wb = W * 0.68, wm = W * 1.02, sh = new THREE.Shape();
-        sh.moveTo(-wb / 2, 0);
-        sh.lineTo(wb / 2, 0);
-        sh.quadraticCurveTo(wm / 2, fh * 0.12, wm / 2, fh / 2);
-        sh.quadraticCurveTo(wm / 2, fh * 0.88, wb / 2, fh);
-        sh.lineTo(-wb / 2, fh);
-        sh.quadraticCurveTo(-wm / 2, fh * 0.88, -wm / 2, fh / 2);
-        sh.quadraticCurveTo(-wm / 2, fh * 0.12, -wb / 2, 0);
-        const geo = new THREE.ExtrudeGeometry(sh, { depth: D, bevelEnabled: true, bevelThickness: 0.06, bevelSize: 0.06, bevelSegments: 6, curveSegments: 24 });
-        geo.translate(0, 0, -D / 2);
-        const m = new THREE.Mesh(geo, bodyMat('mlp'));
-        m.castShadow = true; m.receiveShadow = true;
-        outline(m, 'mlp');
-        m.position.set(0, y0, 0);
+      function arrowIn(from, to, color) {
+        line([from, to.clone().add(from.clone().sub(to).normalize().multiplyScalar(0.16))], color, 4.5);
+        const cone = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.22, 24), new THREE.MeshStandardMaterial({ color, roughness: 0.35 }));
+        cone.position.copy(to.clone().add(from.clone().sub(to).normalize().multiplyScalar(0.1)));
+        cone.quaternion.setFromUnitVectors(V3(0, 1, 0), to.clone().sub(from).normalize());
+        root.add(cone);
+      }
+      function normRing(yy, node, trace, title, sub) {
+        const m = new THREE.Mesh(new THREE.TorusGeometry(SPINE_R + 0.07, 0.04, 14, 48), new THREE.MeshPhysicalMaterial({ color: bodyHue('norm'), roughness: 0.2, clearcoat: 1, envMapIntensity: 0.9, emissive: bodyHue('norm'), emissiveIntensity: 0 }));
+        m.position.set(0, yy, 0);
+        m.rotation.x = Math.PI / 2;
         root.add(m);
-        addPart(m, { node: `mlp.${l}`, trace: `L${l}.mlp.out`, title: `Feed Forward · ${act}` });
-        flow.push({ type: 'glow', obj: m });
-        rail(m, `Feed Forward · ${act}`, `${cfg.d_model} → ${cfg.d_ff} → ${cfg.d_model}`, y0 + fh / 2, -wm / 2);
-        // the waist band: every hidden unit's |activation| for the selected token
-        const a = tr[`L${l}.mlp.act`];
-        if (a) {
-          const F = a.shape[1], t = Math.min(qq, a.shape[0] - 1), px = new Uint8Array(F * 4);
-          let mx = 0;
-          for (let f = 0; f < F; f++) mx = Math.max(mx, Math.abs(a.data[t * F + f]));
-          const lo = new THREE.Color(dark() ? '#120d03' : '#2a1f08'), hi = hue('mlp').lerp(new THREE.Color('#ffffff'), 0.25);
-          for (let f = 0; f < F; f++) {
-            const c = lo.clone().lerp(hi, Math.pow(Math.abs(a.data[t * F + f]) / (mx || 1), 0.7));
-            px[f * 4] = c.r * 255; px[f * 4 + 1] = c.g * 255; px[f * 4 + 2] = c.b * 255; px[f * 4 + 3] = 255;
-          }
-          const tex = new THREE.DataTexture(px, F, 1, THREE.RGBAFormat);
-          tex.magFilter = THREE.NearestFilter;
-          tex.needsUpdate = true;
-          disposables.push(tex);
-          const band = new THREE.Mesh(new THREE.PlaneGeometry(wm * 0.86, 0.17), new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
-          band.position.set(0, y0 + fh / 2, D / 2 + 0.065);
-          root.add(band);
-          const bh = new THREE.Mesh(new THREE.PlaneGeometry(wm * 0.86, 0.17), new THREE.MeshBasicMaterial({ visible: false }));
-          bh.position.copy(band.position);
-          root.add(bh);
-          addPart(bh, { node: `neurons.${l}`, trace: `L${l}.mlp.act`, title: `${F} hidden units` });
-        }
-        return y0 + fh;
+        part(m, { node, trace, title, sub });
+      }
+      // the most active hidden units for the selected token, as thin bars at their place in the layer
+      // (sign-coloured: amber positive, blue negative), on the tray
+      function units(act, t, top, l) {
+        const F = act.shape[1], row = act.data.subarray(t * F, (t + 1) * F);
+        const idx = [...row.keys()].sort((a, b) => Math.abs(row[b]) - Math.abs(row[a])).slice(0, Math.min(TOPK_UNITS, F));
+        const mx = Math.abs(row[idx[0]]) || 1;
+        const tw = MW - 0.6, td = MD - 0.6, cols = Math.ceil(Math.sqrt(F * tw / td)), rws = Math.ceil(F / cols);
+        const cx = tw / cols, cz = td / rws, s = Math.max(0.075, Math.min(0.13, Math.min(cx, cz) * 1.4));
+        const geo = new RoundedBoxGeometry(1, 1, 1, 2, 0.2);
+        geo.translate(0, 0.5, 0);
+        const mat = new THREE.MeshPhysicalMaterial({ roughness: 0.3, clearcoat: 0.8, envMapIntensity: 0.6, emissive: new THREE.Color('#ffffff'), emissiveIntensity: 0 });
+        const im = new THREE.InstancedMesh(geo, mat, idx.length);
+        const pos = new THREE.Color(dark() ? '#ffbf47' : '#e08a00'), neg = new THREE.Color(dark() ? '#9aa6b8' : '#5d6b80');   // negative: slate (blue is the stream's)
+        const heights = new Float32Array(idx.length), places = [];
+        idx.forEach((f, k) => {
+          const v = Math.abs(row[f]) / mx;
+          heights[k] = 0.08 + 0.72 * v;
+          places.push(V3(top.x - tw / 2 + ((f % cols) + 0.5) * cx, top.y, top.z - td / 2 + (Math.floor(f / cols) + 0.5) * cz));
+          im.setColorAt(k, (row[f] >= 0 ? pos.clone().multiplyScalar(dark() ? 1.12 : 1) : neg));   // dark: positive units glow softly
+        });
+        im.castShadow = true;
+        root.add(im);
+        const sgn = idx.filter((f) => row[f] < 0).length;
+        part(im, { node: `neurons.${l}`, trace: `L${l}.mlp.act`, title: `Most active units · layer ${l}`, sub: `top ${idx.length} of ${F} for “${lab(t)}”${sgn ? ` · ${sgn} negative` : ''}` });
+        const item = { type: 'pins', obj: im, heights, places, s, n: idx.length };
+        flow.push(item);
+        setPins(item, 1);
       }
     }
 
-    // ---------------------------------------------------------------- camera
-    const homeDir = new THREE.Vector3(Math.sin(0.45), 0.24, Math.cos(0.45)).normalize();
-    function corners() {
-      const b = bounds, out = [];
-      for (const xx of [b.min.x, b.max.x]) for (const yy of [b.min.y, b.max.y]) for (const zz of [b.min.z, b.max.z]) out.push(V3(xx, yy, zz));
-      return out;
-    }
-    // smallest distance at which the whole figure fits (|ndc| within the margins), for a direction and fov
-    function fit(dir, fov) {
-      const cam = engine.camera, target = bounds.getCenter(new THREE.Vector3());
-      const saved = { pos: cam.position.clone(), quat: cam.quaternion.clone(), fov: cam.fov };
-      cam.fov = fov;
-      cam.updateProjectionMatrix();
+    // ---------------------------------------------------------------- camera: a fixed, framed three-quarter view
+    function corners() { const b = bounds, out = []; for (const xx of [b.min.x, b.max.x]) for (const yy of [b.min.y, b.max.y]) for (const zz of [b.min.z, b.max.z]) out.push(V3(xx, yy, zz)); return out; }
+    function fit(dir) {
+      const target = bounds.getCenter(new THREE.Vector3()), saved = { p: cam.position.clone(), q: cam.quaternion.clone() };
       const cs = corners();
-      let lo = 1, hi = 2000;
-      for (let it = 0; it < 32; it++) {
+      // keep screen room for the HTML around the model: the label column (left) and the next-token card (right)
+      const W = Math.max(1, host.clientWidth), narrowFit = W < 760;
+      const xl = narrowFit ? -0.94 : -1 + 2 * (230 / W), xr = narrowFit ? 0.94 : 1 - 2 * (250 / W);
+      let lo = 1, hi = 400;
+      for (let it = 0; it < 30; it++) {
         const mid = (lo + hi) / 2;
-        cam.position.copy(target).addScaledVector(dir, mid);
-        cam.lookAt(target);
-        cam.updateMatrixWorld();
+        cam.position.copy(target).addScaledVector(dir, mid); cam.lookAt(target); cam.updateMatrixWorld();
         let ok = true;
-        for (const c of cs) { const p = c.clone().project(cam); if (Math.abs(p.x) > 0.9 || p.y > 0.93 || p.y < -0.86 || p.z > 1) { ok = false; break; } }
+        for (const c of cs) { const p = c.clone().project(cam); if (p.x < xl || p.x > xr || p.y > 0.9 || p.y < -0.88 || p.z > 1) { ok = false; break; } }
         if (ok) hi = mid; else lo = mid;
       }
-      cam.position.copy(saved.pos);
-      cam.quaternion.copy(saved.quat);
-      cam.fov = fov;                 // the caller wants this lens
-      cam.updateProjectionMatrix();
-      cam.updateMatrixWorld();
+      cam.position.copy(saved.p); cam.quaternion.copy(saved.q); cam.updateMatrixWorld();
       return { target, dist: hi };
     }
-    function goHome(duration = 0) {
-      const { target, dist } = fit(homeDir, FOV);
-      return engine.flyTo({ target, position: target.clone().addScaledVector(homeDir, dist), duration });
-    }
-    // signature move: the paper's flat figure dolly-zooms into the 3D machine
-    function reveal() {
-      if (reducedMotion()) { root.scale.z = 1; goHome(0); return; }
-      const front = new THREE.Vector3(0, 0, 1), cam = engine.camera;
-      root.scale.z = 0.04;
-      engine.controls.enabled = false;
-      const sstep = (a, b, t) => { const u = Math.max(0, Math.min(1, (t - a) / (b - a))); return u * u * (3 - 2 * u); };
-      const apply = (f) => {
-        const fov = 4 + (FOV - 4) * f;
-        const dir = front.clone().lerp(homeDir, sstep(0.3, 1, f)).normalize();
-        const { target, dist } = fit(dir, fov);
-        cam.position.copy(target).addScaledVector(dir, dist);
-        engine.controls.target.copy(target);
-        cam.lookAt(target);
-        root.scale.z = 0.04 + 0.96 * sstep(0, 0.8, f);
-      };
-      apply(0);
-      engine.tween({ duration: 400, update: () => {} })
-        .then(() => engine.tween({ duration: 1800, easing: (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2), update: (e) => apply(e) }))
-        .then(() => { engine.controls.enabled = true; settleUntil = performance.now() + 10000; forwardPass(); });
+    function home(duration = 0) {
+      const { target, dist } = fit(VIEW);
+      const pos = target.clone().addScaledVector(VIEW, dist);
+      if (!duration) { cam.position.copy(pos); engine.controls.target.copy(target); cam.lookAt(target); engine.invalidate(); return Promise.resolve(); }
+      return engine.flyTo({ target, position: pos, duration });
     }
 
-    // ---------------------------------------------------------------- forward pass
-    // Data climbs the figure in build order: each stream ribbon grows, each part it reaches glows,
-    // each ⊕ pulses; the output bars spring up, and the winning token flies back to the input row.
-    const GROW = 170, PULSE = 320, GLOW = 380, FLY = 1500, HOLD = 1100, FADE = 350;
-    const outBack = (t) => { const c = 1.70158; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
-    const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+    // ---------------------------------------------------------------- the forward pass: one light up the stream
+    const DUR = 3600;
+    const smooth = (t) => t * t * (3 - 2 * t);
+    const outBack = (t) => { const c = 1.4; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
     function forwardPass() {
-      if (reducedMotion() || !flow.length) return;
-      let t = 0, bars = 0;
-      for (const f of flow) {
-        if (f.type === 'bar') { f.t0 = null; continue; }
-        f.t0 = t;
-        t += f.type === 'grow' ? 120 : f.type === 'pulse' ? 90 : 60;
-      }
-      for (const f of flow) if (f.type === 'bar') { f.t0 = t + 150 + bars * 22; bars++; }
-      const flyAt = t + 150 + bars * 22 + 450;
-      play = { start: performance.now(), flyAt, end: flyAt + FLY + HOLD + FADE };
+      if (reducedMotion() || !flow.bead) return;
+      play = { start: performance.now() };
+      winLab?.userData.el.firstElementChild.classList.remove('on');
+      nextCard?.userData.el.firstElementChild.classList.remove('on');
       stepPlay(play.start);
     }
-    function settle(f, p) {
-      const o = f.obj;
-      if (f.type === 'grow') o.scale.y = Math.max(0.001, easeOut(p));
-      else if (f.type === 'bar') o.scale.y = Math.max(0.001, p <= 0 ? 0 : outBack(p));
-      else if (f.type === 'pulse') o.scale.setScalar(1 + 0.4 * Math.sin(Math.PI * p));
-      else if (f.type === 'glow' && o !== hot && o.material && 'emissiveIntensity' in o.material) o.material.emissiveIntensity = 0.5 * Math.sin(Math.PI * p);
-    }
+    // where the light is (0..1 of the stream's height) at time u, and when it reaches height y
+    const yAt = (u) => flow.bead.y0 + (flow.bead.y1 - flow.bead.y0) * smooth(Math.min(1, u));
+    const uAt = (y) => { const f = (y - flow.bead.y0) / (flow.bead.y1 - flow.bead.y0); let lo = 0, hi = 1; for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; if (smooth(m) < f) lo = m; else hi = m; } return lo; };
     function stepPlay(now) {
-      const el = now - play.start;
+      const u = (play.frozen ?? (now - play.start)) / DUR, b = flow.bead, yNow = yAt(u);
+      b.mesh.position.y = yNow;
+      b.mesh.material.opacity = u < 1 ? Math.min(1, u * 8) : Math.max(0, 1 - (u - 1) * 6);
       for (const f of flow) {
-        const dur = f.type === 'grow' ? GROW : f.type === 'pulse' ? PULSE : f.type === 'bar' ? 520 : GLOW;
-        settle(f, Math.max(0, Math.min(1, (el - f.t0) / dur)));
+        const yy = f.type === 'pins' ? f.places[0].y : f.type === 'pulse' ? f.y : f.type === 'bar' ? b.y1 : (f.obj.getWorldPosition?.(new THREE.Vector3()).y ?? 0);
+        const t0 = uAt(Math.min(yy, b.y1)), d = (u - t0) * DUR;     // ms since the light passed this part
+        if (f.type === 'glow') { if (f.obj !== hot && !f.obj.userData.keepEmissive) f.obj.material.emissiveIntensity = d > 0 ? 0.32 * Math.exp(-d / 420) : 0; }
+        else if (f.type === 'screen') f.obj.material.color.setScalar(f.obj.userData.lit * (d > 0 ? 0.18 + 0.82 * Math.min(1, d / 450) : 0.18));
+        else if (f.type === 'pulse') f.obj.scale.setScalar(d > 0 ? 1 + 0.35 * Math.sin(Math.min(1, d / 420) * Math.PI) : 1);
+        else if (f.type === 'pins') setPins(f, d > 0 ? Math.min(1, d / 700) : 0);
+        else if (f.type === 'bar') { const k = Math.max(0, Math.min(1, (d - 120 - f.r * 45) / 650)); f.obj.scale.y = Math.max(0.001, k > 0 ? outBack(k) : 0); }
       }
-      if (flyer) {
-        const u = (el - play.flyAt) / FLY;
-        flyer.card.visible = u > 0 && el < play.end;
-        if (u > 0) {
-          const k = easeOut(Math.min(1, u));
-          flyer.card.position.copy(flyer.curve.getPoint(k));
-          flyer.card.lookAt(engine.camera.position);
-          const fade = Math.max(0, Math.min(1, (el - play.end + FADE) / FADE));
-          flyer.card.scale.setScalar((0.7 + 0.3 * k) * (1 - fade));
-          flyer.land.userData.el.firstChild.style.opacity = u >= 1 && fade < 1 ? 1 : 0;
-        }
-      }
-      if (el >= play.end) {
-        for (const f of flow) settle(f, f.type === 'grow' || f.type === 'bar' ? 1 : 0);
-        if (flyer) { flyer.card.visible = false; flyer.land.userData.el.firstChild.style.opacity = 0; }
+      if (u >= 1.05 && play.frozen === undefined) {
+        for (const f of flow) { if (f.type === 'pins') setPins(f, 1); if (f.type === 'bar') f.obj.scale.y = 1; if (f.type === 'screen') f.obj.material.color.setScalar(f.obj.userData.lit); if (f.type === 'glow' && f.obj !== hot && !f.obj.userData.keepEmissive) f.obj.material.emissiveIntensity = 0; }
+        b.mesh.material.opacity = 0;
+        winLab?.userData.el.firstElementChild.classList.add('on');
+        nextCard?.userData.el.firstElementChild.classList.add('on');
         play = null;
       }
       return true;
     }
-
-    // ---------------------------------------------------------------- per frame
-    const offFrame = engine.onFrame((t) => {
-      const cam = engine.camera.position;
-      for (const b of billboards) b.rotation.y = Math.atan2(cam.x - b.position.x, cam.z - b.position.z);
-      for (const g of faceCam) g.lookAt(cam);
-      const playing = play ? stepPlay(performance.now()) : false;
-      // a gentle sway for a few seconds after the opening, frozen while the pointer is on the canvas
-      if (!interacted && !pointerIn && bounds && performance.now() < settleUntil && !reducedMotion()) {
-        const { target, dist } = fitCache || (fitCache = fit(homeDir, FOV));
-        const a = Math.sin(t / 3.2) * 0.07;
-        const dir = new THREE.Vector3(Math.sin(0.45 + a), homeDir.y * Math.hypot(Math.sin(0.45), Math.cos(0.45)), Math.cos(0.45 + a)).normalize();
-        engine.camera.position.copy(target).addScaledVector(dir, dist);
-        engine.controls.target.copy(target);
-        return true;
+    const m4 = new THREE.Matrix4(), qI = new THREE.Quaternion();
+    function setPins(f, k) {
+      const { obj, heights, places, s: w, n } = f;
+      for (let i = 0; i < n; i++) {
+        const kk = Math.max(0, Math.min(1, k * 1.5 - (i / n) * 0.5));             // the strongest rise first
+        m4.compose(places[i], qI, V3(w, Math.max(0.001, heights[i] * smooth(kk)), w));
+        obj.setMatrixAt(i, m4);
       }
-      return playing;
+      obj.instanceMatrix.needsUpdate = true;
+    }
+    const offFrame = engine.onFrame(() => {
+      const k = `${cam.position.x.toFixed(3)},${cam.position.y.toFixed(3)},${cam.position.z.toFixed(3)}`;
+      let moved = false;
+      if (k !== camKey) { camKey = k; for (const g of faceCam) g.lookAt(cam.position); moved = true; }
+      return play ? stepPlay(performance.now()) : moved;
     });
-    let fitCache = null;
+    // test hook: freeze the forward pass at a time (ms), so a slow headless renderer can capture any moment
+    host.__scrub = (ms) => { forwardPass(); if (play) { play.frozen = ms; stepPlay(0); } engine.invalidate(); };
 
-    // ---------------------------------------------------------------- hover & click
+    // ---------------------------------------------------------------- hover and click (colour only: nothing moves)
     function setHover(info) {
       const m = info?.object && parts.includes(info.object) ? info.object : null;
-      if (hot && hot !== m) lift(hot, false);
-      if (m && hot !== m) lift(m, true);
+      if (hot && hot !== m) highlight(hot, false);
+      if (m && hot !== m) highlight(m, true);
       hot = m;
       const canvas = R.domElement;
       if (m) {
         canvas.dataset.node = m.userData.node;
         if (m.userData.trace && ctx.state.trace[m.userData.trace]) canvas.dataset.trace = m.userData.trace; else delete canvas.dataset.trace;
-      } else { delete canvas.dataset.node; delete canvas.dataset.trace; }
+        const box = new THREE.Box3().setFromObject(m.userData.group || m);
+        hoverLab.position.set((box.min.x + box.max.x) / 2, box.max.y + 0.08, (box.min.z + box.max.z) / 2);
+        const el2 = hoverLab.userData.el.firstElementChild;
+        el2.querySelector('b').textContent = m.userData.title || '';
+        el2.querySelector('span').textContent = m.userData.sub || '';
+        el2.classList.add('on');
+      } else {
+        delete canvas.dataset.node; delete canvas.dataset.trace;
+        hoverLab?.userData.el.firstElementChild.classList.remove('on');
+      }
       engine.invalidate();
     }
-    function lift(m, on) {
-      const obj = m.userData.group || m;
-      const toCam = engine.camera.position.clone().sub(obj.getWorldPosition(new THREE.Vector3())).normalize().multiplyScalar(0.12);
-      if (on) { obj.userData.home = obj.position.clone(); obj.position.add(toCam); } else if (obj.userData.home) obj.position.copy(obj.userData.home);
-      const ol = m.userData.outline;
-      if (ol) ol.material.opacity = on ? 1 : (dark() ? 0.35 : 0.22);
-      if (m.material?.emissiveIntensity !== undefined && !m.userData.keepEmissive) m.material.emissiveIntensity = on ? 0.18 : 0;
-      m.userData.railEl?.classList.toggle('hot', on);
+    function highlight(m, on) {
+      const mat = m.material;
+      if (mat && 'emissiveIntensity' in mat && !m.userData.keepEmissive) mat.emissiveIntensity = on ? (dark() ? 0.28 : 0.2) : 0;
     }
     R.domElement.addEventListener('click', (e) => {
       const info = engine.pick(e);
       const m = info?.object && parts.includes(info.object) ? info.object : null;
-      e.preventDefault();
       if (!m) return;
-      if (m.userData.selectLayer !== undefined) { ctx.store.select({ layer: m.userData.selectLayer }); return; }
+      if (m.userData.selectLayer !== undefined && m.userData.selectLayer !== ctx.state.sel.layer) { ctx.store.select({ layer: m.userData.selectLayer }); return; }
       if (m.userData.token !== undefined) ctx.store.select({ token: m.userData.token });
-      const target = m.getWorldPosition(new THREE.Vector3());
-      const dir = engine.camera.position.clone().sub(engine.controls.target).normalize();
-      const dist = engine.camera.position.distanceTo(engine.controls.target);
-      engine.flyTo({ target, position: target.clone().add(dir.multiplyScalar(dist * 0.42)), duration: reducedMotion() ? 0 : 520 })
-        .then(() => ctx.go(m.userData.node, engine.screenRect(m)));
+      ctx.go(m.userData.node, engine.screenRect(m.userData.group || m));
     });
 
+    look();
     build();
     engine.setInsets({ top: 60, bottom: 64, left: 0, right: 0 });
-    if (!revealed) { revealed = true; reveal(); } else { goHome(0); settleUntil = performance.now() + 6000; }
-    const rebuild = () => { build(); fitCache = null; };
+    home(0);
+    if (!reducedMotion()) setTimeout(() => { if (!destroyed) forwardPass(); }, 500);
+    let destroyed = false;
+    // a rebuild keeps the view, unless the figure changed size (layers added or removed): then reframe smoothly
+    const rebuild = () => {
+      const before = bounds?.clone();
+      build();
+      if (before && (Math.abs(before.max.y - bounds.max.y) > 0.5 || Math.abs(before.min.y - bounds.min.y) > 0.5)) home(reducedMotion() ? 0 : 650);
+    };
     const offs = [ctx.on('trace', rebuild), ctx.on('select', rebuild)];
 
     return {
       pause: () => engine.pause(),
-      resume: () => { engine.resume(); fitCache = null; goHome(700); },
-      destroy() { offFrame(); offs.forEach((f) => f()); clear(); envTex.dispose(); pmrem.dispose(); engine.dispose(); host.remove(); },
+      resume: () => { engine.resume(); home(600); },
+      destroy() {
+        destroyed = true;
+        offFrame(); offResize(); offLineRes(); offs.forEach((f) => f()); clear();
+        bgTex?.dispose(); envTex.dispose(); pmrem.dispose(); composer?.dispose?.();
+        engine.dispose(); host.remove();
+      },
     };
   },
 };
 
 // probabilities as percentages that never round a near-certainty up to 100 or a small one down to 0
 function pct(p) { return p >= 0.995 && p < 1 ? (p * 100).toFixed(1) : p < 0.001 ? '<0.1' : (p * 100).toFixed(p < 0.1 ? 1 : 0); }
+// the leading-space mark drawn small and faint, so '␣saw' reads as a word
+function spaceMark(label) { const t = esc(label); return t.startsWith('␣') ? `<i class="sp">␣</i>${t.slice(1)}` : t; }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
