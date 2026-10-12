@@ -46,7 +46,16 @@ ${inner}
 </body>
 </html>
 `;
-mkdirSync(join(root, 'dist'), { recursive: true });
+mkdirSync(join(root, 'dist', 'artifact'), { recursive: true });
+// multi-file variant for hosts that prefer a small page: index.html + app.js + app.css
+writeFileSync(join(root, 'dist/artifact/app.js'), result.outputFiles[0].text);
+writeFileSync(join(root, 'dist/artifact/app.css'), css);
+writeFileSync(join(root, 'dist/artifact/index.html'), `<title>Transformer Explorer</title>
+<link rel="stylesheet" href="${fonts}">
+<link rel="stylesheet" href="app.css">
+<div id="app"></div>
+<script type="module" src="app.js"></script>
+`);
 writeFileSync(join(root, 'dist/transformer-explorer.html'), page);
 writeFileSync(join(root, 'dist/artifact.html'), inner + '\n');
 console.log(`dist/transformer-explorer.html  ${(page.length / 1e6).toFixed(2)} MB`);
