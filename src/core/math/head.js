@@ -9,14 +9,25 @@
 // Only tex fields are typeset. Symbol text and notes are plain text, so they contain no LaTeX.
 import { at2, row2, wrow, dot, dotTerms, listTerms, num } from './util.js';
 
-// A vocabulary entry inside \text{}: printable characters are quoted and escaped; whitespace
-// tokens get a name, because KaTeX has no glyph metrics for the visible-space symbol.
-const NAMED = { '␣': 'space', ' ': 'space', '\n': 'newline', '\t': 'tab' };
+// A vocabulary entry inside \text{}: printable characters are quoted and escaped; whitespace and special
+// tokens get a name, because KaTeX has no glyph metrics for the visible-space symbol, the end-of-text marker or
+// a partial byte. A byte-level BPE label marks its leading space with ␣ (“␣had”): inside the quotes it is drawn with \vsp.
+const NAMED = { '␣': 'space', ' ': 'space', '\n': 'newline', '↵': 'newline', '\t': 'tab', '⇥': 'tab', '⟨eot⟩': 'end of text', '�': 'invalid UTF-8 bytes' };
 const TEXT_ESC = {
   '\\': '\\textbackslash{}', '{': '\\{', '}': '\\}', '$': '\\$', '&': '\\&', '#': '\\#',
   '^': '\\textasciicircum{}', '_': '\\_', '%': '\\%', '~': '\\textasciitilde{}',
+  // display marks of byte-level labels that KaTeX's fonts lack: ⟨c3⟩ (a lone byte), ↵ and ⇥
+  '⟨': '\\textless{}', '⟩': '\\textgreater{}', '↵': '\\textbackslash{}n', '⇥': '\\textbackslash{}t',
 };
-const vocabTeX = (ch) => NAMED[ch] ?? `"${[...String(ch)].map((c) => TEXT_ESC[c] ?? c).join('')}"`;
+// A control character has no glyph (a byte-level token can be one, such as U+0006): it is written as its byte value.
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/;
+const escText = (s) => [...s].map((c) => TEXT_ESC[c] ?? (CONTROL.test(c) ? `[0x${c.codePointAt(0).toString(16).toUpperCase().padStart(2, '0')}]` : c)).join('');
+const vocabTeX = (ch) => {
+  const s = String(ch);
+  if (NAMED[s]) return NAMED[s];
+  if (s.startsWith('␣')) return `"\\vsp{}${escText(s.slice(1))}"`;
+  return `"${escText(s)}"`;
+};
 
 export const ENTRIES = {
   'logits': {
@@ -118,7 +129,7 @@ export const ENTRIES = {
       {
         title: 'Uniform baseline',
         steps: ['z \\approx 0 \\;\\Rightarrow\\; p_{t,v} \\approx \\tfrac{1}{V} \\;\\Rightarrow\\; \\mathcal{L} \\approx \\log V'],
-        note: 'A model that knows nothing loses ln V nats per position (ln 32 ≈ 3.47 for the 32-entry default vocabulary). A fresh random initialisation starts close to this value, and training should drive the loss well below it.',
+        note: 'A model that knows nothing loses ln V nats per position (ln 32 ≈ 3.47 for the 32-entry character vocabulary, ln 4,096 ≈ 8.32 for the 4,096-entry subword one). A fresh random initialisation starts close to this value, and training should drive the loss well below it.',
       },
     ],
   },

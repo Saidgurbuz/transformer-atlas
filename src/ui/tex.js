@@ -7,6 +7,9 @@ import { h } from './dom.js';
 const kind = (k, body) => `\\htmlClass{k-${k}}{${body}}`;
 
 export const MACROS = {
+  // the visible-space glyph ␣ of subword labels, drawn with rules (KaTeX's fonts have no ␣);
+  // for use inside \text{...} only, where it switches to math for the rules
+  '\\vsp': '$\\kern0.03em\\rule[-0.14em]{0.06em}{0.32em}\\rule[-0.14em]{0.4em}{0.06em}\\rule[-0.14em]{0.06em}{0.32em}\\kern0.03em$',
   '\\R': '\\mathbb{R}',
   '\\softmax': '\\operatorname{softmax}',
   '\\LN': '\\operatorname{LN}',

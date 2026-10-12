@@ -4,13 +4,16 @@
 // weights or from upstream traced tensors; tests/math.mjs compares it with the trace.
 import { at2, num } from './util.js';
 
-// A token label as LaTeX text: the specials are escaped and the space is spelled out.
+// A token label as LaTeX text: the specials are escaped, a lone space is spelled out, and the
+// leading-space mark of a subword label (␣had) is drawn with the \vsp macro.
 const TEXT_ESC = {
   '\\': '\\textbackslash{}', '{': '\\{', '}': '\\}', '$': '\\$', '&': '\\&', '#': '\\#',
   '%': '\\%', '_': '\\_', '^': '\\textasciicircum{}', '~': '\\textasciitilde{}',
+  // display marks of byte-level labels that KaTeX's fonts lack: ⟨c3⟩ (a lone byte), ↵ and ⇥
+  '⟨': '\\textless{}', '⟩': '\\textgreater{}', '↵': '\\textbackslash{}n', '⇥': '\\textbackslash{}t',
 };
 const isSpace = (label) => label === '␣' || label === ' ';
-const tokenTeX = (label) => `\\text{${isSpace(label) ? 'space' : [...label].map((c) => TEXT_ESC[c] ?? c).join('')}}`;
+const tokenTeX = (label) => `\\text{${isSpace(label) ? 'space' : [...label].map((c) => TEXT_ESC[c] ?? (c === '␣' ? '\\vsp{}' : c)).join('')}}`;
 const plain = (label) => (isSpace(label) ? 'space' : label);
 // A number inside a sum: negatives are bracketed, as in "0.12 + (-0.03)".
 const signed = (v, digits) => (v < 0 ? `(${num(v, digits)})` : num(v, digits));
