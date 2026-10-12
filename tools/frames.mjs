@@ -3,7 +3,8 @@
 // shimmer or an animation that never settles. Also writes a contact sheet of the frames.
 //   tools/frames.sh --view model --frames 12 --every 250 --out dir [--wait 6000] [--theme dark]
 //                   [--preset id] [--query root=b] [--eval "js"] [--move]   (--move: sweep the mouse
-//                   across the canvas while capturing, to catch hover flicker)
+//                   across the canvas while capturing, to catch hover flicker; --at x,y: rest the
+//                   pointer there first, so a hovered part must stay perfectly still)
 // Prints JSON: per-step changed-pixel fractions and the largest one.
 import http from 'node:http';
 import { readFile, stat, mkdir, writeFile } from 'node:fs/promises';
@@ -83,6 +84,7 @@ try {
   await page.goto(`http://127.0.0.1:${server.address().port}/index.html${params.length ? `?${params.join('&')}` : ''}#${opt('view', 'model')}`, { waitUntil: 'load' });
   await page.waitForTimeout(Number(opt('wait', 6000)));
   if (opt('eval', null)) await page.evaluate(`(async () => (${opt('eval')}))()`);
+  if (opt('at', null)) { const [ax, ay] = opt('at').split(',').map(Number); await page.mouse.move(ax, ay); await page.waitForTimeout(400); }
   const frames = [];
   for (let k = 0; k < N; k++) {
     if (flag('move')) await page.mouse.move(width * (0.3 + 0.4 * (k / Math.max(1, N - 1))), height * (0.35 + 0.3 * Math.sin(k)));
