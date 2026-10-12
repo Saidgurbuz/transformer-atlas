@@ -1,15 +1,6 @@
 // Written by tools/train_presets.py and tools/train_bpe_preset.py.
 export const MANIFEST = [
   {
-    "id": "charlm",
-    "title": "Alice char-LM \u00b7 GPT-2 style",
-    "description": "4 layers, 4 heads, d=64, learned positions, pre-LayerNorm, GELU. Trained on Alice in Wonderland, one character per token (no held-out split: it has memorised much of the book).",
-    "params": 208256,
-    "metrics": {
-      "train_loss_nats": 0.5464
-    }
-  },
-  {
     "id": "tinystories",
     "title": "TinyStories \u00b7 subword BPE \u00b7 GPT-2 style",
     "description": "4 layers, 4 heads, d=128, a 4,096-token byte-level BPE vocabulary (most words are one token), tied embeddings. Trained on TinyStories; held-out loss 1.98 nats/token.",
@@ -18,6 +9,15 @@ export const MANIFEST = [
       "val_loss_nats": 1.9795,
       "val_perplexity": 7.24,
       "params": 1325824
+    }
+  },
+  {
+    "id": "charlm",
+    "title": "Alice char-LM \u00b7 GPT-2 style",
+    "description": "4 layers, 4 heads, d=64, learned positions, pre-LayerNorm, GELU. Trained on Alice in Wonderland, one character per token (no held-out split: it has memorised much of the book).",
+    "params": 208256,
+    "metrics": {
+      "train_loss_nats": 0.5464
     }
   },
   {
