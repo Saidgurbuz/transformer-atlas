@@ -178,6 +178,7 @@ export default {
       if (step < STEPS.length - 1) { ctx.setStep(step + 1); auto = setTimeout(next, MOTION.step); }
     }, 900);
     el.addEventListener('pointerdown', () => clearTimeout(auto), { once: true });
+    el.addEventListener('atlas:interrupt', () => clearTimeout(auto), { once: true });
 
     const offs = [ctx.on('trace', buildStatic), ctx.on('select', buildStatic)];
     return { destroy() { clearTimeout(auto); offs.forEach((f) => f()); st.destroy(); } };

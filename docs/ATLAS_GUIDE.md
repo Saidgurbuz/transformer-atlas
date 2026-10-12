@@ -56,6 +56,8 @@ export default {
 | `ctx.store` | `select({token, head, layer})`, `setText`, `setConfig`, `loadPreset`, `notice` |
 | `ctx.on(event, fn)` | `'trace'` (new forward pass), `'select'`; auto-removed on unmount |
 | `ctx.setSteps(labels, onStep)`, `ctx.setStep(i)` | in-scene steps; the bottom bar shows them and story mode walks them before moving on |
+| `el` event `'atlas:interrupt'` | the reader used the story bar or arrow keys: stop any auto-advance (`el.addEventListener('atlas:interrupt', stop)`) |
+| `data-own-keys` attribute | put it on a focusable component that handles arrow keys itself, so the atlas does not also navigate |
 | `ctx.go(nodeId, originElOrRect)` | zoom to another node (the kit does this for `data-node` elements automatically) |
 | `ctx.showMath(key, cell)`, `ctx.showCode(keys)`, `ctx.inspect(key)` | open the drawers |
 | `ctx.label(i)` | display label of token i |

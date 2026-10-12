@@ -446,7 +446,8 @@ export function headPicker(stage, ctx, { x, y, kind = 'attn' } = {}) {
 
 /** "✓ equals the traced value" badge (or a red ✗ with the difference). */
 export function checkBadge(got, want, { label = 'equals the traced value', tol = 1e-6 } = {}) {
-  const ok = (got === want) || Math.abs(got - want) <= tol * Math.max(1, Math.abs(want));
-  return h('span', { class: ['k-check', ok ? 'ok' : 'bad'], title: `computed ${got} · traced ${want}` },
-    ok ? `✓ ${label}` : `✗ differs from the traced value by ${fmt(Math.abs(got - want), 3)}`);
+  const numeric = typeof got === 'number' && typeof want === 'number';
+  const ok = numeric ? (got === want) || Math.abs(got - want) <= tol * Math.max(1, Math.abs(want)) : String(got) === String(want);
+  const bad = numeric ? `✗ differs from the traced value by ${fmt(Math.abs(got - want), 3)}` : '✗ differs from the traced value';
+  return h('span', { class: ['k-check', ok ? 'ok' : 'bad'], title: `computed ${got} · traced ${want}` }, ok ? `✓ ${label}` : bad);
 }

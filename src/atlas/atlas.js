@@ -242,8 +242,17 @@ export function startAtlas(root) {
       if (!order.includes(stack[stack.length - 1]?.id)) go(order[0]);
     }
   }
+  // The reader took control: scenes stop their auto-advance. Scenes listen for
+  // 'atlas:interrupt' on their element; older ones stop on pointerdown, so send both.
+  function interrupt(layer) {
+    if (!layer?.el) return;
+    layer.el.dispatchEvent(new CustomEvent('atlas:interrupt'));
+    try { layer.el.dispatchEvent(new PointerEvent('pointerdown')); } catch { /* old browsers */ }
+  }
+
   function storyStep(delta) {
     const top = stack[stack.length - 1];
+    interrupt(top);
     const st = top?.steps;
     if (st && st.labels.length) {
       const ni = st.index + delta;
@@ -272,7 +281,7 @@ export function startAtlas(root) {
       h('div', { class: 'story-text' },
         h('div', { class: 'story-title' }, top.info.title, storyOn && i >= 0 ? h('span', { class: 'story-count' }, `${i + 1} / ${order.length}`) : null),
         st && st.labels.length > 1
-          ? h('div', { class: 'story-steps' }, st.labels.map((l, k) => h('button', { type: 'button', class: ['story-dot', k === st.index && 'cur', k < st.index && 'done'], onClick: () => { st.index = k; st.onStep?.(k); renderStory(); } }, l)))
+          ? h('div', { class: 'story-steps' }, st.labels.map((l, k) => h('button', { type: 'button', class: ['story-dot', k === st.index && 'cur', k < st.index && 'done'], onClick: () => { interrupt(top); st.index = k; st.onStep?.(k); renderStory(); } }, l)))
           : h('div', { class: 'story-blurb' }, top.info.blurb)),
       h('button', { type: 'button', class: 'atlas-tool', 'aria-label': 'Next', onClick: () => storyStep(1) }, '›'),
       storyOn && h('button', { type: 'button', class: ['atlas-tool', autoplay && 'on'], title: 'Auto-play', onClick: () => { autoplay = !autoplay; renderStory(); if (autoplay) tick(); } }, autoplay ? '❚❚' : '▶'),
@@ -449,7 +458,8 @@ export function startAtlas(root) {
   });
 
   window.addEventListener('keydown', (e) => {
-    if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+    if (e.defaultPrevented) return;
+    if (e.target.closest?.('input, textarea, select, [contenteditable], [data-own-keys], [role="application"], [tabindex]:not(body):not(.atlas-tool)')) return;
     if (e.key === 'Escape') {
       if (rightDrawer.classList.contains('open')) closeRight();
       else if (leftDrawer.classList.contains('open')) closeLeft();
