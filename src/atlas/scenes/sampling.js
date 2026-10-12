@@ -1,9 +1,12 @@
-// Sampling: how the next character is chosen from the model's distribution.
-// Hero: one bar per vocabulary entry, sorted by score, for the selected position. Temperature, top-k and top-p
-// reshape the bars through engine.samplingDistribution; removed characters fade. The Draw step is inverse-CDF
-// sampling: a seeded uniform U lands on a unit strip cut into the final probabilities, and the segment it lands
-// in is the character chosen. The strip, the histogram and the draw controls appear on that step only, so before
-// it the bars and the step equation are the only focus.
+// Sampling: how the next token is chosen from the model's distribution.
+// Hero: one bar per entry of the vocabulary, sorted by score, for the selected position. Up to 64 entries (the char
+// model) keeps its own layout, with an ellipsis past 40 bars. A longer vocabulary (the subword model, 4,096 entries) shows the top 20 by
+// probability, with their labels in two staggered rows, and a note counts the rest and bounds their probability.
+// Temperature, top-k and top-p reshape the full distribution through engine.samplingDistribution; removed entries
+// fade. The Draw step is inverse-CDF sampling: a seeded uniform U lands on a unit strip cut into the final
+// probabilities, and the segment it lands in is the token chosen. The strip has one segment per bar and one tail
+// segment for the rest, so a draw can land past the top bars and still name its token. The strip, the histogram and
+// the draw controls appear on that step only, so before it the bars and the step equation are the only focus.
 // The histogram counts draws from one distribution. It is marked stale when the position, the settings, the
 // vocabulary or the logits row change.
 // Each step owns the controls it teaches. A step sets its own settings when it is chosen; moving a control on an
@@ -37,8 +40,8 @@ useStyle('sampling', `
   transition: top .6s cubic-bezier(.65, 0, .35, 1), height .6s cubic-bezier(.65, 0, .35, 1); }
 .sp-flab { position: absolute; font: 500 12px/1 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
 .sp-chars { position: absolute; transition: top .6s cubic-bezier(.65, 0, .35, 1); }
-.sp-char { position: absolute; top: 0; height: 18px; line-height: 18px; text-align: center; font: 600 15px/18px var(--font-mono);
-  color: var(--fg); transition: color .3s, opacity .3s; }
+.sp-char { position: absolute; top: 0; height: 18px; line-height: 18px; text-align: center; white-space: nowrap;
+  font: 600 var(--sp-lfs, 15px)/18px var(--font-mono); color: var(--fg); transition: color .3s, opacity .3s; }
 .sp-char.off { color: var(--fg-3); opacity: .5; }
 .sp-char.pick { color: var(--accent); }
 .sp-char.sp-ell { color: var(--fg-3); }
@@ -50,6 +53,13 @@ useStyle('sampling', `
 .sp-seg.alt { background: color-mix(in srgb, var(--c-head) 70%, var(--surface)); }
 .sp-seg.hot { background: color-mix(in srgb, var(--c-head) 55%, var(--fg)); }
 .sp-seg.pick { background: var(--accent); }
+.sp-tail { background: color-mix(in srgb, var(--c-head) 22%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-head) 40%, transparent);
+  transition: left .6s cubic-bezier(.65, 0, .35, 1), width .6s cubic-bezier(.65, 0, .35, 1); }
+.sp-tail[hidden], .sp-tpick[hidden] { display: none; }
+.sp-tpick { background: var(--accent); box-shadow: none;
+  transition: left .6s cubic-bezier(.65, 0, .35, 1), width .6s cubic-bezier(.65, 0, .35, 1), background-color .3s; }
+.sp-tpick.hot { background: color-mix(in srgb, var(--accent) 70%, var(--fg)); }
 .sp-marker { position: absolute; width: 2px; border-radius: 1px; background: var(--accent); opacity: 0;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); transition: opacity .3s; }
 .sp-pill { position: absolute; transform: translateX(-50%); padding: 3px 8px; border-radius: 999px; opacity: 0;
@@ -64,6 +74,9 @@ useStyle('sampling', `
 .sp-hcnt { position: absolute; left: -10px; right: -10px; text-align: center; font: 600 11px/1 var(--font-mono); color: var(--fg-2);
   transition: bottom .6s cubic-bezier(.65, 0, .35, 1); }
 .sp-hcap { position: absolute; font: 500 12px/1.2 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
+.sp-more { position: absolute; text-align: right; font: 500 13px/1.3 var(--font-mono); color: var(--fg-2); white-space: nowrap;
+  pointer-events: none; }
+.sp-more sup { font-size: 9px; line-height: 0; }
 .sp-note { position: absolute; font: 500 13px/1.2 var(--font-mono); color: var(--fg-2); white-space: nowrap; }
 .sp-note[hidden] { display: none; }
 .sp-note::before { content: ''; display: inline-block; width: 7px; height: 7px; margin: 0 8px 1px 0; border-radius: 50%;
@@ -95,25 +108,42 @@ const PLOT = { x: ZONES.hero.x, y: ZONES.hero.y, w: 1000, h: 470 };
 const SIDE = { x: ZONES.side.x, y: ZONES.hero.y, w: ZONES.side.w };
 const GL = 56, GR = 24, PW = PLOT.w - GL - GR;              // left gutter, right margin, width of every row
 const TOP = 56, BH_PLAIN = 344, BH_DRAW = 204;              // the 1.0 line; bar height before the draw, and on the draw step
-const MAX_BARS = 40;                                        // longer vocabularies: the first entries, an ellipsis, the last 4
+const LIST_MAX = 64;                                        // up to this many entries the chart keeps its own layout (the char model; an ellipsis past 40 bars)
+const MAX_BARS = 40;                                        // 41 to 64 entries: the first ones, an ellipsis, the last 4
+const TOP_BARS = 20;                                        // longer vocabularies (the subword model): the top bars by probability
+const LBL_GAP = 22, LBL_ONE = 18, LBL_TWO = LBL_GAP + 18;   // label rows: one row, or two (the odd bars on the lower row)
+const BH_DRAW_TWO = 176;                                    // draw-step bar height with two label rows: the U pill still fits above the strip
 const STRIP = { y: 312, h: 22 };                            // cumulative strip, [0, 1] (draw step)
 const HIST = { y: 352, h: 72 };                             // histogram of 100 draws (draw step)
-const NEAR = 0.9;                                           // a top probability this high is "nearly certain" (top-p 0.9 keeps one character then)
+const NEAR = 0.9;                                           // a top probability this high is "nearly certain" (top-p 0.9 keeps one token then)
 // What a step sets when it is chosen from the step bar. The draw uses the settings on screen.
 const SETTINGS = [{ tau: 1, k: 0, p: 1 }, { tau: 2, k: 0, p: 1 }, { k: 8, p: 0.9 }];
 
 const px = (n) => `${n}px`;
 const r2 = (x) => Math.round(x * 100) / 100;
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
-const word = (label) => (label === '␣' ? 'space' : esc(label));           // a character as it reads in a caption
+const word = (label) => (label === '␣' ? 'space' : esc(label));           // a token as it reads in a caption
 // A probability as the reader sees it. "100%" only for values that round to it at two decimals; a value just short of 1 reads >99.9%.
 const pct = (p) => (p >= 0.99995 ? '100%' : p >= 0.999 ? '>99.9%' : p >= 0.99 ? `${(p * 100).toFixed(1)}%`
   : p >= 0.1 ? `${Math.round(p * 100)}%` : p >= 0.001 ? `${(p * 100).toFixed(1)}%` : p > 0 ? '<0.1%' : '0%');
+// A probability bound for the note: four decimals, or a mantissa and a power of ten below 0.0001.
+const probHtml = (p) => {
+  if (p === 0) return '0';
+  if (p >= 0.0001) return p.toFixed(4);
+  let e = Math.floor(Math.log10(p)), m = (p / 10 ** e).toFixed(1);
+  if (m === '10.0') { e += 1; m = (p / 10 ** e).toFixed(1); }
+  return `${m}×10<sup>−${-e}</sup>`;
+};
+const fmtInt = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 const entropy = (p) => -p.reduce((a, x) => (x > 0 ? a + x * Math.log(x) : a), 0);
-const plural = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+const plural = (n, noun) => `${fmtInt(n)} ${noun}${n === 1 ? '' : 's'}`;
+const shownCount = (V) => (V > LIST_MAX ? TOP_BARS : V);         // the ranks with their own bar and strip segment
+const unitOf = (s) => (s.tokenizer.kind === 'char' ? 'character' : 'token');   // the char model keeps its own word
 const TEX_ESC = { '\\': '\\backslash', '{': '\\{', '}': '\\}', '$': '\\$', '&': '\\&', '#': '\\#', '^': '\\textasciicircum',
   '_': '\\_', '%': '\\%', '~': '\\textasciitilde', "'": "\\text{'}", ' ': '\\text{space}', '\n': '\\text{newline}', '\t': '\\text{tab}' };
-const texChar = (ch) => `\\mathtt{${TEX_ESC[ch] ?? ch}}`;
+// A token as typewriter TeX, one escape per character. A leading space is a short gap; the char model's space keeps its word.
+const texChar = (s) => (s === ' ' ? '\\mathtt{\\text{space}}'
+  : `\\mathtt{${Array.from(s, (c) => (c === ' ' ? '\\ ' : TEX_ESC[c] ?? (c.charCodeAt(0) > 126 ? `\\text{${c}}` : c))).join('')}}`);
 const put = (el, tex) => { if (el.dataset.tex !== tex) { el.dataset.tex = tex; el.innerHTML = texHTML(tex, { display: true }); } };
 
 /** Indices to draw for an axis of length n: all of them, or the first ones, -1 (an ellipsis), the last 4. */
@@ -122,8 +152,8 @@ function elide(n, max) {
   const tail = 4, head = max - tail - 1;
   return [...Array.from({ length: head }, (_, i) => i), -1, ...Array.from({ length: tail }, (_, i) => n - tail + i)];
 }
-/** Where the bars stop for a bar height: the baseline, and the character labels under it. */
-const geoOf = (BH) => ({ BH, BASE: TOP + BH, CHR: TOP + BH + 6 });
+/** Where the bars stop for a bar height: the baseline, the first label row, and the height of the label block. */
+const geoOf = (BH, two) => ({ BH, BASE: TOP + BH, CHR: TOP + BH + 6, LBL: two ? LBL_TWO : LBL_ONE });
 /** U and the segment it falls in, at one precision: six decimals, more only where U sits within a rounding step of a
  *  bound, so the comparison on screen is the one the draw made. */
 function segText(U, lo, hi) {
@@ -133,6 +163,18 @@ function segText(U, lo, hi) {
   }
   return [lo.toFixed(12), U.toFixed(12), hi.toFixed(12)];
 }
+/** The note above a long vocabulary's bars: how many entries the bars leave out, their share of the mass, and the
+ *  largest of them as a bound. Filtered entries show their weight before the filters, as their bars do. */
+function moreHtml(D, NS) {
+  const N = D.V - NS, r0 = D.order[NS];
+  const thr = D.pFin[r0] > 0 ? D.pFin[r0] : D.pRaw[r0];
+  let mass = 0, kept = 0;
+  for (let r = NS; r < D.V; r++) { const v = D.order[r]; if (D.pFin[v] > 0) { mass += D.pFin[v]; kept++; } }
+  if (kept === 0) return `+ ${fmtInt(N)} more, all removed by the filters (p ≤ ${probHtml(thr)} before them)`;
+  const what = kept === N ? `${pct(mass)} of the mass`
+    : `${fmtInt(kept)} kept (${pct(mass)} of the mass), ${fmtInt(N - kept)} removed`;
+  return `+ ${fmtInt(N)} more, ${what}, p ≤ ${probHtml(thr)}`;
+}
 
 export default {
   mount(el, ctx) {
@@ -140,9 +182,10 @@ export default {
     const rng = mulberry32(SEED);
     const view = { tau: 1, k: 0, p: 1, step: 0, lastU: null, hist: null };
     let cur = null, builtV = -1, anim = 0, auto = 0, autoDriving = false, keeping = false;
-    let lastNote = '', capText = null;
+    let lastNote = '', capText = null, rowMemo = null, spreadMemo = null;
     let plot, grid = [], cols = [], chars = [], segs = [], hcols = [], drawEls = [];
-    let frame, chRow, track, marker, pill, histCap;
+    let frame, chRow, track, marker, pill, histCap, tail, tailPick, more;
+    let longVocab = false;                                  // the bars are the top TOP_BARS of a long vocabulary (labels in two rows)
     const stopAuto = () => { clearTimeout(auto); auto = 0; };
 
     // ------------------------------------------------------------------ shared parts
@@ -193,9 +236,9 @@ export default {
       format: (v) => (v ? String(v) : 'off'), onInput: (v) => { stopAuto(); view.k = v; own(2); } });
     const pS = slider({ id: 'sampling-topp', label: 'top-p', min: 0.1, max: 1, step: 0.05, value: view.p,
       format: (v) => (v < 1 ? v.toFixed(2) : 'off'), onInput: (v) => { stopAuto(); view.p = r2(v); own(2); } });
-    const btns = h('div', { class: 'sp-btns sp-group' },
-      button('Sample', () => { stopAuto(); draw(); }, { title: 'Draw one character from the current distribution' }),
-      button('Sample 100', () => { stopAuto(); sampleMany(100); }, { title: 'Draw 100 characters and fill the histogram' }),
+    const btnDraw = button('Sample', () => { stopAuto(); draw(); }, { title: 'Draw one token from the current distribution' });
+    const btnMany = button('Sample 100', () => { stopAuto(); sampleMany(100); }, { title: 'Draw 100 tokens and fill the histogram' });
+    const btns = h('div', { class: 'sp-btns sp-group' }, btnDraw, btnMany,
       h('span', { class: 'sp-seed', title: 'U comes from the mulberry32 generator with this seed' }, `seed ${SEED}`));
     const side = h('div', { class: 'sp-side', style: { width: px(SIDE.w) } },
       stepLab, eqMain, eqLive, eqCheck,
@@ -225,14 +268,21 @@ export default {
       view.k = Math.min(view.k, V);
       const row = (r) => s.logits.data.subarray(r * V, (r + 1) * V);
       const z = row(t);
+      // What depends only on the logits row (the untempered softmax, its check against the trace, the sorted order) is
+      // kept until the logits or the position change, so a slider move sorts just the two tempered distributions.
+      let R = rowMemo;
+      if (!R || R.logits !== s.logits || R.t !== t) {
+        const pRef = samplingDistribution(z, { temperature: 1 });                           // untouched softmax
+        const traced = s.trace.probs.data.subarray(t * V, (t + 1) * V);
+        let maxDiff = 0;
+        for (let v = 0; v < V; v++) maxDiff = Math.max(maxDiff, Math.abs(pRef[v] - traced[v]));
+        // Sorting by score is the same at every temperature, so the bars keep their order when tau changes.
+        const order = Array.from({ length: V }, (_, i) => i).sort((a, b) => z[b] - z[a] || a - b);
+        R = rowMemo = { logits: s.logits, t, pRef, traced, maxDiff, order };
+      }
+      const { pRef, traced, maxDiff, order } = R;
       const pRaw = samplingDistribution(z, { temperature: view.tau, topK: 0, topP: 1 });   // softmax(z / tau)
       const pFin = samplingDistribution(z, { temperature: view.tau, topK: view.k, topP: view.p });
-      const pRef = samplingDistribution(z, { temperature: 1 });                             // untouched softmax
-      const traced = s.trace.probs.data.subarray(t * V, (t + 1) * V);
-      let maxDiff = 0;
-      for (let v = 0; v < V; v++) maxDiff = Math.max(maxDiff, Math.abs(pRef[v] - traced[v]));
-      // Sorting by score is the same at every temperature, so the bars keep their order when tau changes.
-      const order = Array.from({ length: V }, (_, i) => i).sort((a, b) => z[b] - z[a] || a - b);
       const rankOf = new Array(V), start = new Array(V);
       let acc = 0;
       order.forEach((v, r) => { rankOf[v] = r; start[r] = acc; acc += pFin[v]; });
@@ -240,19 +290,25 @@ export default {
       const mass = kept.reduce((a, v) => a + pRaw[v], 0);
       const mask = s.trace.mask;
       const g = argmax(z);
-      const topFin = pFin[g];                                                                // the greedy character is kept
+      const topFin = pFin[g];                                                                // the greedy token is kept
       const exact = pFin.every((x, v) => Math.abs(x - pRef[v]) < 1e-9);                      // the bars are the traced softmax
       // Nearly certain here: the most spread-out other position that is not nearly certain, at these settings.
+      // The search sorts every position's row, so it is kept until the logits, the position or the settings change.
       let spread = null;
       if (topFin >= NEAR) {
-        let bestH = -1;
-        for (let r = 0; r < T; r++) {
-          if (r === t) continue;
-          const q = samplingDistribution(row(r), { temperature: view.tau, topK: view.k, topP: view.p });
-          const top = Math.max(...q);
-          if (top >= NEAR) continue;
-          const H = entropy(q);
-          if (H > bestH) { bestH = H; spread = { r, top }; }
+        const m = spreadMemo;
+        if (m && m.logits === s.logits && m.t === t && m.tau === view.tau && m.k === view.k && m.p === view.p) spread = m.spread;
+        else {
+          let bestH = -1;
+          for (let r = 0; r < T; r++) {
+            if (r === t) continue;
+            const q = samplingDistribution(row(r), { temperature: view.tau, topK: view.k, topP: view.p });
+            const top = Math.max(...q);
+            if (top >= NEAR) continue;
+            const H = entropy(q);
+            if (H > bestH) { bestH = H; spread = { r, top }; }
+          }
+          spreadMemo = { logits: s.logits, t, tau: view.tau, k: view.k, p: view.p, spread };
         }
       }
       return {
@@ -264,7 +320,7 @@ export default {
       };
     }
 
-    // The draw: the same rule as engine.sampleFrom, applied to the kept characters in rank order.
+    // The draw: the same rule as engine.sampleFrom, applied to the kept tokens in rank order.
     function pickFor(D, u) {
       const probs = D.kept.map((v) => D.pFin[v]);
       return D.kept[sampleFrom(probs, () => u)];
@@ -282,7 +338,8 @@ export default {
     // ------------------------------------------------------------------ DOM of the plot (rebuilt when V changes)
     function buildPlot(V) {
       builtV = V;
-      const slots = elide(V, MAX_BARS);                     // the ranks drawn, left to right; -1 is an ellipsis
+      longVocab = V > LIST_MAX;
+      const slots = longVocab ? Array.from({ length: TOP_BARS }, (_, i) => i) : elide(V, MAX_BARS);   // the ranks drawn, left to right; -1 is an ellipsis
       const colW = PW / slots.length;
       const kids = [];
       grid = [];
@@ -307,21 +364,28 @@ export default {
         const el = h('div', { class: 'sp-col', style: { left: px(GL + i * colW), width: px(colW), top: px(TOP) } }, fill, val);
         cols[r] = { fill, val, el };
         colEls.push(el);
-        chars[r] = h('div', { class: 'sp-char', style: { left: px(i * colW), width: px(colW) } });
+        // a label is as wide as its bar's column; on the two-row layout it may take the width of two columns, centred on its bar
+        const box = longVocab ? { left: px((i + 0.5) * colW - (colW - 2)), width: px(2 * colW - 4), top: px(i % 2 ? LBL_GAP : 0) }
+          : { left: px(i * colW), width: px(colW) };
+        chars[r] = h('div', { class: 'sp-char', style: box });
         charEls.push(chars[r]);
         const bar = h('div', { class: 'sp-hbar' }), exp = h('div', { class: 'sp-hexp' }), cnt = h('div', { class: 'sp-hcnt' });
         const hel = h('div', { class: 'sp-hcol sp-group', style: { left: px(GL + i * colW), width: px(colW), top: px(HIST.y), height: px(HIST.h) } }, bar, exp, cnt);
         hcols[r] = { el: hel, bar, exp, cnt };
         histEls.push(hel);
       });
-      segs = Array.from({ length: V }, () => h('div', { class: 'sp-seg' }));
-      chRow = h('div', { class: 'sp-chars', dataset: { trace: 'logits' }, style: { left: px(GL), width: px(PW), height: '18px' } }, charEls);
-      track = h('div', { class: 'sp-track sp-group', style: { left: px(GL), top: px(STRIP.y), width: px(PW), height: px(STRIP.h) } }, segs);
+      // one strip segment per shown rank; past the top bars, one tail segment holds the rest of the strip
+      segs = Array.from({ length: shownCount(V) }, () => h('div', { class: 'sp-seg' }));
+      tail = h('div', { class: 'sp-seg sp-tail', hidden: true });
+      tailPick = h('div', { class: 'sp-seg sp-tpick', hidden: true });
+      chRow = h('div', { class: 'sp-chars', dataset: { trace: 'logits' }, style: { left: px(GL), width: px(PW), height: px(longVocab ? LBL_TWO : LBL_ONE) } }, charEls);
+      track = h('div', { class: 'sp-track sp-group', style: { left: px(GL), top: px(STRIP.y), width: px(PW), height: px(STRIP.h) } }, segs, tail, tailPick);
       marker = h('div', { class: 'sp-marker', style: { top: px(STRIP.y - 8), height: px(STRIP.h + 16) } });
       pill = h('div', { class: 'sp-pill' });
       histCap = h('div', { class: 'sp-hcap sp-group', style: { left: px(GL), top: px(HIST.y + HIST.h + 12) } });
+      more = h('div', { class: 'sp-more', hidden: true, style: { right: px(GR), top: px(TOP + 6) } });
       drawEls = [sigma, drawsTick, histBase, track, histCap, ...histEls];
-      plot.replaceChildren(...kids, sigma, drawsTick, histBase, frame, frameLab, ...colEls, chRow, track, marker, pill, ...histEls, histCap);
+      plot.replaceChildren(...kids, sigma, drawsTick, histBase, frame, frameLab, ...colEls, chRow, track, marker, pill, ...histEls, histCap, more);
     }
 
     /** The bars' height depends on the step: taller while the draw is hidden. The lines, labels and frame follow it. */
@@ -331,7 +395,17 @@ export default {
       for (const c of cols) if (c) c.el.style.height = px(g.BH);
       chRow.style.top = px(g.CHR);
       frame.style.height = px(g.CHR + 24 - (TOP - 26));
-      pill.style.top = px(g.CHR + 24);
+      pill.style.top = px(g.CHR + g.LBL + 6);
+    }
+
+    /** The draw landed past the top bars: its exact entry gets its own sliver of the strip, sized to its probability. */
+    function placeTailPick(D, r) {
+      const on = r >= segs.length;                              // r = -1 (no draw on screen) is never past the bars
+      tailPick.hidden = !on;
+      if (!on) return;
+      const v = D.order[r];
+      tailPick.style.left = px(D.start[r] * PW);
+      tailPick.style.width = px(Math.max(2, D.pFin[v] * PW));
     }
 
     /** Move the U marker along the strip; with D, the segment under it is highlighted. */
@@ -340,11 +414,15 @@ export default {
       marker.style.opacity = on ? '1' : '0';
       pill.style.opacity = on ? '1' : '0';
       segs.forEach((sg) => sg.classList.remove('hot'));
+      tailPick.classList.remove('hot');
       if (!on) return;
       marker.style.left = px(GL + x * PW - 1);
       pill.style.left = px(GL + Math.min(PW - 40, Math.max(40, x * PW)));
       pill.textContent = `U = ${x.toFixed(6)}`;
-      if (D) segs[D.rankOf[pickFor(D, x)]].classList.add('hot');
+      if (!D) return;
+      const r = D.rankOf[pickFor(D, x)];
+      if (r < segs.length) segs[r].classList.add('hot');
+      else { placeTailPick(D, r); tailPick.classList.add('hot'); }
     }
 
     // ------------------------------------------------------------------ paint
@@ -353,8 +431,9 @@ export default {
       cur = D;
       if (D.V !== builtV) buildPlot(D.V);
       const drawing = view.step === DRAW_STEP;
-      const BH = drawing ? BH_DRAW : BH_PLAIN;
-      placeBars(geoOf(BH));
+      const NS = shownCount(D.V);
+      const BH = drawing ? (longVocab ? BH_DRAW_TWO : BH_DRAW) : BH_PLAIN;
+      placeBars(geoOf(BH, longVocab));
       [...drawEls, ...sideDraw].forEach((e) => e.classList.toggle('sp-off', !drawing));
       kS.input.max = String(D.V);
       if (kS.get() !== view.k) kS.set(view.k);
@@ -363,8 +442,15 @@ export default {
       const hist = view.hist, stale = !!hist && hist.key !== keyOf(D);
       const U = drawing && !sweeping && view.lastU != null ? view.lastU : null;      // the draw on screen, once it has landed
       const pick = U == null ? -1 : D.rankOf[pickFor(D, U)];
-      let ki = 0;                                              // index among the kept characters (alternating tints)
-      for (let r = 0; r < D.V; r++) {
+      // The labels of a long vocabulary share one size: the longest label on screen must fit its two-column slot.
+      if (longVocab) {
+        let longest = 1;
+        for (let r = 0; r < NS; r++) longest = Math.max(longest, Array.from(D.s.tokenizer.label(D.order[r])).length);
+        const fs = Math.max(11, Math.min(15, Math.floor((2 * (PW / TOP_BARS) - 6) / (0.6 * longest))));
+        chRow.style.setProperty('--sp-lfs', px(fs));
+      }
+      let ki = 0;                                              // index among the kept tokens (alternating tints)
+      for (let r = 0; r < NS; r++) {
         const v = D.order[r], kept = D.pFin[v] > 0, p = kept ? D.pFin[v] : D.pRaw[v];
         const cell = `${D.t},${v},0`;
         const sg = segs[r];
@@ -402,18 +488,35 @@ export default {
           hc.exp.style.opacity = kept && D.pFin[v] >= 0.001 ? '1' : '0';
         }
       }
+      // The tail: every entry past the top bars, as one strip segment whose width is their share of the mass.
+      let tailMass = 0;
+      for (let r = NS; r < D.V; r++) tailMass += D.pFin[D.order[r]];
+      const hasTail = NS < D.V && tailMass > 0;
+      tail.hidden = !hasTail;
+      if (hasTail) {
+        tail.style.left = px(D.start[NS] * PW); tail.style.width = px(tailMass * PW);
+        tail.title = `the other ${fmtInt(D.V - NS)} ${unitOf(D.s)}s, ${pct(tailMass)} of the mass`;
+      }
+      placeTailPick(D, pick);
+      more.hidden = NS >= D.V;
+      if (!more.hidden) more.innerHTML = moreHtml(D, NS);
+      const inBars = hist ? D.order.slice(0, NS).reduce((a, v) => a + (hist.counts.get(v) ?? 0), 0) : 0;
       histCap.textContent = !hist ? 'Sample 100 fills this histogram. The ticks mark the probabilities.'
         : stale ? `${hist.n} draws from an earlier distribution. Press Sample 100 to redraw.`
-          : `${hist.n} draws. The ticks mark the probabilities.`;
+          : NS < D.V && hist.n > inBars ? `${hist.n} draws: ${inBars} in the top ${NS}, ${hist.n - inBars} in the other ${fmtInt(D.V - NS)}. The ticks mark the probabilities.`
+            : NS < D.V ? `${hist.n} draws, all in the top ${NS}. The ticks mark the probabilities.`
+              : `${hist.n} draws. The ticks mark the probabilities.`;
       if (!sweeping) placeMarker(U, null);
       paintText(D, U, sweeping, drawing);
     }
 
     /** The note above the plot: the mask note, or the pointer to a spread position where the bars move. One line. */
     function noteHtml(D, step) {
-      if (D.seesNext) return { cls: 'sp-note mask', html: `Bidirectional mask: position ${D.t} can see the next character, so these bars are not a prediction.` };
+      const unit = unitOf(D.s);
+      if (D.seesNext) return { cls: 'sp-note mask', html: `Bidirectional mask: position ${D.t} can see the next ${unit}, so these bars are not a prediction.` };
       if (D.topFin < NEAR) return null;
-      const lead = step === DRAW_STEP ? `Position ${D.t} is nearly certain, so most draws pick <b>“${word(D.s.tokenizer.label(D.greedy))}”</b>.`
+      const word1 = word(D.s.tokenizer.label(D.greedy));
+      const lead = step === DRAW_STEP ? `Position ${D.t} is nearly certain, so most draws pick <b>“${word1}”</b>.`
         : step === 0 ? `Position ${D.t} is nearly certain.` : `Position ${D.t} is nearly certain at these settings.`;
       if (!D.spread) return { cls: 'sp-note point', html: `${lead} No other position has a top probability below ${pct(NEAR)}.` };
       const why = step === DRAW_STEP ? 'to see spread-out draws' : step === 0 ? 'to see a spread-out distribution' : 'to see the settings act';
@@ -422,14 +525,15 @@ export default {
 
     function paintText(D, U, sweeping, drawing) {
       const { tau, k, p } = view, step = view.step, hist = view.hist;
-      const kOn = k > 0, pOn = p < 1, p2 = p.toFixed(2), nF = D.kept.length;
+      const kOn = k > 0, pOn = p < 1, p2 = p.toFixed(2), nF = D.kept.length, NS = shownCount(D.V);
+      const unit = unitOf(D.s);
       const g = D.greedy, top = `<b>“${word(D.s.tokenizer.label(g))}”</b>`;
       const nm = (v) => word(D.s.tokenizer.label(v));
       const tok = (i) => word(ctx.label(i));
       const tex = (v) => texChar(D.s.tokenizer.token(v));
       const pv = U == null ? null : pickFor(D, U), pr = pv == null ? -1 : D.rankOf[pv];
       const seg = pv == null ? null : segText(U, D.start[pr], D.start[pr] + D.pFin[pv]);
-      // The live equations subtract the largest score, as lm-head does, so the greedy character's exponent is 0.
+      // The live equations subtract the largest score, as lm-head does, so the greedy token's exponent is 0.
       const m = D.z[g];
       const Zs = D.z.reduce((a, x) => a + Math.exp(x - m), 0);
       const Zt = D.z.reduce((a, x) => a + Math.exp((x - m) / tau), 0);
@@ -442,30 +546,30 @@ export default {
       const dH = D.H.toFixed(2) === D.H1.toFixed(2);                      // the same at the two decimals shown
       const change = tau === 1
         ? `At τ = 1 the bars are the plain softmax, with entropy ${D.H1.toFixed(2)} nats.`
-        : `The top character, ${top}, moves from ${pct(D.pRef[g])} at τ = 1 to ${pct(D.topFin)} at τ = ${tau.toFixed(2)}, and ${dH
+        : `The top ${unit}, ${top}, moves from ${pct(D.pRef[g])} at τ = 1 to ${pct(D.topFin)} at τ = ${tau.toFixed(2)}, and ${dH
           ? `the entropy stays at ${D.H.toFixed(2)} nats.` : `the entropy from ${D.H1.toFixed(2)} to ${D.H.toFixed(2)} nats.`}`;
       // Step 2: the filters at the current temperature. The engine applies top-k first, then top-p inside the top-k set.
-      const kTxt = k === 1 ? 'keeps the most likely character' : `keeps the ${k} most likely characters`;
+      const kTxt = k === 1 ? `keeps the most likely ${unit}` : `keeps the ${k} most likely ${unit}s`;
       let filt;
       if (!kOn && !pOn) filt = 'Top-k and top-p are both off.';
       else if (!pOn) filt = `Top-k ${kTxt}; top-p is off.`;
       else if (!kOn) filt = nF === 1
         ? `Top-p keeps the smallest set reaching ${p2}. Here that is ${top} alone, since it already reaches ${p2}.`
-        : `Top-p keeps the smallest set reaching ${p2}, which is ${plural(nF, 'character')}.`;
+        : `Top-p keeps the smallest set reaching ${p2}, which is ${plural(nF, unit)}.`;
       else if (k === 1) filt = `Top-k ${kTxt}, so top-p does not bind.`;
       else if (nF === 1) filt = `Top-k ${kTxt}, and top-p cuts that set to ${top}, which reaches ${p2} on its own.`;
-      else if (nF < k) filt = `Top-k ${kTxt}, and top-p cuts that set to the ${plural(nF, 'character')} reaching ${p2}.`;
+      else if (nF < k) filt = `Top-k ${kTxt}, and top-p cuts that set to the ${plural(nF, unit)} reaching ${p2}.`;
       else filt = `Top-k ${kTxt}, and top-p at ${p2} cuts none of them.`;
       const cut = nF < D.V ? 'Faded bars are removed, and the rest are renormalised to sum to 1.' : 'Nothing is removed, so the bars are unchanged.';
       // Step 3: the draw, with the settings it uses named.
       const setTxt = `τ = ${tau.toFixed(2)}${kOn || pOn ? `, ${[kOn ? `top-k ${k}` : '', pOn ? `top-p ${p2}` : ''].filter(Boolean).join(', ')}` : ', no filters'}`;
       const draws = U != null
-        ? `Draws use ${setTxt}. U = ${seg[1]} falls in the segment of <b>“${nm(pv)}”</b>, so that character comes next; greedy would always take the tallest bar.`
+        ? `Draws use ${setTxt}. U = ${seg[1]} falls in the segment of <b>“${nm(pv)}”</b>${pr >= NS ? `, beyond the top ${NS} bars,` : ','} so that ${unit} comes next; greedy would always take the tallest bar.`
         : sweeping
-          ? `Draws use ${setTxt}. A seeded uniform number U lands on the strip, and the segment under it is the character chosen.`
-          : `Draws use ${setTxt}. Press Sample to draw one character, or Sample 100 to fill the histogram.`;
+          ? `Draws use ${setTxt}. A seeded uniform number U lands on the strip, and the segment under it is the ${unit} chosen.`
+          : `Draws use ${setTxt}. Press Sample to draw one ${unit}, or Sample 100 to fill the histogram.`;
       capSet([
-        `Softmax turns the ${D.V} scores after position ${D.t}, <b>“${tok(D.t)}”</b>, into probabilities that sum to 1. ${s0}`,
+        `Softmax turns the ${fmtInt(D.V)} scores after position ${D.t}, <b>“${tok(D.t)}”</b>, into probabilities that sum to 1. ${s0}`,
         `Dividing every score by τ before the softmax: below 1 sharpens the bars, above 1 flattens them. ${change}`,
         `${filt} ${cut}`,
         draws,
@@ -488,13 +592,15 @@ export default {
       put(eqLive, live);
       stepLab.textContent = STEPS[step];
       eqCheck.replaceChildren(checkBadge(D.maxDiff, 0, { label: 'untempered softmax = traced probs' }));
+      btnDraw.title = `Draw one ${unit} from the current distribution`;
+      btnMany.title = `Draw 100 ${unit}s and fill the histogram`;
 
-      statH.innerHTML = `Entropy <b>${D.H.toFixed(2)}</b> nats, about <b>${Math.exp(D.H).toFixed(1)}</b> equally likely characters.`;
+      statH.innerHTML = `Entropy <b>${D.H.toFixed(2)}</b> nats, about <b>${Math.exp(D.H).toFixed(1)}</b> equally likely ${unit}s.`;
       statG.innerHTML = `Greedy (argmax) takes ${top}, at <b>${pct(D.topFin)}</b>.`;
       statU.innerHTML = !drawing ? '' : sweeping ? 'Drawing U from the seeded generator…'
         : U == null ? (hist ? `The histogram holds ${hist.n} draws. Press <b>Sample</b> to draw one and see its U.` : 'No draw yet. Press <b>Sample</b>.')
-          : `U = <b>${seg[1]}</b> lands on “<b>${nm(pv)}</b>”, the segment from ${seg[0]} to ${seg[2]}.`;
-      header.setSub(`Position <b>${D.t}</b> (<b>“${tok(D.t)}”</b>) scores all ${D.V} vocabulary entries. Sampling decides which one comes next.`);
+          : `U = <b>${seg[1]}</b> lands on “<b>${nm(pv)}</b>”, the segment from ${seg[0]} to ${seg[2]}${pr >= NS ? `, beyond the top ${NS} bars` : ''}.`;
+      header.setSub(`Position <b>${D.t}</b> (<b>“${tok(D.t)}”</b>) scores all ${fmtInt(D.V)} vocabulary entries. Sampling decides which one comes next.`);
 
       const nt = noteHtml(D, step);
       const key = nt ? `${nt.cls}|${nt.html}` : '';
@@ -529,7 +635,7 @@ export default {
       anim = requestAnimationFrame(sweep);
     }
 
-    // Sample 100: 100 draws from the same generator, tallied per character. The single-draw readouts are
+    // Sample 100: 100 draws from the same generator, tallied per token. The single-draw readouts are
     // cleared, because the pick and U belong to one draw and the histogram to the hundred.
     function sampleMany(n = 100) {
       cancelAnimationFrame(anim);
