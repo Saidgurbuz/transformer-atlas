@@ -25,8 +25,10 @@ the exact line of PyTorch that computes it. Arrow keys walk the forward pass as 
 - **Proof they agree:** `tests/parity.mjs` compares JS against PyTorch on 6 architecture
   variants: every traced tensor, the loss, every parameter gradient, and KV-cache decoding
   (549/549 checks at 1e-9).
-- **Trained demo models:** `src/presets/` ships four tiny models trained with the reference
-  code (Alice char-LM GPT-2 style, Alice char-LM LLaMA style, induction heads, word reversal).
+- **Trained demo models:** `src/presets/` ships five tiny models trained with the reference
+  code: a subword model on TinyStories (byte-level BPE, 4,096 tokens, so most words are one
+  token; held-out loss 1.98 nats/token), Alice char-LMs in GPT-2 and LLaMA style, induction
+  heads, and word reversal. Link straight to one with `?preset=<id>`, e.g. `?preset=tinystories`.
 
 ## Interview prep
 
@@ -93,10 +95,13 @@ docs/SCENE_GUIDE.md             3D explorer plug-ins (v0.1 tower)
 .venv/bin/python tools/export_fixtures.py     # PyTorch -> tests/fixtures/*.json
 node tests/parity.mjs                          # JS engine vs PyTorch (traces, grads, KV cache)
 node tests/presets.mjs                         # shipped weights reproduce PyTorch logits
+node tests/bpe.mjs                             # JS BPE tokenizer == the Python one (204 texts)
 node tests/math.mjs                            # every equation compiles; live numbers match the trace
 .venv/bin/python tests/test_numpy_reference.py # NumPy forward + manual backward vs PyTorch
 tools/smoke.sh --all                           # every atlas node in headless Chromium, light + dark
 tools/smoke.sh --view head.1.2 --out shot.png  # one node + screenshot
+tools/smoke.sh --view tokens --preset tinystories --out shot.png   # any node, any model
+tools/smoke.sh --all --themes light --shard 0/3 --shots dir        # a third of a sweep, with screenshots
 ```
 
 ## Extend it
@@ -113,12 +118,15 @@ and write `src/atlas/scenes/<name>.js` (copy `softmax.js`; rules and API in
 4. `node tools/gen_codemap.mjs` (bundles model.py for the code panels).
 5. Add a case to `CASES` in `tools/export_fixtures.py`, re-export, and run `node tests/parity.mjs`.
 
-**Retrain the presets** (cluster job, not on the login node):
+**Retrain the presets** (cluster jobs, never on the login node; `tools/fetch_data.sh` gets the corpora):
 
 ```bash
 bsub -G grp_vision_docling -q normal -n 8 -R "rusage[mem=8GB] span[hosts=1]" -W 120 \
      -o logs/presets.%J.log .venv/bin/python tools/train_presets.py
-node tests/presets.mjs
+# subword preset: tokenizer + model, ~32 min on 32 CPU cores (a CUDA torch build also works)
+STEPS=20000 bsub -G grp_vision_docling -q normal -n 32 -R "rusage[mem=32GB] span[hosts=1]" -W 240 \
+     -o logs/bpe.%J.log .venv/bin/python tools/train_bpe_preset.py
+node tests/presets.mjs && node tests/bpe.mjs
 ```
 
 ## Environment notes (handoff)
@@ -131,7 +139,12 @@ node tests/presets.mjs
   `.venv/bin/python -m pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu`
   and `pip install numpy`. Try uv first in a normal shell.
 - Browser tests use Playwright 1.48.2 installed under `tools/node_modules` with its Chromium in
-  the user's Playwright cache. `tools/smoke.sh` holds a lock so only one browser runs at a time.
+  the user's Playwright cache. On a login node `tools/smoke.sh` sends each run to the LSF
+  interactive queue (~2 s to start; `SMOKE_LOCAL=1` forces a local run). `tools/smoke.mjs` sets
+  `TMPDIR=/tmp`: the cluster's TMPDIR is on GPFS, where Chromium's cache made pages take ~30 s.
+- Subword preset: `tokenizers` 0.23 (pip, same fallback as above) trains the BPE; the JS port in
+  `src/engine/bpe.js` is checked against it by `tests/bpe.mjs`. TinyStories (Eldan & Li, 2023) is
+  CDLA-Sharing-1.0; only the trained weights ship, not the data.
 - Preset metrics: the char-LMs report training-set loss (there is no held-out split; the models
   memorise much of the book). Induction: 99.7% next-token accuracy on repeats. Reverse: 100%.
 - Corpus: `data/alice_raw.txt`, *Alice's Adventures in Wonderland* from Project Gutenberg

@@ -149,6 +149,7 @@ tools/smoke.sh --view <node id> --out shot.png              # e.g. --view head.1
 tools/smoke.sh --view <node id> --theme dark --out dark.png
 tools/smoke.sh --view <node id> --width 1920 --height 1080 --out big.png
 tools/smoke.sh --view <node id> --wait 6000 --out late.png  # after the step animation ran
+tools/smoke.sh --view <node id> --preset tinystories --out bpe.png   # the subword model (V = 4,096)
 tools/smoke.sh --view <node id> --eval "(async () => { window.__te.store.select({token: 3}); await new Promise(r => setTimeout(r, 800)); return 1 })()" --out sel.png
 tools/smoke.sh --view <node id> --eval "(async () => { await window.__te.store.loadPreset('induction'); await new Promise(r => setTimeout(r, 1500)); return 1 })()" --out induction.png
 ```
