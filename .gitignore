@@ -17,4 +17,5 @@ data/*.txt
 data/tinystories/
 src/presets/*_smoke.js
 tests/fixtures/*_smoke.json
+tests/tokenizer/*_smoke.json
 .venv-gpu/

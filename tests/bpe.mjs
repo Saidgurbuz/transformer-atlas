@@ -8,7 +8,7 @@ import { makeBPETokenizer } from '../src/engine/index.js';
 globalThis.atob ??= (b) => Buffer.from(b, 'base64').toString('binary');
 const here = dirname(fileURLToPath(import.meta.url));
 const presetFile = process.argv[3] || join(here, '..', 'src', 'presets', 'tinystories.js');
-const fixture = process.argv[2] || join(here, 'fixtures', 'bpe_cases.json');
+const fixture = process.argv[2] || join(here, 'tokenizer', 'bpe_cases.json');
 const mod = (await import(pathToFileURL(presetFile).href)).default;
 const tok = makeBPETokenizer(mod.tokenizer);
 const { cases } = JSON.parse(readFileSync(fixture, 'utf8'));

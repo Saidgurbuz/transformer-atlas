@@ -8,7 +8,7 @@ A CUDA build of torch also works (add -gpu "num=1"); STEPS defaults to 30,000.
 
 Inputs:  data/tinystories/valid.txt, data/tinystories/train_slice.txt (TinyStoriesV2-GPT4)
 Outputs: src/presets/tinystories.js (fp16 weights + tokenizer), src/presets/manifest.js (entry
-         added first), tests/fixtures/bpe_cases.json (tokenizer parity cases for tests/bpe.mjs)
+         added first), tests/tokenizer/bpe_cases.json (tokenizer parity cases for tests/bpe.mjs)
 """
 from __future__ import annotations
 
@@ -212,7 +212,7 @@ def main():
 
     # tokenizer parity cases for the JS port
     cases = val_texts[:200] + ["Hello world!", "  two  spaces and\nnew lines\n\n", "Numbers 123 and 4567.", "don't can't I'm you're we'll"]
-    (ROOT / "tests" / "fixtures" / ("bpe_cases_smoke.json" if SMOKE else "bpe_cases.json")).write_text(
+    (ROOT / "tests" / "tokenizer" / ("bpe_cases_smoke.json" if SMOKE else "bpe_cases.json")).write_text(
         json.dumps({"cases": [{"text": c, "ids": tok.encode(c).ids} for c in cases]}))
 
     if not SMOKE:

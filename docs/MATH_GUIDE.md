@@ -49,5 +49,5 @@ node tests/math.mjs --only src/core/math/<topic>.js   # your file alone
 node tests/math.mjs                                    # everything
 ```
 The test compiles every LaTeX string with KaTeX (throwOnError) and runs every live() on 6
-architecture fixtures and 4 trained presets, at several cells, requiring |result − expected|
+architecture fixtures and every trained preset, at several cells, requiring |result − expected|
 ≤ 1e-6·max(1, |expected|). All checks must pass.
