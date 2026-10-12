@@ -56,7 +56,7 @@ export default {
     st.add(eq, { x: 1180, y: BY - 10 });
     const patternBox = h('div');
     st.add(patternBox, { x: 1180, y: 548 });
-    const cap = sceneCaption(st, { y: BY + BH + 64, w: 960 });
+    const cap = sceneCaption(st, { w: 960 });
 
     let barEls = [], keyEls = [], stackEls = [], patternMat = null;
 
