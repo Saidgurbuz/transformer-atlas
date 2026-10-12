@@ -177,3 +177,6 @@
 .reading-list.one-col { grid-template-columns: 1fr; }
 
 .icon-i { display: grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; border: 1.6px solid currentColor; font: 700 11px/1 Georgia, serif; font-style: italic; }
+
+.atlas-drawer .katex-display { overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+.atlas-drawer .math-card { min-width: 0; }
