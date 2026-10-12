@@ -459,8 +459,9 @@ export function startAtlas(root) {
   });
 
   window.addEventListener('keydown', (e) => {
-    if (e.defaultPrevented) return;
-    if (e.target.closest?.('input, textarea, select, [contenteditable], [data-own-keys], [role="application"], [tabindex]:not(body):not(.atlas-tool)')) return;
+    if (e.target.closest?.('input, textarea, select, [contenteditable]')) return;
+    // arrows and space belong to a focused component that handles them; Escape always zooms out
+    if (e.key !== 'Escape' && (e.defaultPrevented || e.target.closest?.('[data-own-keys], [role="application"], [tabindex]:not(body):not(.atlas-tool)'))) return;
     if (e.key === 'Escape') {
       if (rightDrawer.classList.contains('open')) closeRight();
       else if (leftDrawer.classList.contains('open')) closeLeft();
