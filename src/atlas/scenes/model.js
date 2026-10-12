@@ -17,7 +17,7 @@ const W = 7.2;              // slab width (x)
 const D = 2.4;              // slab depth (z)
 const RX = W / 2 + 1.0;     // x of the residual loops (right side: things that bypass)
 const RAIL = -W / 2 - 1.5;  // x of the label rail (left side: names, things that join)
-const RIB = 1.1;            // width of the residual-stream ribbon
+const RIB = 0.75;           // width of the residual-stream ribbon
 const FOV = 24;
 let revealed = false;       // the paper-to-3D opening plays once per page load
 
@@ -31,6 +31,9 @@ useStyle('model3d', `
 .m3-cap { display: grid; justify-items: center; gap: 2px; white-space: nowrap; pointer-events: none; }
 .m3-cap b { font: 650 14px/1.2 var(--font-display); color: var(--fg); }
 .m3-cap span { font: 500 11.5px/1.2 var(--font-mono); color: var(--fg-3); }
+.m3-cap button { pointer-events: auto; margin-top: 6px; font: 600 11.5px/1 var(--font-mono); color: var(--accent); background: var(--surface); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 999px; padding: 6px 12px; cursor: pointer; }
+.m3-cap button:hover { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+.m3-land { font: 600 11px/1 var(--font-mono); color: var(--c-head); white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .3s; }
 .m3-mini { font: 600 11px/1 var(--font-mono); color: var(--fg-3); pointer-events: none; }
 .m3-qkv { font: 700 12px/1 var(--font-mono); pointer-events: none; }
 .m3-prob { font: 600 12px/1.2 var(--font-mono); color: var(--fg); white-space: nowrap; pointer-events: none; }
@@ -49,7 +52,6 @@ export default {
     el.append(host);
     const engine = new SceneEngine(host, { onHover: (info) => setHover(info), onHoverMove: () => {}, onPick: () => {}, onTheme: () => { applyLook(); build(); } });
     const R = engine.renderer;
-    R.toneMapping = THREE.ACESFilmicToneMapping;
     R.shadowMap.enabled = true;
     R.shadowMap.type = THREE.VSMShadowMap;
     engine.camera.fov = FOV;
@@ -79,6 +81,7 @@ export default {
     engine.scene.add(root);
     let parts = [], labels = [], disposables = [], billboards = [], faceCam = [], bounds = null, hot = null;
     let interacted = false, pointerIn = false, settleUntil = 0;
+    let flow = [], play = null, flyer = null;   // the forward-pass animation: parts in the order data reaches them
     engine.controls.addEventListener('start', () => { interacted = true; });
     R.domElement.addEventListener('pointerenter', () => { pointerIn = true; });
     R.domElement.addEventListener('pointerleave', () => { pointerIn = false; });
@@ -89,7 +92,9 @@ export default {
     const hue = (kind) => tok(`--c-${kind}`);
     const bodyTone = () => new THREE.Color(dark() ? '#1b212c' : '#f6f4f1');
     function applyLook() {
-      R.toneMappingExposure = dark() ? 1.15 : 0.92;
+      // ACES keeps the dark theme's glow; on the light page it greys the hues, so plain linear there
+      R.toneMapping = dark() ? THREE.ACESFilmicToneMapping : THREE.LinearToneMapping;
+      R.toneMappingExposure = dark() ? 1.15 : 0.85;
       engine.scene.fog = null;
     }
     applyLook();
@@ -167,6 +172,7 @@ export default {
       g.position.set(0, y, 0.02);
       root.add(g);
       faceCam.push(g);
+      flow.push({ type: 'pulse', obj: g });
       const hit = new THREE.Mesh(new THREE.SphereGeometry(r * 1.25, 12, 8), new THREE.MeshBasicMaterial({ visible: false }));
       g.add(hit);
       return { g, hit };
@@ -192,7 +198,7 @@ export default {
     // diverging ramp for vector values (theme tokens)
     function ramp() {
       const neg = tok('--heat-neg'), mid = tok('--heat-mid'), pos = tok('--heat-pos');
-      return (v) => { const t = Math.max(-1, Math.min(1, v)), e = Math.pow(Math.abs(t), 0.75); return (t < 0 ? mid.clone().lerp(neg, e) : mid.clone().lerp(pos, e)); };
+      return (v) => { const t = Math.max(-1, Math.min(1, v)), e = Math.pow(Math.abs(t), 0.5); return (t < 0 ? mid.clone().lerp(neg, e) : mid.clone().lerp(pos, e)); };
     }
     function vectorTexture(vals, range) {
       const f = ramp(), n = vals.length, px = new Uint8Array(n * 4);
@@ -211,18 +217,20 @@ export default {
       const g = new THREE.Group();
       const plane = new THREE.Mesh(new THREE.PlaneGeometry(RIB, len), new THREE.MeshBasicMaterial({ map: vectorTexture(vals, range), toneMapped: false, side: THREE.DoubleSide }));
       plane.position.y = len / 2;
-      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(plane.geometry), new THREE.LineBasicMaterial({ color: hue(edgeKind) }));
+      const edge = new THREE.LineSegments(new THREE.EdgesGeometry(plane.geometry), new THREE.LineBasicMaterial({ color: hue(edgeKind), transparent: true, opacity: 0.3 }));
       edge.position.y = len / 2;
       g.add(plane, edge);
-      if (withArrow) {
-        const head = new THREE.Mesh(new THREE.ConeGeometry(RIB * 0.36, 0.22, 3), new THREE.MeshBasicMaterial({ color: hue(edgeKind), toneMapped: false }));
-        head.position.y = len + 0.11;
-        head.rotation.y = Math.PI / 6;
+      if (withArrow) {                       // a flat arrowhead in the ribbon's plane
+        const tri = new THREE.Shape();
+        tri.moveTo(-RIB * 0.4, 0); tri.lineTo(RIB * 0.4, 0); tri.lineTo(0, 0.24); tri.closePath();
+        const head = new THREE.Mesh(new THREE.ShapeGeometry(tri), new THREE.MeshBasicMaterial({ color: hue(edgeKind), toneMapped: false, side: THREE.DoubleSide }));
+        head.position.y = len - 0.02;
         g.add(head);
       }
       g.position.set(0, y0, 0);
       root.add(g);
       billboards.push(g);
+      flow.push({ type: 'grow', obj: g });
     }
 
     // attention pattern drawn on a canvas: masked cells hatched, the selected query row outlined
@@ -230,17 +238,21 @@ export default {
       const T = probs.shape[1], S = 256, c = document.createElement('canvas');
       c.width = c.height = S;
       const g = c.getContext('2d');
-      const lo = tok('--heat-lo'), hi = tok('--c-attn');
-      if (!dark()) { lo.multiplyScalar(0.95); hi.multiplyScalar(0.78); }
+      const lo = tok('--heat-lo'), hi = tok('--heat-hi');
+      if (!dark()) lo.multiplyScalar(0.95);
       const cell = S / T;
       g.fillStyle = `#${lo.getHexString()}`;
       g.fillRect(0, 0, S, S);
-      for (let i = 0; i < T; i++) for (let j = 0; j < T; j++) {
+      for (let i = 0; i < T; i++) {
+        let rowMax = 0;
+        for (let j = 0; j < T; j++) rowMax = Math.max(rowMax, probs.data[(hh * T + i) * T + j]);
+        for (let j = 0; j < T; j++) {
         const allowed = mask ? mask.data[i * T + j] > 0 : true;
         if (!allowed) continue;
-        const v = Math.pow(probs.data[(hh * T + i) * T + j], 0.42);
+        const v = Math.pow(probs.data[(hh * T + i) * T + j] / (rowMax || 1), 0.6);
         g.fillStyle = `#${lo.clone().lerp(hi, v).getHexString()}`;
         g.fillRect(j * cell, i * cell, cell + 0.6, cell + 0.6);
+        }
       }
       g.strokeStyle = `#${tok('--c-mask').getHexString()}`;
       g.globalAlpha = 0.5;
@@ -286,19 +298,17 @@ export default {
       const c = document.createElement('canvas'), Wp = 1400, Hp = 64;
       c.width = Wp; c.height = Hp;
       const g = c.getContext('2d');
-      g.fillStyle = `#${muted('norm', dark() ? 0.7 : 0.8).getHexString()}`;
+      g.fillStyle = `#${muted('norm', dark() ? 0.7 : 0.55).getHexString()}`;
       g.fillRect(0, 0, Wp, Hp);
-      g.fillStyle = `#${tok('--fg-2').getHexString()}`;
-      g.font = '600 28px "Instrument Sans", system-ui, sans-serif';
-      g.textBaseline = 'middle';
-      g.fillText(`Layer ${l}`, 24, Hp / 2 + 1);
       const probs = st.trace[`L${l}.attn.probs`];
       if (probs) {
-        const H = probs.shape[0], T = probs.shape[1], s = 48, lo = tok('--heat-lo'), hi = tok('--c-attn');
+        const H = probs.shape[0], T = probs.shape[1], s = 48, lo = tok('--heat-lo'), hi = tok('--heat-hi');
         for (let hh = 0; hh < H && hh < 8; hh++) {
-          const x0 = 180 + hh * (s + 12);
+          const x0 = 60 + hh * (s + 12);
           for (let i = 0; i < T; i++) for (let j = 0; j < T; j++) {
-            const v = Math.pow(probs.data[(hh * T + i) * T + j], 0.55);
+            let rowMax = 0;
+            for (let jj = 0; jj < T; jj++) rowMax = Math.max(rowMax, probs.data[(hh * T + i) * T + jj]);
+            const v = Math.pow(probs.data[(hh * T + i) * T + j] / (rowMax || 1), 0.6);
             g.fillStyle = `#${lo.clone().lerp(hi, v).getHexString()}`;
             g.fillRect(x0 + (j * s) / T, 8 + (i * s) / T, s / T + 0.5, s / T + 0.5);
           }
@@ -326,7 +336,7 @@ export default {
     // ---------------------------------------------------------------- build
     function clear() {
       for (const p of parts) engine.removePickable(p);
-      parts = []; billboards = []; faceCam = [];
+      parts = []; billboards = []; faceCam = []; flow = []; play = null; flyer = null;
       for (const l of labels) l.userData.el.remove();
       labels = [];
       disposables.forEach((t) => t.dispose());
@@ -348,7 +358,7 @@ export default {
       // one colour range for the whole stream, so a LayerNorm visibly evens out the contrast
       const streamKeys = ['emb.tok', 'emb.out', ...Array.from({ length: L }, (_, l) => [`L${l}.resid_mid`, `L${l}.resid_out`, `L${l}.ln1`, `L${l}.ln2`, `L${l}.attn.out`, `L${l}.mlp.out`]).flat(), 'lnf'];
       const all = streamKeys.flatMap((k) => row(k) || []).map(Math.abs).sort((a, b) => a - b);
-      const range = all.length ? all[Math.floor(0.98 * (all.length - 1))] || 1 : 1;
+      const range = all.length ? all[Math.floor(0.92 * (all.length - 1))] || 1 : 1;
       const streamBefore = (l) => (l === 0 ? 'emb.out' : `L${l - 1}.resid_out`);
       let y = 0;
 
@@ -398,7 +408,9 @@ export default {
         x += w + 0.12;
         prev = i;
       });
-      css(`<b>Inputs</b><span>${T} tokens${show.length < T ? ` · ${show.length} shown` : ''} · ${st.tokenizer.kind === 'bpe' ? 'subword BPE' : 'characters'}</span>`, V3(0, cardY - 1.1, 0.6), { cls: 'm3-cap' });
+      const rowEnd = x;
+      const capIn = css(`<b>Inputs</b><span>${T} tokens${show.length < T ? ` · ${show.length} shown` : ''} · ${st.tokenizer.kind === 'bpe' ? 'subword BPE' : 'characters'}</span>${reducedMotion() ? '' : '<button type="button">▶ run a forward pass</button>'}`, V3(0, cardY - 1.2, 1.3), { cls: 'm3-cap', interactive: true });
+      capIn.userData.el.querySelector('button')?.addEventListener('click', (e) => { e.stopPropagation(); forwardPass(); });
 
       // ------------------------------------------------ embedding ⊕ positions
       y = embY0;
@@ -406,6 +418,7 @@ export default {
       emb.position.set(0, y + embH / 2, 0);
       root.add(emb);
       addPart(emb, { node: 'embedding', trace: 'emb.out', title: 'Input Embedding' });
+      flow.push({ type: 'glow', obj: emb });
       rail(emb, 'Input Embedding', `${cfg.vocab_size} → ${cfg.d_model}`, y + embH / 2, -W / 2);
       y += embH;
       const absPos = cfg.pos_encoding === 'learned' || cfg.pos_encoding === 'sinusoidal';
@@ -437,7 +450,7 @@ export default {
       const waferH = 0.32, wafers = [];
       const putWafer = (l) => {
         ribbon(y - 0.55 + 0.05, y, row(streamBefore(l)), range);
-        const m = new THREE.Mesh(new RoundedBoxGeometry(W * 0.92, waferH, D * 0.9, 3, 0.08), bodyMat('norm', { k: dark() ? 0.7 : 0.8 }));
+        const m = new THREE.Mesh(new RoundedBoxGeometry(W * 0.92, waferH, D * 0.9, 3, 0.08), bodyMat('norm', { k: dark() ? 0.7 : 0.55 }));
         m.castShadow = true; m.receiveShadow = true;
         outline(m, 'norm');
         const face = new THREE.Mesh(new THREE.PlaneGeometry(W * 0.9, waferH * 0.9), new THREE.MeshBasicMaterial({ map: waferTexture(l, st), toneMapped: false }));
@@ -446,6 +459,8 @@ export default {
         m.position.set(0, y + waferH / 2, 0);
         root.add(m);
         addPart(m, { node: `block.${l}`, title: `Layer ${l} · click to open it here`, selectLayer: l });
+        rail(m, `Layer ${l}`, 'collapsed', y + waferH / 2, -W * 0.46, D * 0.45);
+        flow.push({ type: 'glow', obj: m });
         wafers.push(m);
         y += waferH + 0.55;
       };
@@ -459,14 +474,15 @@ export default {
         ribbon(y - 0.55 + 0.05, y, row(streamBefore(layer)), range);
         const f1 = y + 0.12; fork(f1);
         y = f1 + 0.3;
-        const ln1 = slab('norm', W * 0.9, 0.12, D * 0.9, { r: 0.04, glass: true, opacity: 0.6 });
+        const ln1 = slab('norm', W * 0.9, 0.12, D * 0.5, { r: 0.04, glass: true, opacity: 0.6 });
         ln1.position.set(0, y + 0.06, 0); root.add(ln1);
+        flow.push({ type: 'glow', obj: ln1 });
         addPart(ln1, { node: `norm.${layer}.1`, trace: `L${layer}.ln1`, title: `${normName} before attention` });
-        rail(ln1, normName, 'pre-attention', y + 0.06, -W * 0.45);
+        rail(ln1, normName, 'pre-attention', y + 0.06, -W * 0.45, D * 0.25);
         y += 0.12;
         y = qkvFork(y, layer) ;
         y = attention(y, layer, q, attnName);
-        const yAdd1 = y + 0.6;
+        const yAdd1 = y + 1.0;
         ribbon(y, yAdd1 - 0.3, row(`L${layer}.attn.out`), range, 'attn');
         const a1 = plusNode(yAdd1, 'resid');
         addPart(a1.hit, { node: `residual.${layer}.1`, trace: `L${layer}.resid_mid`, title: 'Add: x + attention', group: a1.g });
@@ -476,15 +492,16 @@ export default {
         ribbon(y, y + 0.5, row(`L${layer}.resid_mid`), range, 'resid', false);
         const f2 = y + 0.55; fork(f2);
         y = f2 + 0.3;
-        const ln2 = slab('norm', W * 0.9, 0.12, D * 0.9, { r: 0.04, glass: true, opacity: 0.6 });
+        const ln2 = slab('norm', W * 0.9, 0.12, D * 0.5, { r: 0.04, glass: true, opacity: 0.6 });
         ln2.position.set(0, y + 0.06, 0); root.add(ln2);
+        flow.push({ type: 'glow', obj: ln2 });
         addPart(ln2, { node: `norm.${layer}.2`, trace: `L${layer}.ln2`, title: `${normName} before the MLP` });
-        rail(ln2, normName, 'pre-MLP', y + 0.06, -W * 0.45);
+        rail(ln2, normName, 'pre-MLP', y + 0.06, -W * 0.45, D * 0.25);
         y += 0.12;
         ribbon(y, y + 0.3, row(`L${layer}.ln2`), range, 'norm');
         y += 0.3;
         y = ffn(y, layer, q, actName);
-        const yAdd2 = y + 0.6;
+        const yAdd2 = y + 1.0;
         ribbon(y, yAdd2 - 0.3, row(`L${layer}.mlp.out`), range, 'mlp');
         const a2 = plusNode(yAdd2, 'resid');
         addPart(a2.hit, { node: `residual.${layer}.2`, trace: `L${layer}.resid_out`, title: 'Add: x + MLP', group: a2.g });
@@ -497,10 +514,11 @@ export default {
         const f1 = y + 0.12; fork(f1);
         y = qkvFork(f1 + 0.1, layer);
         y = attention(y, layer, q, attnName);
-        ribbon(y, y + 0.45, row(`L${layer}.attn.out`), range, 'attn');
-        y += 0.5;
+        ribbon(y, y + 0.8, row(`L${layer}.attn.out`), range, 'attn');
+        y += 0.85;
         const an1 = slab('norm', W, 0.3, D, { r: 0.08 });
         an1.position.set(0, y + 0.15, 0); root.add(an1);
+        flow.push({ type: 'glow', obj: an1 });
         addPart(an1, { node: `residual.${layer}.1`, trace: `L${layer}.resid_mid`, title: `Add & ${normName}` });
         rail(an1, `Add & ${normName}`, 'after attention', y + 0.15, -W / 2);
         if (cfg.residual) loop(f1, y + 0.15, W / 2);
@@ -509,10 +527,11 @@ export default {
         const f2 = y + 0.55; fork(f2);
         y = f2 + 0.3;
         y = ffn(y, layer, q, actName);
-        ribbon(y, y + 0.45, row(`L${layer}.mlp.out`), range, 'mlp');
-        y += 0.5;
+        ribbon(y, y + 0.8, row(`L${layer}.mlp.out`), range, 'mlp');
+        y += 0.85;
         const an2 = slab('norm', W, 0.3, D, { r: 0.08 });
         an2.position.set(0, y + 0.15, 0); root.add(an2);
+        flow.push({ type: 'glow', obj: an2 });
         addPart(an2, { node: `residual.${layer}.2`, trace: `L${layer}.resid_out`, title: `Add & ${normName}` });
         rail(an2, `Add & ${normName}`, 'after the MLP', y + 0.15, -W / 2);
         if (cfg.residual) loop(f2, y + 0.15, W / 2);
@@ -524,13 +543,12 @@ export default {
       const blockY1 = y - 0.2;
 
       // backplate tray + the N× bracket (the paper's grey frame, as an object you can see behind the block)
-      const bx0 = -W / 2 - 0.6, bx1 = RX + 0.55, fhgt = blockY1 - blockY0 + 0.3;
+      const bx0 = -W / 2 - 1.1, bx1 = RX + 0.55, fhgt = blockY1 - blockY0 + 0.3;
       const plate = new THREE.Mesh(new RoundedBoxGeometry(bx1 - bx0, fhgt, 0.08, 4, 0.35),
         dark()
-          ? new THREE.MeshStandardMaterial({ color: new THREE.Color('#141a24'), roughness: 0.9, envMapIntensity: 0.15, transparent: true, opacity: 0.9 })
+          ? new THREE.MeshLambertMaterial({ color: new THREE.Color('#0f131a'), emissive: new THREE.Color('#171d28'), emissiveIntensity: 1 })
           : new THREE.MeshLambertMaterial({ color: new THREE.Color('#e9edf4'), emissive: new THREE.Color('#e9edf4'), emissiveIntensity: 0.6, transparent: true, opacity: 0.6 }));
-      plate.position.set((bx0 + bx1) / 2, (blockY0 + blockY1) / 2, -(D / 2 + 0.6));
-      plate.receiveShadow = true;
+      plate.position.set((bx0 + bx1) / 2, (blockY0 + blockY1) / 2, -(D / 2 + 0.15));
       if (dark()) plate.add(new THREE.LineSegments(new THREE.EdgesGeometry(plate.geometry, 30), new THREE.LineBasicMaterial({ color: new THREE.Color('#2f3747') })));
       root.add(plate);
       const bxN = RX + 0.95;
@@ -559,10 +577,11 @@ export default {
       if (pre) {
         ribbon(y - 0.5, y + 0.25, row(`L${L - 1}.resid_out`), range);
         y += 0.3;
-        const lnf = slab('norm', W * 0.9, 0.12, D * 0.9, { r: 0.04, glass: true, opacity: 0.6 });
+        const lnf = slab('norm', W * 0.9, 0.12, D * 0.5, { r: 0.04, glass: true, opacity: 0.6 });
         lnf.position.set(0, y + 0.06, 0); root.add(lnf);
+        flow.push({ type: 'glow', obj: lnf });
         addPart(lnf, { node: 'final-norm', trace: 'lnf', title: `Final ${normName}` });
-        rail(lnf, `Final ${normName}`, '', y + 0.06, -W * 0.45);
+        rail(lnf, `Final ${normName}`, '', y + 0.06, -W * 0.45, D * 0.25);
         y += 0.12;
         ribbon(y, y + 0.45, row('lnf'), range, 'norm');
         y += 0.45;
@@ -572,6 +591,7 @@ export default {
       }
       const lin = slab('head', W * 0.95, 0.42, D);
       lin.position.set(0, y + 0.21, 0); root.add(lin);
+      flow.push({ type: 'glow', obj: lin });
       addPart(lin, { node: 'lm-head', trace: 'logits', title: 'Linear (LM head)' });
       rail(lin, 'Linear', `${cfg.d_model} → ${cfg.vocab_size}${cfg.tie_weights ? ' · tied' : ''}`, y + 0.21, -W * 0.475);
       y += 0.42;
@@ -579,31 +599,59 @@ export default {
       y += 0.4;
       const sm = slab('head', W * 0.95, 0.3, D, { r: 0.08, k: dark() ? 0.45 : 0.5 });
       sm.position.set(0, y + 0.15, 0); root.add(sm);
+      flow.push({ type: 'glow', obj: sm });
       addPart(sm, { node: 'sampling', trace: 'probs', title: 'Softmax' });
       rail(sm, 'Softmax', '', y + 0.15, -W * 0.475);
       y += 0.3;
 
-      // distribution comb: every token when V is small, else the top 24
+      // distribution comb, ranked from the centre out so the winner sits on the stream axis:
+      // every token above 0.2% when V is small, else the top 24 above 0.2%
       const V = cfg.vocab_size, pr = Array.from(tr.probs.data.subarray(q * V, (q + 1) * V));
       const order = [...pr.keys()].sort((a, b) => pr[b] - pr[a]);
-      const n = V <= 64 ? V : 24, ids = order.slice(0, n);
+      const n = V <= 64 ? V : 24, ids = order.slice(0, n).filter((v, r) => r === 0 || pr[v] >= 0.002);
       const span = W * 0.9, step = span / n, bw = step * 0.7;
       let topY = y;
       ids.forEach((v, r) => {
-        const p = pr[v], bh = 0.03 + 1.6 * p;
-        const bar = new THREE.Mesh(new RoundedBoxGeometry(bw, bh, 0.5, 2, Math.min(0.04, bh / 2.2)), r === 0
+        const p = pr[v], bh = 0.03 + 1.6 * p, w = r === 0 ? bw * 1.5 : bw;
+        const geo = new RoundedBoxGeometry(w, bh, 1.0, 2, Math.min(0.04, bh / 2.2));
+        geo.translate(0, bh / 2, 0);              // grows from its base
+        const bar = new THREE.Mesh(geo, r === 0
           ? new THREE.MeshPhysicalMaterial({ color: hue('head'), emissive: hue('head'), emissiveIntensity: 0.4, roughness: 0.35, clearcoat: 0.6 })
-          : bodyMat('head', { k: dark() ? 0.5 : 0.6 }));
+          : bodyMat('head', { k: dark() ? 0.5 : 0.45 }));
+        if (r === 0) bar.userData.keepEmissive = true;
         bar.castShadow = true;
-        const bxp = -span / 2 + (r + 0.5) * step;
-        bar.position.set(bxp, y + bh / 2 + 0.01, 0);
+        const bxp = (r % 2 ? -1 : 1) * Math.ceil(r / 2) * step;
+        bar.position.set(bxp, y + 0.01, 0);
         root.add(bar);
-        addPart(bar, { node: 'sampling', trace: 'probs', title: `“${st.tokenizer.label(v)}” ${(p * 100).toFixed(1)}%` });
-        if (r === 0) css(`<span class="m3-prob top">${esc(st.tokenizer.label(v))} ${(p * 100).toFixed(p < 0.1 ? 1 : 0)}%</span>`, V3(bxp, y + bh + 0.32, 0), { center: [0.5, 0.5] });
-        topY = Math.max(topY, y + bh);
+        addPart(bar, { node: 'sampling', trace: 'probs', title: `“${st.tokenizer.label(v)}” ${pct(p)}%` });
+        flow.push({ type: 'bar', obj: bar });
+        if (r === 0) css(`<span class="m3-prob top">${esc(st.tokenizer.label(v))} ${pct(p)}%</span>`, V3(bxp, y + bh + 0.32, 0), { center: [0.5, 0.5] });
+        topY = Math.max(topY, y + bh + (r === 0 ? 0.5 : 0));
       });
-      const runners = ids.slice(1, 3).map((v) => `${esc(st.tokenizer.label(v))} ${(pr[v] * 100).toFixed(pr[v] < 0.1 ? 1 : 0)}%`).join(' · ');
-      css(`<b>Output probabilities</b><span>next token after “${esc(ctx.label(q))}” · then ${runners}${V > 64 ? ` · top ${n} of ${V.toLocaleString()}` : ''}</span>`, V3(0, topY + 1.35, 0), { cls: 'm3-cap' });
+      // a faint 100% line: the scale the bars are read against
+      const tick = new THREE.Line(new THREE.BufferGeometry().setFromPoints([V3(-span / 2, y + 1.63, 0), V3(span / 2, y + 1.63, 0)]),
+        new THREE.LineDashedMaterial({ color: tok('--fg-3'), transparent: true, opacity: 0.35, dashSize: 0.12, gapSize: 0.1 }));
+      tick.computeLineDistances();
+      root.add(tick);
+      css('<span class="m3-mini">100%</span>', V3(span / 2 + 0.1, y + 1.63, 0), { center: [0, 0.5] });
+      topY = Math.max(topY, y + 1.63);
+      const runners = ids.slice(1, 3).map((v) => `${esc(st.tokenizer.label(v))} ${pct(pr[v])}%`).join(' · ');
+      const shown = V > 64 ? ` · top ${ids.length} of ${V.toLocaleString()}` : ids.length < V ? ` · ${ids.length} of ${V} above 0.2%` : '';
+      css(`<b>Output probabilities</b><span>next token after “${esc(ctx.label(q))}”${runners ? ` · then ${runners}` : ''}${shown}</span>`, V3(0, topY + 1.0, 0), { cls: 'm3-cap' });
+
+      // the predicted token, which the forward pass sends back to the end of the input
+      {
+        const win = ids[0], wl = st.tokenizer.label(win), w = Math.max(0.56, 0.17 * Array.from(wl).length + 0.3);
+        const card = slab('head', w, 0.72, 0.07, { r: 0.05, k: 0.2 });
+        const face = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.92, 0.64), new THREE.MeshBasicMaterial({ map: glyphTexture(wl, w * 0.92, 0.64, '#ffffff', ''), toneMapped: false, transparent: true }));
+        face.position.z = 0.04;
+        card.add(face);
+        card.visible = false;
+        root.add(card);
+        const from = V3(0, topY - 0.2, 0.3), to = V3(rowEnd + 0.25 + w / 2, cardY, 0.6);
+        const land = css('<span class="m3-land">appended · the next step reads it</span>', V3(to.x, cardY + 0.55, 0.6), { center: [0.5, 1] });
+        flyer = { card, land, curve: new THREE.QuadraticBezierCurve3(from, V3(RX + 2.6, (from.y + to.y) / 2, 3.4), to) };
+      }
 
       // contact shadow under the inputs
       const cs = document.createElement('canvas');
@@ -618,22 +666,22 @@ export default {
       contact.position.set(0, -0.02, 0.4);
       root.add(contact);
 
-      bounds = new THREE.Box3(V3(RAIL - 2.6, -1.3, -D / 2), V3(bxN + 2.6, topY + 1.3, D / 2 + 0.9));
+      bounds = new THREE.Box3(V3(RAIL - 2.6, -1.5, -D / 2), V3(bxN + 2.6, topY + 1.3, D / 2 + 0.9));
       key.target.position.set(0, (blockY0 + blockY1) / 2, 0);
       engine.invalidate();
 
       // ---- builders used above (hoisted function declarations close over this build)
       function qkvFork(y0, l) {
-        const y1 = y0 + 0.62;
+        const y1 = y0 + 0.95;
         const xs = [['q', -1.6], ['k', 0], ['v', 1.6]];
         for (const [kind, xx] of xs) {
-          const path = new THREE.QuadraticBezierCurve3(V3(0, y0), V3(xx * 0.15, y0 + 0.4), V3(xx, y1 - 0.18));
+          const path = new THREE.QuadraticBezierCurve3(V3(0, y0, 0), V3(xx * 0.15, y0 + 0.5, 0.5), V3(xx, y1 - 0.18, 0.7));
           tube(path, 0.04, hue(kind), 24);
-          cone(V3(xx, y1 - 0.1, 0), hue(kind), 'up', 0.75);
-          css(`<span class="m3-qkv" style="color: var(--c-${kind})">${kind.toUpperCase()}</span>`, V3(xx * 0.55 + (xx >= 0 ? 0.22 : -0.22), y0 + 0.3, 0.2), { center: [xx >= 0 ? 0 : 1, 0.5] });
+          cone(V3(xx, y1 - 0.1, 0.7), hue(kind), 'up', 0.75);
+          css(`<span class="m3-qkv" style="color: var(--c-${kind})">${kind.toUpperCase()}</span>`, V3(xx + 0.2, y1 - 0.22, 0.7), { center: [0, 0.5] });
         }
-        const hit = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.6, 0.6), new THREE.MeshBasicMaterial({ visible: false }));
-        hit.position.set(0, y0 + 0.31, 0);
+        const hit = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.9, 1.2), new THREE.MeshBasicMaterial({ visible: false }));
+        hit.position.set(0, y0 + 0.47, 0.35);
         root.add(hit);
         addPart(hit, { node: `qkv.${l}`, trace: `L${l}.attn.q`, title: 'Q, K, V projections' });
         return y1;
@@ -644,6 +692,7 @@ export default {
         base.position.set(0, y0 + baseH / 2, 0);
         root.add(base);
         addPart(base, { node: `attention.${l}`, trace: `L${l}.attn.out`, title: name });
+        flow.push({ type: 'glow', obj: base });
         const tags = [];
         if (cfg.pos_encoding === 'rope') tags.push('RoPE');
         if (cfg.pos_encoding === 'alibi') tags.push('ALiBi');
@@ -663,7 +712,7 @@ export default {
           }
           root.add(card);
           addPart(card, { node: `head.${l}.${hh}`, trace: `L${l}.attn.probs`, title: `Head ${hh}` });
-
+          flow.push({ type: 'glow', obj: card });
         }
         return y0 + baseH + chh * Math.cos(0.22) + 0.08;
       }
@@ -684,6 +733,7 @@ export default {
         m.position.set(0, y0, 0);
         root.add(m);
         addPart(m, { node: `mlp.${l}`, trace: `L${l}.mlp.out`, title: `Feed Forward · ${act}` });
+        flow.push({ type: 'glow', obj: m });
         rail(m, `Feed Forward · ${act}`, `${cfg.d_model} → ${cfg.d_ff} → ${cfg.d_model}`, y0 + fh / 2, -wm / 2);
         // the waist band: every hidden unit's |activation| for the selected token
         const a = tr[`L${l}.mlp.act`];
@@ -766,7 +816,59 @@ export default {
       apply(0);
       engine.tween({ duration: 400, update: () => {} })
         .then(() => engine.tween({ duration: 1800, easing: (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2), update: (e) => apply(e) }))
-        .then(() => { engine.controls.enabled = true; settleUntil = performance.now() + 10000; });
+        .then(() => { engine.controls.enabled = true; settleUntil = performance.now() + 10000; forwardPass(); });
+    }
+
+    // ---------------------------------------------------------------- forward pass
+    // Data climbs the figure in build order: each stream ribbon grows, each part it reaches glows,
+    // each ⊕ pulses; the output bars spring up, and the winning token flies back to the input row.
+    const GROW = 170, PULSE = 320, GLOW = 380, FLY = 1500, HOLD = 1100, FADE = 350;
+    const outBack = (t) => { const c = 1.70158; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+    const easeOut = (t) => 1 - Math.pow(1 - t, 3);
+    function forwardPass() {
+      if (reducedMotion() || !flow.length) return;
+      let t = 0, bars = 0;
+      for (const f of flow) {
+        if (f.type === 'bar') { f.t0 = null; continue; }
+        f.t0 = t;
+        t += f.type === 'grow' ? 120 : f.type === 'pulse' ? 90 : 60;
+      }
+      for (const f of flow) if (f.type === 'bar') { f.t0 = t + 150 + bars * 22; bars++; }
+      const flyAt = t + 150 + bars * 22 + 450;
+      play = { start: performance.now(), flyAt, end: flyAt + FLY + HOLD + FADE };
+      stepPlay(play.start);
+    }
+    function settle(f, p) {
+      const o = f.obj;
+      if (f.type === 'grow') o.scale.y = Math.max(0.001, easeOut(p));
+      else if (f.type === 'bar') o.scale.y = Math.max(0.001, p <= 0 ? 0 : outBack(p));
+      else if (f.type === 'pulse') o.scale.setScalar(1 + 0.4 * Math.sin(Math.PI * p));
+      else if (f.type === 'glow' && o !== hot && o.material && 'emissiveIntensity' in o.material) o.material.emissiveIntensity = 0.5 * Math.sin(Math.PI * p);
+    }
+    function stepPlay(now) {
+      const el = now - play.start;
+      for (const f of flow) {
+        const dur = f.type === 'grow' ? GROW : f.type === 'pulse' ? PULSE : f.type === 'bar' ? 520 : GLOW;
+        settle(f, Math.max(0, Math.min(1, (el - f.t0) / dur)));
+      }
+      if (flyer) {
+        const u = (el - play.flyAt) / FLY;
+        flyer.card.visible = u > 0 && el < play.end;
+        if (u > 0) {
+          const k = easeOut(Math.min(1, u));
+          flyer.card.position.copy(flyer.curve.getPoint(k));
+          flyer.card.lookAt(engine.camera.position);
+          const fade = Math.max(0, Math.min(1, (el - play.end + FADE) / FADE));
+          flyer.card.scale.setScalar((0.7 + 0.3 * k) * (1 - fade));
+          flyer.land.userData.el.firstChild.style.opacity = u >= 1 && fade < 1 ? 1 : 0;
+        }
+      }
+      if (el >= play.end) {
+        for (const f of flow) settle(f, f.type === 'grow' || f.type === 'bar' ? 1 : 0);
+        if (flyer) { flyer.card.visible = false; flyer.land.userData.el.firstChild.style.opacity = 0; }
+        play = null;
+      }
+      return true;
     }
 
     // ---------------------------------------------------------------- per frame
@@ -774,6 +876,7 @@ export default {
       const cam = engine.camera.position;
       for (const b of billboards) b.rotation.y = Math.atan2(cam.x - b.position.x, cam.z - b.position.z);
       for (const g of faceCam) g.lookAt(cam);
+      const playing = play ? stepPlay(performance.now()) : false;
       // a gentle sway for a few seconds after the opening, frozen while the pointer is on the canvas
       if (!interacted && !pointerIn && bounds && performance.now() < settleUntil && !reducedMotion()) {
         const { target, dist } = fitCache || (fitCache = fit(homeDir, FOV));
@@ -783,7 +886,7 @@ export default {
         engine.controls.target.copy(target);
         return true;
       }
-      return false;
+      return playing;
     });
     let fitCache = null;
 
@@ -837,4 +940,6 @@ export default {
   },
 };
 
+// probabilities as percentages that never round a near-certainty up to 100 or a small one down to 0
+function pct(p) { return p >= 0.995 && p < 1 ? (p * 100).toFixed(1) : p < 0.001 ? '<0.1' : (p * 100).toFixed(p < 0.1 ? 1 : 0); }
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
