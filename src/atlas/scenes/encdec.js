@@ -4,8 +4,10 @@
 //      cross-attention block lit. An illustration: the weights are layer 0’s own projections, never trained for it.
 //   3. The families. Four mask matrices are the focus; this model’s is its traced mask. The figure stays in the side
 //      with the self-attention blocks lit, because that is where the mask acts.
+// The 2017 figure keeps the paper’s “Add & Norm” boxes instead of the style guide’s round operation nodes: it
+// reproduces the paper’s figure rather than drawing this model.
 // Reference scene for contributors: see docs/ATLAS_GUIDE.md and softmax.js.
-import { stage2d, sceneHeader, sceneCaption, headPicker, mat, vec, chip, checkBadge, pulse, useStyle, MOTION, ZONES } from '../kit.js';
+import { stage2d, sceneHeader, sceneCaption, tokenPicker, headPicker, mat, chip, checkBadge, pulse, useStyle, MOTION, ZONES } from '../kit.js';
 import { h, s, num, texHTML, reducedMotion } from '../../ui/index.js';
 import { arcDiagram } from '../../ui/arcs.js';
 import { cloneModel, infer, maskAllows } from '../../engine/index.js';
@@ -24,25 +26,39 @@ const CAP = [
   'Encoder-only models read both ways; decoder-only models see only the past. Encoder–decoder and prefix-LM models combine the two: a bidirectional part for the input, a causal part for the output.',
 ];
 
+// The caption under the 2017 figure in the side column, per step (step 0 draws the figure in the hero instead).
+const THUMB = [
+  '',
+  '2017 model: cross-attention lit.',
+  'In the 2017 model, self-attention is lit, where the mask acts.',
+];
+
 const FAMILIES = [
   { id: 'enc', name: 'Encoder-only', ex: 'BERT · masked LM', rule: 'Bidirectional: every token sees every token.' },
   { id: 'dec', name: 'Decoder-only', ex: 'GPT, LLaMA · causal LM', rule: 'Causal: each token sees itself and the past.' },
   { id: 'encdec', name: 'Encoder–decoder', ex: 'T5, BART · seq2seq', rule: 'The encoder sees all of the source; the decoder is causal and reads all of the encoder.' },
-  { id: 'prefix', name: 'Prefix-LM', ex: 'UL2, PaLI · input side', rule: 'The prefix (input, image or prompt) is visible both ways; the rest is causal.' },
+  { id: 'prefix', name: 'Prefix-LM', ex: 'T5 prefix setting', rule: 'The prefix (input, image or prompt) is visible both ways; the rest is causal.' },
 ];
 const FAMILY_OF_MASK = { none: 'enc', causal: 'dec', sliding: 'dec', prefix: 'prefix' };
 
 const SRC0 = 'a cat sat';          // default source phrase
-const N_MINI = 8;                  // tokens in each mini mask
+const N_MINI = 8;                  // tokens in each mini mask (the grid is always this size)
 const PREFIX_ILL = 4;              // prefix length of the illustrative prefix-LM mask (DEFAULT_CONFIG.prefix_len)
 const MINI = { cell: 16, gap: 1, mode: 'sequential', range: 1, kind: 'attn' };
 const STAGGER = 80;                // ms between build-up items
 const BW = 300, FW = 340;          // block and frame widths, design units
 const E = 360, D = 890;            // column centres: encoder, decoder
 const FIG = { x: 190, y: 262, w: 870, h: 486 };     // the figure’s box at full size (hero position)
-const CTX = { x: 1180, y: 300 };                    // where the figure sits as context, in the side column
-const CTX_K = 340 / FIG.w;                          // and its scale there
-const HERO = ZONES.hero;                            // x 110, y 270
+const LEFT = ZONES.hero.x;                          // the left edge of every hero line (110)
+// Layout lines, design units. Every side column starts on SIDE_Y (lm-head uses the same line).
+const SIDE_Y = 260, TABLE_Y = 300;
+const THUMB_Y = 290;               // the 2017 figure in the side column: its top edge
+const THUMB_CAP_Y = 492;           // its caption, just under the figure
+const EQ_Y = 540;                  // the step-1 equation and its check, under that caption
+const TITLE_Y = 256, HEAD_X = 900, HEAD_Y = 250;   // hero title line; the head chips sit beside it
+const NOTE_Y = 292, ARC_Y = 330, SRC_Y = 640, GRID_Y = 296;
+const CTX = { x: ZONES.side.x, y: THUMB_Y };       // where the figure sits as context, in the side column
+const CTX_K = ZONES.side.w / FIG.w;                // and its scale there
 
 useStyle('encdec', `
 .ed-group { position: absolute; left: 0; top: 0; width: 0; height: 0; }
@@ -51,7 +67,6 @@ useStyle('encdec', `
 .ed-arch { transform-origin: 0 0; transition: transform .6s cubic-bezier(.65,0,.35,1); }
 .ed-cross { width: 1000px; }
 .ed-cross .arcs { max-width: none; }
-.ed-spacer { height: 228px; }
 .ed-svg { position: absolute; left: 0; top: 0; width: 1600px; height: 900px; overflow: visible; pointer-events: none; }
 .ed-line { fill: none; stroke-width: 2; stroke-linecap: round; transition: opacity .6s; }
 .ed-frame { box-sizing: border-box; border-radius: 16px; border: 1px dashed var(--line-strong); background: color-mix(in srgb, var(--surface-2) 40%, transparent); transition: opacity .6s; }
@@ -71,24 +86,20 @@ useStyle('encdec', `
 .ed-ctx .ed-line, .ed-ctx .ed-head { opacity: .45; }
 .ed-input { width: 340px; box-sizing: border-box; font: 600 20px/1.2 var(--font-mono); color: var(--fg); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; padding: 8px 12px; box-shadow: var(--shadow-1); outline: none; }
 .ed-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 28%, transparent); }
-.ed-src { display: flex; align-items: center; gap: 14px; white-space: nowrap; }
+.ed-src { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
 .ed-src-l { font: 600 15px/1 var(--font-mono); color: var(--fg-3); text-transform: uppercase; letter-spacing: .08em; }
-.ed-info { font: 500 15px/1.3 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
-.ed-note { font-size: 16px; line-height: 1.45; color: var(--fg-3); }
+.ed-info { font: 500 15px/1.3 var(--font-mono); color: var(--fg-3); max-width: 1000px; }
 .ed-hero-l { font: 600 17px/1.2 var(--font-mono); color: var(--c-attn); white-space: nowrap; }
+.ed-empty { display: grid; place-items: center; text-align: center; color: var(--fg-3); }
 .ed-side { box-sizing: border-box; width: 340px; display: grid; gap: 14px; }
-.ed-lbl { font: 600 15px/1.35 var(--font-mono); color: var(--fg-2); }
-.ed-cap { font-size: 16px; line-height: 1.45; color: var(--fg-3); }
-.ed-eqbox { display: grid; gap: 6px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 88%, transparent); border: 1px solid var(--line); box-shadow: var(--shadow-1); }
 .ed-eq { font-size: 22px; overflow-x: auto; }
+.ed-eqbox { display: grid; gap: 6px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 88%, transparent); border: 1px solid var(--line); box-shadow: var(--shadow-1); }
 .ed-live-eq { font: 600 16px/1.35 var(--font-mono); color: var(--fg); }
-.ed-live-sub { font: 500 14px/1.3 var(--font-mono); color: var(--fg-3); }
-.ed-qrow { display: flex; align-items: center; gap: 10px; }
-.ed-qlab { font: 600 17px/1 var(--font-mono); color: var(--c-q); }
+.ed-live-sub { font: 500 15px/1.3 var(--font-mono); color: var(--fg-3); }
 .ed-checks { display: grid; gap: 8px; justify-items: start; }
 .ed-tbl { display: grid; grid-template-columns: 1.4fr 1fr 1fr; font: 500 16px/1 var(--font-mono); }
 .ed-tbl > div { padding: 11px 4px; border-bottom: 1px solid var(--line); color: var(--fg-2); }
-.ed-tbl > .ed-th { font: 600 13px/1 var(--font-mono); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; color: var(--fg-3); padding-top: 0; }
+.ed-tbl > .ed-th { font: 600 15px/1 var(--font-mono); letter-spacing: .04em; text-transform: uppercase; white-space: nowrap; color: var(--fg-3); padding-top: 0; }
 .ed-tbl > .ed-paper { color: var(--fg-3); }
 .ed-tbl > .ed-mine { color: var(--fg); font-weight: 600; }
 .ed-legend { display: flex; gap: 18px; align-items: center; font: 500 15px/1.2 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
@@ -102,9 +113,9 @@ useStyle('encdec', `
 .ed-tile-text { min-width: 0; }
 .ed-tile-chip { position: absolute; left: 18px; top: -12px; }
 .ed-tile-name { font: 700 27px/1.1 var(--font-display); letter-spacing: -.01em; color: var(--fg); }
-.ed-tile-ex { font: 600 14px/1.2 var(--font-mono); color: var(--fg-3); margin-top: 6px; }
-.ed-tile-rule { font-size: 16px; line-height: 1.4; color: var(--fg-2); margin-top: 10px; }
-.ed-tile-note { font: 500 14px/1.3 var(--font-mono); color: var(--fg-2); margin-top: 8px; }
+.ed-tile-ex { font: 600 15px/1.2 var(--font-mono); color: var(--fg-3); margin-top: 6px; }
+.ed-tile-rule { font-size: 18px; line-height: 1.45; color: var(--fg-2); margin-top: 10px; }
+.ed-tile-note { font: 500 15px/1.3 var(--font-mono); color: var(--fg-2); margin-top: 8px; }
 .ed-tile-check { margin-top: 8px; }
 .ed-tile-note:empty, .ed-tile-check:empty { display: none; }
 @media (prefers-reduced-motion: reduce) {
@@ -178,13 +189,17 @@ export default {
     let step = -1, walking = false, auto = null;
     let cross = null, srcText = SRC0, dropped = [];
     let lastTrace, lastMine, lastN = -1;     // sentinels: the first families paint always builds the four masks
-    let qStrip = null;
 
     // One group per part, placed in design units. The figure is a single group that moves between hero and side.
     const group = (cls) => { const g = h('div', { class: ['ed-group', cls] }); st.add(g, { x: 0, y: 0 }); return g; };
     const gArch = group('ed-arch'), gCross = group('ed-cross ed-fade'), gFam = group('ed-fade');
     const side = (cls, y) => { const d = h('div', { class: ['ed-side', 'ed-fade', cls] }); st.add(d, { x: ZONES.side.x, y }); return d; };
-    const sArch = side('ed-s-arch', 318), sCtx = side('ed-s-ctx', 262), sCross = side('ed-s-cross', 530);
+    // The side column: one label on the top line, named for the step as softmax does, then this step’s context.
+    const sLab = h('div', { class: 'k-label', style: { textAlign: 'left' } });
+    st.add(sLab, { x: ZONES.side.x, y: SIDE_Y });
+    const sArch = side('ed-s-arch', TABLE_Y), sThumb = side('ed-s-thumb', THUMB_CAP_Y), sCross = side('ed-s-cross', EQ_Y);
+    const thumbCap = h('div', { class: 'k-caption' });
+    sThumb.append(thumbCap);
 
     // ---------------------------------------------------------------- step 1: the 2017 figure
     // Built bottom to top, each item with its own timing; arrows draw in as the stacks rise.
@@ -273,55 +288,58 @@ export default {
     const lit = (node, on) => node.classList.toggle('ed-hl', on);
 
     // ---------------------------------------------------------------- step 2: cross-attention (illustration)
+    // Controls: the query row (decoder tokens) in the controls zone, the head chips beside the title. One control per row.
+    const picker = tokenPicker(st, ctx, { label: 'query', kind: 'attn' });
+    picker.el.classList.add('ed-fade');
+    const hp = headPicker(st, ctx, { x: HEAD_X, y: HEAD_Y, kind: 'attn' });
+    hp.el.classList.add('ed-fade');
+    // A config change can remove heads. The store clamps the selected head, so redraw the chips to match.
+    ctx.on('trace', () => hp.render());
+
     const input = h('input', { class: 'ed-input', type: 'text', value: srcText, autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Source phrase for the encoder' });
     const srcInfo = h('div', { class: 'ed-info' });
     const xTitle = h('div', { class: 'ed-hero-l' });
-    // The query row of this diagram is the one query control: a click on a query selects its token.
+    const note = h('div', { class: 'k-caption' },
+      'Illustration: layer 0’s own projections, never trained for this. No rotary or position bias crosses the streams.');
+    // The query row of this diagram is also a control: a click on a query selects its token.
     const arcs = arcDiagram({
       labels: [], keyLabels: [], weights: { data: [], rows: 0, cols: 0 }, layout: 'bipartite', kind: 'attn', maxWidth: 1000,
       // A click on the selected query toggles it off inside the widget. The selection belongs to the scene, so keep it.
       onSelect: (i) => (i == null ? paintCross() : ctx.store.select({ token: i })),
     });
     arcs.el.style.width = '1000px';
-    place(gCross, xTitle, HERO.x, 252);
-    place(gCross, arcs.el, HERO.x, 290);
-    place(gCross, h('div', { class: 'ed-src' }, h('span', { class: 'ed-src-l' }, 'source'), input), HERO.x, 622);
-    place(gCross, srcInfo, HERO.x, 672);
-    place(gCross, h('div', { class: 'ed-note' },
-      'Illustration: layer 0’s own projections, never trained for cross-attention. The memory is this model run with mask “none”. No rotary or position bias is applied across the two streams.'),
-    HERO.x, 706, 1000);
+    const emptyArc = h('div', { class: 'ed-empty k-caption' }, 'The arcs appear once the source has at least one token from the vocabulary.');
+    place(gCross, xTitle, LEFT, TITLE_Y);
+    place(gCross, note, LEFT, NOTE_Y, 1260);
+    place(gCross, arcs.el, LEFT, ARC_Y);
+    place(gCross, emptyArc, LEFT, ARC_Y, 1000, 280);
+    place(gCross, h('div', { class: 'ed-src' }, h('span', { class: 'ed-src-l' }, 'source'), input, srcInfo), LEFT, SRC_Y, 1000);
     input.addEventListener('input', () => { srcText = input.value; prepare(); paint(); });
 
+    // Side column for this step: the equation with its live number, then the check that Q is the traced one.
     const live = h('div', { class: 'ed-live' });
-    const qRow = h('div', { class: 'ed-qrow' });
     const checks = h('div', { class: 'ed-checks' });
     sCross.append(
       h('div', { class: 'ed-eqbox' },
         h('div', { class: 'ed-eq', html: texHTML('\\Aw = \\softmax\\!\\Big(\\frac{\\Q\\K^{\\top}}{\\sqrt{d_h}}\\Big)', { display: true }) }),
-        h('div', { class: 'ed-cap' }, 'No mask: every source key is visible to every decoder token.')),
-      live, qRow, checks);
+        live),
+      checks);
 
-    const hp = headPicker(st, ctx, { x: ZONES.controls.x, y: ZONES.controls.y, kind: 'attn' });
-    hp.el.classList.add('ed-fade');
-
-    // ---------------------------------------------------------------- side column for step 1 and the figure’s context
-    const ctxNote = h('div', { class: 'ed-cap' });
-    sCtx.append(h('div', { class: 'ed-lbl' }, 'In the 2017 model'), h('div', { class: 'ed-spacer' }), ctxNote);
+    // ---------------------------------------------------------------- side column for step 0: the paper and this model
     const tbl = h('div', { class: 'ed-tbl' });
-    sArch.append(h('div', { class: 'ed-lbl' }, 'Base model (Vaswani et al., 2017) and this model'), tbl,
-      h('div', { class: 'ed-cap' }, 'This model has a decoder stack only: no encoder, so no cross-attention.'));
+    sArch.append(tbl, h('div', { class: 'k-caption' }, 'This model has a decoder stack only: no encoder, so no cross-attention.'));
 
     // ---------------------------------------------------------------- step 3: the families
     place(gFam, h('div', { class: 'ed-legend' },
       h('span', null, h('i', { class: 'ed-sw on' }), 'visible'),
       h('span', null, h('i', { class: 'ed-sw off' }), 'masked'),
       h('span', null, `illustrative masks: ${N_MINI} tokens, prefix ${PREFIX_ILL} · rows are queries, columns are keys`)),
-    HERO.x, 250);
-    const grid = place(gFam, h('div', { class: 'ed-grid' }), HERO.x, 292);
+    LEFT, TITLE_Y);
+    const grid = place(gFam, h('div', { class: 'ed-grid' }), LEFT, GRID_Y);
     const tiles = {};
     FAMILIES.forEach((f) => {
       const miniWrap = h('div', { class: 'ed-tile-mat' });
-      const chipWrap = h('div', { class: 'ed-tile-chip', hidden: true }, chip('this model', 'attn'));
+      const chipWrap = h('div', { class: 'ed-tile-chip', hidden: true }, chip('this model', 'resid'));
       const note = h('div', { class: 'ed-tile-note' });
       const check = h('div', { class: 'ed-tile-check' });
       const tile = h('div', { class: 'ed-tile', dataset: { family: f.id } },
@@ -345,6 +363,7 @@ export default {
       const T = S0.ids.length, H = cfg.n_head, Hkv = cfg.n_kv_head, d = cfg.d_model, dh = d / H;
       const src = S0.tokenizer.encode(srcText);
       dropped = src.dropped;
+      // The encoder has the same block_size limit as the decoder text (store.setText): keep the first tokens and say so.
       const srcIds = src.ids.slice(0, cfg.block_size), S = srcIds.length;
       const proj = (name) => ({ w: M.params[`${name}.weight`].data, b: M.params[`${name}.bias`]?.data ?? null });
       const wq = proj('blocks.0.attn.q_proj'), wk = proj('blocks.0.attn.k_proj');
@@ -363,7 +382,7 @@ export default {
         const mem = (etr.lnf ?? etr[`L${cfg.n_layer - 1}.resid_out`]).data;
         K = project(mem, S, d, wk.w, Hkv * dh, wk.b);
       }
-      cross = { T, S, H, Hkv, dh, Q, K, qdiff, srcIds, decIds: S0.ids.slice(), tk: S0.tokenizer };
+      cross = { T, S, srcTotal: src.ids.length, H, Hkv, dh, Q, K, qdiff, srcIds, decIds: S0.ids.slice(), tk: S0.tokenizer };
     }
 
     // Attention weights of the selected head: T × S, rows sum to 1, no mask.
@@ -388,17 +407,24 @@ export default {
       return { hd, P };
     }
 
-    // This model’s own mask over its first n tokens, cell by cell from the trace (data-trace "mask").
-    const tracedMini = (tr, T, n) => mat(
-      Array.from({ length: n * n }, (_, k) => (tr.mask.data[Math.floor(k / n) * T + (k % n)] === 1 ? 1 : -Infinity)),
-      n, n, { ...MINI, trace: 'mask', cellOf: (r, c) => `${r},${c}` });
+    // This model’s own mask over its first n tokens, cell by cell from the trace (data-trace "mask"). The grid is always
+    // N_MINI × N_MINI, so the tile keeps its size; the cells past n stay empty (no fill, no hatch).
+    const tracedMini = (tr, T, n) => {
+      const N = N_MINI, inside = (r, c) => r < n && c < n;
+      const m = mat(Array.from({ length: N * N }, (_, k) => {
+        const r = Math.floor(k / N), c = k % N;
+        return inside(r, c) && tr.mask.data[r * T + c] === 1 ? 1 : -Infinity;
+      }), N, N, { ...MINI, trace: 'mask', cellOf: (r, c) => (inside(r, c) ? `${r},${c}` : null) });
+      for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (!inside(r, c)) m.cellEl(r, c).style.visibility = 'hidden';
+      return m;
+    };
 
     // ---------------------------------------------------------------- paint
     function paintArch() {
       const cfg = ctx.state.config;
       const row = (k, paper, mine) => [h('div', null, k), h('div', { class: 'ed-paper' }, paper), h('div', { class: 'ed-mine' }, String(mine))];
       tbl.replaceChildren(
-        h('div', { class: 'ed-th' }, ''), h('div', { class: 'ed-th' }, 'paper'), h('div', { class: 'ed-th' }, 'this model'),
+        h('div', { class: 'ed-th' }, 'setting'), h('div', { class: 'ed-th' }, 'paper'), h('div', { class: 'ed-th' }, 'this model'),
         ...row('layers N', '6', cfg.n_layer),
         ...row('d_model', '512', cfg.d_model),
         ...row('heads h', '8', cfg.n_head),
@@ -408,22 +434,25 @@ export default {
     }
 
     function paintCross() {
-      const C = cross, pat = pattern();
-      if (!C || !pat) {
-        arcs.el.style.visibility = 'hidden';
+      const C = cross, pat = C ? pattern() : null;
+      const cfg = ctx.state.config;
+      const empty = !C || !pat;
+      arcs.el.style.visibility = empty ? 'hidden' : '';
+      emptyArc.style.visibility = empty ? '' : 'hidden';
+      note.style.visibility = C && C.S ? '' : 'hidden';          // the illustration note waits for a source to illustrate
+      if (empty) {
         arcs.update({ labels: [], keyLabels: [], weights: { data: new Float64Array(0), rows: 0, cols: 0 }, query: null });
         xTitle.textContent = 'illustration · cross-attention';
-        srcInfo.textContent = !C || !C.T ? 'Needs at least one decoder token.' : 'Type a source phrase with at least one character from the vocabulary.';
+        const bad = [...new Set(dropped.filter((c) => c.trim() !== ''))];
+        srcInfo.textContent = !C || !C.T ? 'Needs at least one decoder token.'
+          : bad.length ? `Not in the vocabulary: ${bad.map((c) => `“${c}”`).join(' ')}`
+            : 'Type a source phrase.';
         live.replaceChildren();
-        release(qStrip);
-        qStrip = null;
-        qRow.replaceChildren();
         checks.replaceChildren();
         return;
       }
       const { P, hd } = pat;
       const S = C.S, tk = C.tk, q = Math.max(0, Math.min(ctx.state.sel.token ?? 0, C.T - 1));
-      arcs.el.style.visibility = '';
       arcs.update({
         labels: C.decIds.map((id) => tk.label(id)),
         keyLabels: C.srcIds.map((id) => tk.label(id)),
@@ -436,21 +465,15 @@ export default {
       xTitle.textContent = `illustration · cross-attention, head ${hd} · query “${qLab}” at position ${q}`;
       live.replaceChildren(
         h('div', { class: 'ed-live-eq' }, `A(“${qLab}”, “${kLab}”) = ${num(P[q * S + jStar], 2)}`),
-        h('div', { class: 'ed-live-sub' }, `largest of ${S} weights in this row`));
-      // the query row of this head, from the trace (L0.attn.q): hover it for the traced numbers
-      const tq = ctx.state.trace['L0.attn.q'], dh = C.dh, Hq = C.H * dh;
-      release(qStrip);
-      qStrip = null;
-      qRow.replaceChildren();
-      if (tq) {
-        qStrip = own(vec(Array.from({ length: dh }, (_, c) => tq.data[q * Hq + hd * dh + c]), {
-          orientation: 'h', cell: 14, gap: 2, mode: 'diverging', kind: 'q', trace: 'L0.attn.q',
-          cellOf: (c) => `${q},${hd * dh + c}`,
-        }));
-        qRow.append(h('div', { class: 'ed-qlab', html: texHTML(`\\Q_{${q}}`) }), qStrip);
-      }
+        h('div', { class: 'ed-live-sub' }, `largest of ${S} weight${S === 1 ? '' : 's'} in this row`));
       checks.replaceChildren(checkBadge(C.qdiff, 0, { label: 'Q equals the traced L0.attn.q' }));
-      srcInfo.textContent = `${S} source token${S === 1 ? '' : 's'} · memory: this model with mask “none”${dropped.length ? ` · dropped ${dropped.map((c) => `“${c}”`).join(' ')}` : ''}`;
+      // A cut is said on screen, worded like the store’s notice for the decoder text (store.setText).
+      const bad = [...new Set(dropped.filter((c) => c.trim() !== ''))];
+      const count = C.srcTotal > S
+        ? `Source cut to the ${cfg.block_size}-token context window: ${S} of ${C.srcTotal} tokens used`
+        : `${S} source token${S === 1 ? '' : 's'}`;
+      srcInfo.textContent = [count, 'memory: this model with mask “none”',
+        bad.length ? `not in the vocabulary: ${bad.map((c) => `“${c}”`).join(' ')}` : ''].filter(Boolean).join(' · ');
     }
 
     function paintFamilies() {
@@ -468,7 +491,8 @@ export default {
         const t = tiles[f.id], isMine = f.id === mine;
         t.el.classList.toggle('is-this', isMine);
         t.chipWrap.hidden = !isMine;
-        const parts = isMine ? [traced ? (T > n ? `first ${n} of ${T}` : `all ${T}`) : '', ruleNote(cfg)] : [];
+        const count = T === 1 ? 'all 1 token' : T > n ? `first ${n} of ${T} tokens` : `all ${T} tokens`;
+        const parts = isMine ? [traced ? count : '', ruleNote(cfg)] : [];
         t.note.textContent = parts.filter(Boolean).join(' · ');
         t.check.replaceChildren(...(isMine && traced ? [checkBadge(bad, 0, { label: 'traced mask follows the rule' })] : []));
         if (rebuild) {
@@ -509,9 +533,9 @@ export default {
     function paint() {
       const on = (node, yes) => node.classList.toggle('ed-off', !yes);
       on(sArch, step === 0);
-      on(gCross, step === 1); on(sCross, step === 1); on(hp.el, step === 1);
+      on(gCross, step === 1); on(sCross, step === 1); on(hp.el, step === 1); on(picker.el, step === 1);
       on(gFam, step === 2);
-      on(sCtx, step > 0);
+      on(sThumb, step > 0);
       gArch.classList.toggle('ed-ctx', step > 0);
       placeFig(step > 0);
       lit(crossBlock, step === 1);
@@ -519,7 +543,8 @@ export default {
       eyebrow.replaceChildren(chip(`This model · ${maskName(ctx.state.config)}`, 'resid'));
       header.setSub(SUB[step]);
       cap.set(CAP[step]);
-      ctxNote.textContent = step === 2 ? 'Highlighted: self-attention, where the mask acts.' : '';
+      sLab.textContent = STEPS[step];
+      thumbCap.textContent = THUMB[step];
       if (step === 0) paintArch();
       if (step === 1) paintCross();
       if (step === 2) paintFamilies();
@@ -554,7 +579,7 @@ export default {
 
     prepare();
     setStep(0);
-    walk(archMs + MOTION.step);
+    walk(archMs + 1200);            // a short pause after the figure is drawn, then the walk moves on
 
     return {
       destroy() {

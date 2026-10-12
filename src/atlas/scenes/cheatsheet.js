@@ -1,16 +1,18 @@
 // Interview cheat sheet: a scrollable reference for the model you have loaded (a k-doc, not a canvas).
 //   1. Shapes: every traced tensor of the last forward pass, grouped, with its symbolic shape, the concrete
 //      shape from the trace (checked against the symbols) and its line in reference/model.py. Rows zoom.
-//   2. Formulas: the math catalogue (the forward pass, then the concepts). Tensor cards recompute one value at
-//      the selected layer, head and query, and check it against the trace.
+//   2. Formulas: the math catalogue, the forward pass first and then the concepts, which start collapsed. Tensor
+//      cards recompute one value at the selected layer, head and query and check it against the trace. A card for
+//      a part the config does not compute is hidden, so the forward pass lists only what this model runs.
 //   3. Flashcards: 42 interview questions with a 3-D flip, tagged by topic, each linked to its node.
 //   4. Quiz: a seeded shuffle, knew it or didn't, and a score.
-// The four sections are the story steps. The bottom bar lists them, a step scrolls to its section, and
-// scrolling moves the bar. Reference-document exception (ATLAS_GUIDE rule 1, STYLE_GUIDE 3): a reference is a
-// scrollable document, so it has four sections, 30 px section headings and 16 px reading text. Colour, zones,
-// motion timings and the shared parts follow the guide.
+// The four sections are the story steps: the bottom bar lists them, a step scrolls to its section, and scrolling
+// moves the bar. The document scrolls between the atlas bands (the breadcrumb above, the story bar below).
+// ATLAS_GUIDE (Design canvas) lets a reference scene scroll "still with the same restraint", so its type, colour and
+// motion follow the guide. It has no caption zone: the live line above the formulas plays that role. It does not
+// auto-advance, because a reference is read at the reader's pace; the story bar moves between sections on request.
 import { sceneHeader, tokenPicker, headPicker, checkBadge, chip, card, appear, useStyle, MOTION } from '../kit.js';
-import { h, fmtBytes, texHTML, reducedMotion } from '../../ui/index.js';
+import { h, texHTML, reducedMotion } from '../../ui/index.js';
 import { mathFor, runLive } from '../../core/math/index.js';
 import { infoFor, parseKey, shapePairs, TRACE_INFO } from '../../core/describe.js';
 import { lineForKey } from '../../core/codemap.js';
@@ -20,18 +22,24 @@ import { paramSpecs, cacheBytes, dHead, mulberry32 } from '../../engine/index.js
 useStyle('cheatsheet', `
 /* Every grid here gets a bounded track: a wide KaTeX line must scroll inside its card, not widen the page. */
 .cs-doc .k-doc-inner, .cs-sec, .cs-fc, .cs-face, .cs-score, .cs-quiz, .cs-tile, .cs-live, .cs-grid .k-card, .cs-flip-inner { grid-template-columns: minmax(0, 1fr); }
-.cs-doc .k-doc-inner { gap: 64px; }
+/* The document scrolls in the band stage2d leaves for the atlas chrome: from under the breadcrumb (y 64) to above
+   the story bar (y 816 of 900). Its column is the canvas content column (design x 110 … 1490 at the canvas scale k),
+   so the text lines up with the canvas scenes, and the title is the canvas title at the same scale. */
+.cs-doc { --cs-top: 64px; --cs-bottom: 84px; --cs-k: min(calc((100vw - 48px) / 1600), calc((100vh - 148px) / 900)); top: var(--cs-top); bottom: var(--cs-bottom); padding: 32px 24px 40px; }
+.cs-doc:focus-visible { outline: 2px solid var(--focus); outline-offset: -4px; }
+.cs-doc .k-doc-inner { gap: 64px; max-width: calc(1380 * var(--cs-k)); }
 .cs-doc .k-header { width: auto; }
-.cs-doc .k-scene-sub { max-width: 68ch; }
+.cs-doc .k-scene-title { font-size: max(28px, calc(46 * var(--cs-k))); }
+.cs-doc .k-scene-sub { max-width: 1060px; }
 .cs-doc .k-eyebrow { flex-wrap: wrap; row-gap: 8px; min-height: 0; }
+/* The last section is one band tall less the pin offset and the bottom padding, so every story step can pin its heading to the top. */
+.cs-doc .k-doc-inner > .cs-sec:last-child { min-height: calc(100vh - var(--cs-top) - var(--cs-bottom) - 72px); }
 .cs-btn { font: 600 14px/1 var(--font-body); padding: 10px 16px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); color: var(--fg-2); cursor: pointer; transition: border-color .2s, color .2s, background-color .2s; }
 .cs-btn:hover { color: var(--fg); border-color: var(--line-strong); }
 .cs-btn.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
 .cs-btn.primary:hover { color: var(--bg); filter: brightness(1.08); }
-.cs-btn.on { background: var(--accent-soft); color: var(--fg); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
-.cs-btn.sm { font: 600 12px/1 var(--font-mono); padding: 7px 11px; }
-.cs-sec { display: grid; gap: 22px; scroll-margin-top: 24px; min-width: 0; }
-.cs-sec-head { display: grid; gap: 8px; }
+.cs-sec { display: grid; gap: 22px; align-content: start; scroll-margin-top: 24px; min-width: 0; }
+.cs-sec-head { display: grid; gap: 8px; align-content: start; }
 .cs-sec-title { margin: 0; font: 650 30px/1.15 var(--font-display); letter-spacing: -.015em; }
 .cs-lede { margin: 0; max-width: 70ch; font-size: 19px; line-height: 1.5; color: var(--fg-2); }
 .cs-lede b { color: var(--fg); font-weight: 650; }
@@ -43,6 +51,7 @@ useStyle('cheatsheet', `
 .cs-tile-s { font-size: 14px; line-height: 1.45; color: var(--fg-2); }
 .cs-summary { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .cs-count { font: 500 13px/1 var(--font-mono); color: var(--fg-3); }
+.cs-key-note { margin: 0; font: 500 13px/1.4 var(--font-mono); color: var(--fg-3); }
 .cs-table-wrap { overflow-x: auto; border-radius: 14px; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow-1); }
 .cs-table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .cs-table th { text-align: left; font: 600 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); padding: 12px 14px; background: var(--surface-2); border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -65,6 +74,7 @@ useStyle('cheatsheet', `
 .cs-grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); }
 .cs-grid > .cs-wide { grid-column: 1 / -1; }
 .cs-grid .k-card { display: grid; align-content: start; gap: 10px; min-width: 0; }
+.cs-grid .k-card[hidden] { display: none; }
 .cs-grid .k-card-title { font-size: 19px; line-height: 1.2; }
 .cs-grid .k-card-sub { margin-top: 0; font: 500 12px/1.4 var(--font-mono); color: var(--fg-3); }
 .cs-grid .k-card-sub span { color: var(--fg-2); }
@@ -73,8 +83,17 @@ useStyle('cheatsheet', `
 .cs-live { display: grid; gap: 6px; padding: 10px 12px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--line); overflow-x: auto; min-width: 0; }
 .cs-live .katex-display { margin: .1em 0; }
 .cs-live-empty { font-size: 13px; line-height: 1.45; color: var(--fg-3); }
-.cs-caption { font: 500 15px/1.45 var(--font-mono); color: var(--fg-3); }
-.cs-filter { display: flex; flex-wrap: wrap; gap: 6px; }
+.cs-caption { font-size: 19px; line-height: 1.5; color: var(--fg-2); text-wrap: pretty; }
+.cs-caption b { color: var(--fg); font-weight: 650; }
+.cs-more > summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 6px 0; cursor: pointer; list-style: none; border-radius: 8px; }
+.cs-more > summary::-webkit-details-marker { display: none; }
+.cs-more > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 4px; }
+.cs-more > summary::after { content: 'Show'; font: 600 12px/1 var(--font-mono); color: var(--fg-2); }
+.cs-more[open] > summary::after { content: 'Hide'; }
+.cs-filter-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; font: 600 12px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-3); }
+.cs-select { font: 600 14px/1 var(--font-body); letter-spacing: normal; text-transform: none; color: var(--fg); padding: 10px 36px 10px 14px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface); appearance: none; -webkit-appearance: none; cursor: pointer; background-image: linear-gradient(45deg, transparent 50%, var(--fg-2) 50%), linear-gradient(135deg, var(--fg-2) 50%, transparent 50%); background-position: calc(100% - 19px) 52%, calc(100% - 14px) 52%; background-size: 5px 5px; background-repeat: no-repeat; transition: border-color .2s; }
+.cs-select:hover { border-color: var(--line-strong); }
+.cs-select:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .cs-deck { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); }
 .cs-fc { display: grid; grid-template-rows: 1fr auto; gap: 8px; min-width: 0; }
 .cs-flip { position: relative; height: 100%; perspective: 1400px; cursor: pointer; border-radius: 16px; outline: none; }
@@ -107,8 +126,9 @@ useStyle('cheatsheet', `
 .cs-missed button:hover { color: var(--fg); border-color: var(--line-strong); }
 .cs-missed b { font: 600 12px/1 var(--font-mono); color: var(--fg-3); flex: none; }
 @media (max-width: 640px) {
-  .cs-doc { padding-top: 128px; }                 /* the breadcrumb wraps to two lines on a phone */
-  .cs-doc .k-doc-inner { gap: 48px; }
+  .cs-doc { --cs-top: 128px; --cs-bottom: 120px; padding: 24px 16px 40px; }   /* the breadcrumb wraps to two lines on a phone */
+  .cs-doc .k-doc-inner { gap: 48px; max-width: none; }
+  .cs-doc .k-scene-title { font-size: 30px; }
   .cs-sec-title { font-size: 26px; }
   .cs-q { font-size: 19px; }
   .cs-fc.big .cs-q { font-size: 22px; }
@@ -262,35 +282,43 @@ const DECK = [
     a: 'In many trained LLMs much of the attention in a head lands on the first token, even when that token carries little content. The softmax must put its weight somewhere, so the first token becomes a sink that absorbs the surplus with a small value vector. Streaming-attention methods keep the first few tokens in the KV cache for this reason.' },
 ];
 
-// Formula sheet. Each entry: [catalogue key (L{i} = the selected layer), node(layer, head, cfg), note].
-// The core entries follow the forward pass; the concepts are the derivations and cost formulas.
+// Formula sheet. Each entry: [catalogue key (L{i} = the selected layer), node(layer, head, cfg), note, applies(cfg)].
+// `applies` hides a card whose part the config does not compute (no position table under RoPE, no ln1 after a
+// post-LN block). The core entries follow the forward pass; the concepts are the derivations and cost formulas.
+const LEARNED_OR_SINUSOIDAL = (c) => c.pos_encoding === 'learned' || c.pos_encoding === 'sinusoidal';
+const PRE_LN = (c) => c.norm_placement !== 'post';
+const POST_LN = (c) => c.norm_placement === 'post';
+const ROPE = (c) => c.pos_encoding === 'rope';
+const ALIBI = (c) => c.pos_encoding === 'alibi';
 const FORMULAS_CORE = [
   ['emb.tok', () => 'token-embedding'],
-  ['emb.pos', () => 'positional', 'learned or sinusoidal'],
+  ['emb.pos', () => 'positional', 'learned or sinusoidal', LEARNED_OR_SINUSOIDAL],
   ['emb.out', () => 'embedding'],
   ['mask', (l, hd) => `mask.${l}.${hd}`],
-  ['L{i}.ln1', (l) => `norm.${l}.1`, 'pre-LN only'],
+  ['L{i}.ln1', (l) => `norm.${l}.1`, null, PRE_LN],
   ['L{i}.attn.q', (l) => `qkv.${l}`],
   ['L{i}.attn.k', (l) => `qkv.${l}`],
   ['L{i}.attn.v', (l) => `qkv.${l}`],
-  ['L{i}.attn.q_rot', () => 'positional', 'RoPE only'],
+  ['L{i}.attn.q_rot', () => 'positional', null, ROPE],
   ['L{i}.attn.scores', (l, hd) => `scores.${l}.${hd}`],
+  ['alibi', () => 'positional', null, ALIBI],
   ['L{i}.attn.scaled', (l, hd) => `scores.${l}.${hd}`],
   ['L{i}.attn.masked', (l, hd) => `mask.${l}.${hd}`],
   ['L{i}.attn.probs', (l, hd) => `softmax.${l}.${hd}`],
   ['L{i}.attn.ctx', (l, hd) => `mix.${l}.${hd}`],
   ['L{i}.attn.out', (l) => `out-proj.${l}`],
+  ['L{i}.add1', (l) => `residual.${l}.1`, null, POST_LN],
   ['L{i}.resid_mid', (l) => `residual.${l}.1`],
-  ['L{i}.ln2', (l) => `norm.${l}.2`, 'pre-LN only'],
+  ['L{i}.ln2', (l) => `norm.${l}.2`, null, PRE_LN],
   ['L{i}.mlp.up', (l) => `mlp.${l}`],
   ['L{i}.mlp.act', (l) => `activation.${l}`],
   ['L{i}.mlp.out', (l) => `neurons.${l}`],
+  ['L{i}.add2', (l) => `residual.${l}.2`, null, POST_LN],
   ['L{i}.resid_out', (l) => `residual.${l}.2`],
-  ['lnf', () => 'final-norm', 'pre-LN only'],
+  ['lnf', () => 'final-norm', null, PRE_LN],
   ['logits', () => 'lm-head'],
   ['probs', () => 'sampling'],
   ['loss', () => 'lm-head'],
-  ['alibi', () => 'positional', 'ALiBi only'],
 ];
 const FORMULAS_CONCEPT = [
   ['concept:one-hot-lookup', () => 'token-embedding'],
@@ -319,6 +347,8 @@ const FORMULAS_CONCEPT = [
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const fmtInt = (v) => Math.round(v).toLocaleString('en-US');
+/** Bytes in binary units, named exactly: 40,960 bytes is 40 KiB (the shared fmtBytes labels the same unit KB). */
+const fmtKiB = (b) => (b < 1024 ? `${fmtInt(b)} bytes` : b < 1048576 ? `${+(b / 1024).toFixed(1)} KiB` : `${+(b / 1048576).toFixed(2)} MiB`);
 const resolveNode = (id, cfg) => (validFor(id, cfg) ? id : 'model');
 const cardNode = (c, cfg) => resolveNode(typeof c.node === 'function' ? c.node(cfg) : c.node, cfg);
 
@@ -397,25 +427,34 @@ function cellFor(st, key, l, t0, hd) {
   return { band: hd, r: t0, x: 0 };                                                    // the first dimension
 }
 
+/**
+ * The header chips: the parts that change how this model reads, one short chip each. Activation and mask are
+ * named in the Shapes tiles; a switched-off residual or attention scale is named here, because it changes formulas.
+ */
 function configChips(cfg) {
   const attn = cfg.n_kv_head === cfg.n_head ? `${cfg.n_layer} layers · ${cfg.n_head} heads` : `${cfg.n_layer} layers · ${attnName(cfg)}`;
   const pos = { learned: 'learned positions', sinusoidal: 'sinusoidal positions', rope: 'RoPE', alibi: 'ALiBi', none: 'no positions' }[cfg.pos_encoding];
-  const act = { gelu: 'GELU', relu: 'ReLU', swiglu: 'SwiGLU' }[cfg.activation];
-  return [
-    [attn, 'resid'], [`d ${cfg.d_model}`, 'embed'], [pos, 'pos'],
+  const chips = [
+    [attn, 'resid'], [pos, 'pos'],
     [`${cfg.norm === 'rmsnorm' ? 'RMSNorm' : 'LayerNorm'} · ${cfg.norm_placement}-LN`, 'norm'],
-    [act, 'mlp'], [`mask: ${cfg.mask}`, 'mask'],
   ];
+  if (!cfg.residual) chips.push(['residual off', 'resid']);
+  if (!cfg.attn_scale) chips.push(['no 1/√d_h', 'attn']);
+  return chips;
 }
 
 // ----------------------------------------------------------------- scene
+
+// A step scrolls its heading to this many px below the top of the document's band (y 96 on a desktop, where the band starts at y 64).
+const PIN = 32;
 
 export default {
   mount(el, ctx) {
     const cleanups = [];
     const host = (node) => ({ add: (n) => node.append(n), onCleanup: (f) => cleanups.push(f) });
+    const tokName = (i) => (ctx.label(i) === '␣' ? 'space' : ctx.label(i));     // the space token reads as “space”, as in the LM-head scene
 
-    const docEl = h('div', { class: 'k-doc cs-doc' });
+    const docEl = h('div', { class: 'k-doc cs-doc', role: 'region', tabindex: 0, 'aria-label': 'Interview cheat sheet, a scrollable reference' });
     const inner = h('div', { class: 'k-doc-inner' });
     docEl.append(inner);
     el.append(docEl);
@@ -423,7 +462,7 @@ export default {
     // ------------------------------------------------------------ header
     const header = sceneHeader(host(inner), {
       chips: configChips(ctx.cfg), title: 'Interview cheat sheet',
-      sub: 'Shapes, parameter counts and the live formula values come from the model you have loaded. Flashcard facts are general, and each card links to the part of the model it explains.',
+      sub: 'Every number here comes from the model you have loaded. The flashcard answers are general.',
     });
     const eyebrow = header.el.querySelector('.k-eyebrow');
 
@@ -442,9 +481,10 @@ export default {
     const secShapes = h('section', { class: 'cs-sec', 'aria-labelledby': 'cs-h-shapes' },
       h('div', { class: 'cs-sec-head' },
         h('h2', { class: 'cs-sec-title', id: 'cs-h-shapes' }, '1 · Shapes of this model'),
-        h('p', { class: 'cs-lede' }, 'Every traced tensor of the last forward pass, in execution order. The symbolic shape uses the model’s own dimensions (T tokens, d model width, H heads, H_kv KV heads, d_h head width, F MLP width, V vocabulary). The concrete shape comes from the trace and must match it. Click a row to zoom to the part that computes it.')),
+        h('p', { class: 'cs-lede' }, 'Every traced tensor of the last forward pass, in execution order. Click a row to zoom to the part that computes it.')),
       h('div', { class: 'cs-tiles' }, tileEl('Parameters', tiles.params), tileEl('One block', tiles.block), tileEl('KV cache', tiles.kv)),
       summaryHost,
+      h('p', { class: 'cs-key-note' }, 'T tokens · d model width · H heads · H_kv KV heads · d_h head width · F MLP width · V vocabulary'),
       h('div', { class: 'cs-table-wrap' }, table));
 
     // ------------------------------------------------------------ 2. formulas
@@ -454,7 +494,7 @@ export default {
     const tokenHost = h('div', { class: 'cs-scroll' });
     pickers.append(layerRow, headHost, tokenHost);
     const hp = headPicker(host(headHost), ctx, { kind: 'attn' });
-    tokenPicker(host(tokenHost), ctx, { label: 'query', kind: 'attn' });
+    tokenPicker(host(tokenHost), ctx, { label: 'query', kind: 'attn', maxWidth: 1080 });
     const caption = h('div', { class: 'cs-caption' });
     const formulas = [];
 
@@ -463,8 +503,7 @@ export default {
       const live = entry.live ? h('div', { class: 'cs-live' }) : null;
       // `sub` must be truthy so the subtitle element exists; renderFormulas() fills it in.
       const el0 = card({ title: entry.title, sub: '&nbsp;', kind: 'norm', node: 'model', body: [body, live] });
-      el0.querySelector('.k-zoom-badge')?.replaceChildren('→');     // the kit's ⤢ glyph is missing from the body font
-      formulas.push({ spec, el: el0, math: body, sub: el0.querySelector('.k-card-sub'), live, entry });
+      formulas.push({ spec, el: el0, math: body, sub: el0.querySelector('.k-card-sub'), live, entry, applies: spec[3] });
       return el0;
     }
 
@@ -486,15 +525,19 @@ export default {
     }
     const formulaCore = h('div', { class: 'cs-grid' }, coreItems.map(({ spec, entry }) => formulaCard(spec, entry)));
     const formulaConcept = h('div', { class: 'cs-grid' }, conceptItems.map(({ spec, entry }) => formulaCard(spec, entry)));
+    // The concepts are reference material, so they start collapsed. The forward pass is what the sheet is for.
+    const conceptsEl = h('details', { class: 'cs-more' },
+      h('summary', null, h('span', { class: 'cs-tile-k' }, `Concepts · ${conceptItems.length} cards`)),
+      formulaConcept);
+    conceptsEl.addEventListener('toggle', measureWide);
     const secFormulas = h('section', { class: 'cs-sec', 'aria-labelledby': 'cs-h-formulas' },
       h('div', { class: 'cs-sec-head' },
         h('h2', { class: 'cs-sec-title', id: 'cs-h-formulas' }, '2 · Formulas'),
-        h('p', { class: 'cs-lede' }, 'The catalogue equation for each tensor in the forward pass, then for each concept. Tensor cards recompute one value at the selected layer, head and query, and check it against the trace.')),
+        h('p', { class: 'cs-lede' }, 'Each card is the catalogue equation for one tensor. Tensor cards recompute one value and check it against the trace.')),
       pickers, caption,
       h('div', { class: 'cs-sec-head' }, h('div', { class: 'cs-tile-k' }, 'The forward pass')),
       formulaCore,
-      h('div', { class: 'cs-sec-head' }, h('div', { class: 'cs-tile-k' }, 'Concepts')),
-      formulaConcept);
+      conceptsEl);
 
     function renderLayerChips() {
       const cfg = ctx.cfg, cur = ctx.state.sel.layer;
@@ -520,8 +563,12 @@ export default {
       const hd = clamp(st.sel.head ?? 0, 0, cfg.n_head - 1);
       const t0 = clamp(st.sel.token ?? T - 1, 0, T - 1);
       const j = strongestKey(st, L, hd, t0);
-      caption.textContent = `Live at layer ${L}, head ${hd}, query “${ctx.label(t0)}” at position ${t0}. Attention cards read the strongest key for this query, “${ctx.label(j)}” at position ${j}.`;
+      caption.replaceChildren(
+        'Live at layer ', `${L}`, ', head ', `${hd}`, '. Query ', h('b', null, `“${tokName(t0)}”`), ' at position ', h('b', null, `${t0}`),
+        '. Attention cards read its strongest key, ', h('b', null, `“${tokName(j)}”`), ` at position ${j}.`);
       for (const f of formulas) {
+        f.el.hidden = !!f.applies && !f.applies(cfg);      // a part this config does not compute is not shown
+        if (f.el.hidden) continue;
         const key = f.spec[0].replace('{i}', String(L));
         const id = resolveNode(f.spec[1](L, hd, cfg), cfg);
         f.el.dataset.node = id;
@@ -533,28 +580,24 @@ export default {
           f.live.replaceChildren(...liveChildren(res));
         }
       }
+      measureWide();
     }
 
     // ------------------------------------------------------------ 3. flashcards
     let topicFilter = null;
-    const filterEl = h('div', { class: 'cs-filter', role: 'group', 'aria-label': 'Filter by topic' });
+    const topicSel = h('select', { class: 'cs-select', 'aria-label': 'Topic', onChange: (e) => {
+      topicFilter = e.target.value || null;
+      quiz = null;                 // the deck changed, so a quiz in progress ends
+      renderDeck();
+      renderQuiz();
+    } });
     const deckEl = h('div', { class: 'cs-deck' });
     const deckFor = (t) => DECK.filter((c) => !t || c.topic === t);
     const labelOf = (t) => t ?? 'All topics';
 
-    function renderFilter() {
-      const items = [[null, 'All', DECK.length], ...TOPICS.map((t) => [t, t, deckFor(t).length])];
-      filterEl.replaceChildren(...items.map(([t, label, count]) => {
-        const b = h('button', { type: 'button', class: ['cs-btn', 'sm', topicFilter === t && 'on'], 'aria-pressed': String(topicFilter === t) }, `${label} · ${count}`);
-        b.addEventListener('click', () => {
-          topicFilter = t;
-          quiz = null;                 // the deck changed, so a quiz in progress ends
-          renderFilter();
-          renderDeck();
-          renderQuiz();
-        });
-        return b;
-      }));
+    function renderTopicSelect() {
+      const items = [[null, 'All topics', DECK.length], ...TOPICS.map((t) => [t, t, deckFor(t).length])];
+      topicSel.replaceChildren(...items.map(([t, label, count]) => h('option', { value: t ?? '', selected: topicFilter === t }, `${label} · ${count}`)));
     }
 
     function flashcard(c, { n, total, big = false, onFlip } = {}) {
@@ -595,8 +638,9 @@ export default {
     const secCards = h('section', { class: 'cs-sec', 'aria-labelledby': 'cs-h-cards' },
       h('div', { class: 'cs-sec-head' },
         h('h2', { class: 'cs-sec-title', id: 'cs-h-cards' }, '3 · Flashcards'),
-        h('p', { class: 'cs-lede' }, `${DECK.length} questions an interviewer is likely to ask. Press a card to reveal the answer. Each card is tagged by topic and links to the part of the model it explains.`)),
-      filterEl, deckEl);
+        h('p', { class: 'cs-lede' }, `${DECK.length} questions an interviewer is likely to ask. Press a card to reveal the answer.`)),
+      h('label', { class: 'cs-filter-row' }, 'Topic', topicSel),
+      deckEl);
 
     // ------------------------------------------------------------ 4. quiz
     const quizEl = h('div', { class: 'cs-quiz' });
@@ -661,6 +705,14 @@ export default {
           h('button', { type: 'button', class: 'cs-btn', onClick: () => { quiz = null; renderQuiz(); } }, 'Done')));
     }
 
+    /** A new card can grow the page below the fold, so keep the answer row above the band's bottom edge. */
+    function revealActions() {
+      const a = quiz?.actionsEl;
+      if (!a?.isConnected) return;
+      const lim = docEl.getBoundingClientRect().bottom - 40, r = a.getBoundingClientRect();     // the document's own bottom padding
+      if (r.bottom > lim) docEl.scrollBy({ top: r.bottom - lim, behavior: reducedMotion() ? 'auto' : 'smooth' });
+    }
+
     function renderQuiz() {
       quizEl.replaceChildren();
       if (!quiz) { quizEl.append(idlePanel()); return; }
@@ -684,12 +736,13 @@ export default {
         cardEl, actionsEl);
       renderActions();
       appear([cardEl], { duration: MOTION.appear });
+      revealActions();
     }
 
     const secQuiz = h('section', { class: 'cs-sec', 'aria-labelledby': 'cs-h-quiz' },
       h('div', { class: 'cs-sec-head' },
         h('h2', { class: 'cs-sec-title', id: 'cs-h-quiz' }, '4 · Quiz'),
-        h('p', { class: 'cs-lede' }, 'Mark each card knew it or didn’t. The order is a seeded shuffle, so the same seed gives the same order. The topic filter sets the deck and ends a quiz in progress.')),
+        h('p', { class: 'cs-lede' }, 'Mark each card knew it or didn’t. The topic filter sets the deck and ends a quiz in progress.')),
       quizEl);
 
     inner.append(secShapes, secFormulas, secCards, secQuiz);
@@ -701,17 +754,10 @@ export default {
     const sectionEls = [secShapes, secFormulas, secCards, secQuiz];
     let activeStep = 0, syncing = false, scrollRaf = 0;
     let pinTop = null, pinTimer = 0;
-    // A step's heading lands below the breadcrumb pill: y 96 on a desktop, lower when the pill wraps on a phone.
-    // The first step goes to the top, so the title and context line stay on screen.
-    const headingY = () => {
-      const crumbs = document.querySelector('.atlas-crumbs');
-      const pillBottom = crumbs ? crumbs.getBoundingClientRect().bottom - docEl.getBoundingClientRect().top : 0;
-      return Math.max(96, pillBottom + 32);
-    };
     const scrollToSection = (i) => {
       const sec = sectionEls[i];
       if (!sec) return;
-      pinTop = i === 0 ? 0 : Math.max(0, sec.offsetTop - headingY());
+      pinTop = i === 0 ? 0 : Math.max(0, sec.offsetTop - PIN);
       clearTimeout(pinTimer);
       pinTimer = setTimeout(() => { pinTop = null; }, 1200);     // a clamped or interrupted scroll releases the pin
       docEl.scrollTo({ top: pinTop, behavior: reducedMotion() ? 'auto' : 'smooth' });
@@ -719,6 +765,16 @@ export default {
     ctx.setSteps(['Shapes', 'Formulas', 'Flashcards', 'Quiz'], (i) => {
       activeStep = i;
       if (!syncing) scrollToSection(i);
+    });
+    // The document takes focus so that keyboard users can scroll it. The atlas leaves its own keys alone while
+    // focus is inside the document, so the arrows step the sections here. The topic filter keeps its arrow keys.
+    docEl.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'SELECT') return;
+      const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!step) return;
+      e.preventDefault();
+      const next = clamp(activeStep + step, 0, sectionEls.length - 1);
+      if (next !== activeStep) ctx.setStep(next);
     });
     function syncStep() {
       scrollRaf = 0;
@@ -781,7 +837,7 @@ export default {
       }
       tbody.replaceChildren(...rows);
       summaryHost.replaceChildren(
-        checkBadge(ok, n, { label: `all ${n} traced shapes match their symbols` }),
+        h('span', { class: ['k-check', ok === n ? 'ok' : 'bad'] }, ok === n ? `✓ all ${n} traced shapes match their symbols` : `✗ ${n - ok} of ${n} traced shapes differ from their symbols`),
         h('span', { class: 'cs-count' }, `${Object.keys(st.trace).length} tensors in the last forward pass`));
     }
 
@@ -796,14 +852,18 @@ export default {
       const attnW = weights('attn'), mlpW = weights('mlp'), rest = block - attnW - mlpW;
       const textbook = cfg.n_kv_head === cfg.n_head && cfg.activation !== 'swiglu' && cfg.d_ff === 4 * d;
       const left = cfg.bias ? 'Biases and norm parameters' : 'Norm parameters';
+      const act = { gelu: 'GELU', relu: 'ReLU', swiglu: 'SwiGLU' }[cfg.activation];
+      const maskName = cfg.mask === 'none' ? 'no mask' : `${cfg.mask} mask`;
+      const kv = cacheBytes(cfg, T, 2);
       tweenText(tiles.params.v, total, fmtInt);
       tiles.params.s.textContent = `${cfg.n_layer} blocks · vocabulary ${cfg.vocab_size} · ${cfg.tie_weights ? 'output head tied to the embedding' : 'separate output head'}`;
       tweenText(tiles.block.v, block, fmtInt);
-      tiles.block.s.textContent = textbook
+      const shape = textbook
         ? `12·d² = ${fmtInt(12 * d * d)} for MHA with d_ff = 4d. ${left} make up the other ${fmtInt(rest)}.`
-        : `${attnName(cfg)}${cfg.activation === 'swiglu' ? ', SwiGLU' : ''}, d_ff ${cfg.d_ff}: attention ${fmtInt(attnW)} and MLP ${fmtInt(mlpW)} weights. ${left} make up the other ${fmtInt(rest)}.`;
-      tweenText(tiles.kv.v, cacheBytes(cfg, T, 2), (v) => fmtBytes(Math.round(v)));
-      tiles.kv.s.textContent = `for ${T} tokens in bf16: 2 · L · H_kv · d_h · T · 2 bytes`;
+        : `${attnName(cfg)}, d_ff ${cfg.d_ff}: attention ${fmtInt(attnW)} and MLP ${fmtInt(mlpW)} weights. ${left} make up the other ${fmtInt(rest)}.`;
+      tiles.block.s.textContent = `${shape} ${act} activation, ${maskName}.`;
+      tweenText(tiles.kv.v, kv, (v) => fmtKiB(Math.round(v)));
+      tiles.kv.s.textContent = `${fmtInt(kv)} bytes for ${T} ${T === 1 ? 'token' : 'tokens'} in bf16: 2 · L · H_kv · d_h · T · 2 bytes`;
     }
 
     // ------------------------------------------------------------ wiring
@@ -830,7 +890,7 @@ export default {
       renderFormulas();
     }
 
-    renderFilter();
+    renderTopicSelect();
     renderDeck();
     renderQuiz();
     onTrace();

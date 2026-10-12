@@ -1,40 +1,46 @@
 // Generation and the KV cache, on the real model.
-// The prompt is read once into a KV cache. Each step takes the last position's scores, chooses a
-// token (greedy, or a seeded draw at the chosen temperature), feeds only that token through the model
-// with engine.decodeStep, and appends one K row and one V row per layer. Every cached step is checked
-// against a full engine.infer over the same prefix. The checks run one at a time between frames, so no
-// step waits for one. Masks the engine cannot cache (none, prefix) are recomputed with engine.infer, and
-// the scene says why. Generated text stays in this scene unless the user asks to use it as the input.
+// The prompt is read once into a KV cache. Each step takes the last position's scores, chooses a token
+// (greedy, or a seeded draw at the chosen temperature), feeds only that token through the model with
+// engine.decodeStep, and appends one K row and one V row per layer. Every cached step is checked against a
+// full forward pass (engine.infer) over the same prefix. The checks run one at a time between frames, so no
+// step waits for one. Masks the engine cannot cache (none, prefix) are recomputed, and the scene says why.
+// Generated text stays in this scene unless the user asks to use it as the input.
 // The store's trace is the prompt's forward pass, so trace links (hover, right-click) cover prompt
 // positions only; generated positions show their maths without numbers.
-import { stage2d, sceneHeader, sceneCaption, checkBadge, chip, fly, pulse, appear, wait, useStyle, mat, MOTION, ZONES } from '../kit.js';
-import { h, s, fmt, fmtBytes, texHTML, num, clamp, sequential, reducedMotion, slider, button } from '../../ui/index.js';
+import { stage2d, sceneHeader, sceneCaption, chip, fly, pulse, appear, wait, useStyle, mat, MOTION, ZONES } from '../kit.js';
+import { h, s, fmt, texHTML, num, clamp, sequential, reducedMotion, slider, button } from '../../ui/index.js';
 
 const STEPS = ['Prompt', 'One step', 'Keep going', 'The cache'];
+const STEP_KIND = ['embed', 'embed', 'embed', 'k'];   // each step's label takes the colour of what the step is about
 const SEED = 7;           // sampling seed: the same input and settings always give the same text
 const MAX_NEW = 16;       // tokens per run
 const VIS_TILES = 64;     // sequence tiles shown; a longer context elides its start
 const CELL = 4;           // px per cache cell (square)
 const MAX_ROWS = 28;      // cache rows per stack; the newest rows sit at the bottom
 const KV_BUDGET = 350;    // px for all K and V stacks together, so the side column ends above the caption
-const SEQ = { x: ZONES.hero.x, y: 302, w: 1030 };
+const SEQ = { x: ZONES.hero.x, y: 310, w: 1030 };
 const MODEL = { x: ZONES.hero.x, y: 440, w: 290, h: 160 };
-const CANDS = { x: 470, y: 440 };
+const CANDS = { x: 470, y: 436 };
+const CAND_ROWS = 5, CAND_H = 24, CAND_GAP = 4;
 const BUS_Y = 404;
-const EQ = { x: ZONES.hero.x, y: 640 };
+const EQ = { x: ZONES.hero.x, y: 626, w: 1030 };
 const SIDE = { x: ZONES.side.x, y: ZONES.hero.y, w: ZONES.side.w };
 const PACE = 180, FLY_MS = 620;   // pause between generated tokens; flight of the new token
 const TOL = 1e-9;         // the parity tolerance of the engine tests
+const RULER_EVERY = 8;    // a position label every 8 rows, none within NEAR_ROWS of the newest row
+const NEAR_ROWS = 3;
 
 let uidSeq = 0;
 
 const sci = (v) => (v === 0 ? '0' : v.toExponential(1));
 const pct = (p) => { const v = p * 100; return v >= 99.95 ? '>99.9%' : `${v.toFixed(v < 10 || v >= 99 ? 1 : 0)}%`; };
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const kib = (b) => (b < 1024 ? `${b} B` : `${(b / 1024).toFixed(b < 10240 ? 1 : 0)} KiB`);
 const maxAbs = (a, b, off) => { let m = 0; for (let i = 0; i < a.length; i++) m = Math.max(m, Math.abs(a[i] - b[off + i])); return m; };
 const htmlEsc = (t) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 const TEX_ESC = { '\\': '\\textbackslash ', '{': '\\{', '}': '\\}', '$': '\\$', '&': '\\&', '#': '\\#', '^': '\\textasciicircum ', '_': '\\_', '%': '\\%', '~': '\\textasciitilde ' };
 const texEsc = (t) => t.replace(/[\\{}$&#^_%~]/g, (c) => TEX_ESC[c]);
+const vecTex = (row) => `${Array.from(row.slice(0, 4), (x) => num(x, 2)).join(',\\;')},\\;\\dots`;   // first four entries
 const yieldNow = () => new Promise((r) => setTimeout(r, 0));
 
 // Why a mask cannot use the cache. Prefix tokens see each other in both directions, so the prompt
@@ -87,44 +93,61 @@ function subFor(cfg, kvOn) {
 
 useStyle('generation', `
 .gn-scene .gn-label { font: 600 15px/1.2 var(--font-mono); color: var(--fg-2); white-space: nowrap; }
-.gn-controls { display: flex; align-items: center; gap: 10px; }
-.gn-controls .btn { height: 36px; padding: 0 14px; }
-.gn-controls .field { min-width: 240px; }
+.gn-seqhead { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 32px; }
+.gn-seqctl { display: flex; align-items: center; gap: 8px; }
+.gn-seqctl .btn { height: 32px; padding: 0 12px; font-size: 14px; }
 .gn-seq { display: flex; align-items: flex-start; }
 .gn-tile { position: relative; flex: 0 0 auto; box-sizing: border-box; border-radius: 10px; display: grid; place-items: center; background: var(--surface); border: 1px solid var(--line); box-shadow: 0 3px 8px rgba(0, 0, 0, .08); font: 600 22px/1 var(--font-mono); color: var(--fg); transition: background-color .45s ease, border-color .45s ease, box-shadow .45s ease; }
 .gn-tile.gn-gen { background: color-mix(in srgb, var(--c-embed) 20%, var(--surface)); border-color: color-mix(in srgb, var(--c-embed) 60%, var(--line)); }
 .gn-tile.gn-empty { background: transparent; border: 1px dashed var(--line-strong); box-shadow: none; color: transparent; }
 .gn-tile.gn-new { border: 2px solid var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent), 0 8px 16px rgba(0, 0, 0, .14); }
 .gn-tile.gn-ell { background: none; border: 0; box-shadow: none; color: var(--fg-3); font-size: 20px; }
-.gn-idx { position: absolute; left: -8px; right: -8px; text-align: center; font: 600 12px/1 var(--font-mono); color: var(--fg-3); opacity: 0; transition: opacity .3s; pointer-events: none; }
+.gn-idx { position: absolute; left: -8px; right: -8px; text-align: center; font: 600 13px/1 var(--font-mono); color: var(--fg-3); opacity: 0; transition: opacity .3s; pointer-events: none; }
 .gn-idx.gn-on { opacity: 1; }
+.gn-bus.gn-run { stroke-dasharray: 7 7; animation: gn-flow .7s linear infinite; }
+@keyframes gn-flow { to { stroke-dashoffset: -14; } }
 .gn-model { box-sizing: border-box; width: 290px; height: 160px; padding: 18px 20px; border-radius: 16px; display: grid; align-content: center; gap: 6px; background: color-mix(in srgb, var(--c-resid) 9%, var(--surface)); border: 1px solid color-mix(in srgb, var(--c-resid) 50%, var(--line)); box-shadow: 0 16px 34px rgba(0, 0, 0, .14), 0 2px 0 color-mix(in srgb, var(--c-resid) 26%, transparent); }
 .gn-model b { font: 650 27px/1.1 var(--font-display); color: var(--fg); letter-spacing: -.01em; }
 .gn-model small { font: 500 14px/1.45 var(--font-mono); color: var(--fg-2); }
-.gn-cands { width: 670px; display: grid; gap: 5px; }
+.gn-pop { display: grid; place-items: center; box-sizing: border-box; width: 40px; height: 40px; border-radius: 10px; font: 650 22px/1 var(--font-mono); color: var(--fg); background: color-mix(in srgb, var(--c-embed) 30%, var(--surface)); border: 2px solid var(--c-embed); box-shadow: 0 12px 24px rgba(0, 0, 0, .2); }
+.gn-candwrap { width: 670px; }
+.gn-candhead { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 30px; margin-bottom: 6px; }
+.gn-temp { display: grid; grid-template-columns: 170px 120px; align-items: center; gap: 10px; }
+.gn-temp > label { display: flex; justify-content: space-between; gap: 8px; font: 600 14px/1 var(--font-mono); color: var(--fg-2); }
+.gn-temp .value { font: 500 14px/1 var(--font-mono); color: var(--fg); }
+.gn-cands { display: grid; gap: ${CAND_GAP}px; }
 .gn-cands[hidden] { display: none; }
-.gn-cand { display: grid; grid-template-columns: 30px 1fr 56px 84px; align-items: center; gap: 12px; height: 26px; box-sizing: border-box; padding: 0 8px; border-radius: 8px; border: 1px solid transparent; transition: background-color .4s ease, border-color .4s ease; }
+.gn-cand { display: grid; grid-template-columns: 30px 1fr 56px 84px; align-items: center; gap: 12px; height: ${CAND_H}px; box-sizing: border-box; padding: 0 8px; border-radius: 8px; border: 1px solid transparent; transition: background-color .4s ease, border-color .4s ease; }
 .gn-cand.gn-chosen { background: var(--surface-2); border-color: var(--fg-3); }
-.gn-cand-ch { display: grid; place-items: center; width: 28px; height: 22px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); font: 600 15px/1 var(--font-mono); color: var(--fg); }
+.gn-cand-ch { display: grid; place-items: center; width: 28px; height: 20px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); font: 600 15px/1 var(--font-mono); color: var(--fg); }
 .gn-cand-track { height: 10px; border-radius: 5px; background: var(--surface-2); overflow: hidden; }
 .gn-cand-track i { display: block; width: 0; height: 100%; border-radius: 5px; transition: width .6s cubic-bezier(.65, 0, .35, 1), background-color .4s ease; }
 .gn-cand-p { font: 600 14px/1 var(--font-mono); color: var(--fg); text-align: right; }
 .gn-cand-tag { font: 600 13px/1 var(--font-mono); color: var(--fg-2); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
-.gn-bus.gn-run { stroke-dasharray: 7 7; animation: gn-flow .7s linear infinite; }
-@keyframes gn-flow { to { stroke-dashoffset: -14; } }
-.gn-pop { display: grid; place-items: center; box-sizing: border-box; width: 40px; height: 40px; border-radius: 10px; font: 650 22px/1 var(--font-mono); color: var(--fg); background: color-mix(in srgb, var(--c-embed) 30%, var(--surface)); border: 2px solid var(--c-embed); box-shadow: 0 12px 24px rgba(0, 0, 0, .2); }
-.gn-eq { display: grid; gap: 4px; font-size: 24px; color: var(--fg); }
+.gn-stop { box-sizing: border-box; width: 670px; height: ${CAND_ROWS * CAND_H + (CAND_ROWS - 1) * CAND_GAP}px; display: grid; align-content: center; padding: 14px 18px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); font-size: 16px; line-height: 1.5; color: var(--fg-2); }
+.gn-stop[hidden] { display: none; }
+.gn-eq { display: grid; gap: 6px; width: ${EQ.w}px; font-size: 24px; color: var(--fg); }
+.gn-eqhead { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 26px; }
+.gn-steplab { text-align: left; margin-bottom: 0; }
+.gn-eq-main { overflow-x: auto; }
 .gn-eq .katex-display { margin: 0; text-align: left; }
 .gn-eq .katex-display > .katex { text-align: left; }
-.gn-eq .gn-live { font-size: 20px; color: var(--fg-2); }
-.gn-checks { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-height: 28px; }
-.gn-side { display: grid; gap: 12px; align-content: start; }
+.gn-eq-live { font-size: 20px; padding: 10px 14px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); overflow-x: auto; }
+.gn-eq-live[hidden] { display: none; }
+.gn-checks { display: flex; align-items: center; justify-content: flex-end; min-width: 0; }
+.gn-scene .k-check.wait { color: var(--fg-3); background: var(--surface-2); }
+.gn-muted { font-size: 15px; line-height: 1.4; color: var(--fg-3); }
+.gn-side { display: grid; gap: 10px; align-content: start; }
 .gn-side-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .gn-side-title { font: 600 17px/1.2 var(--font-mono); color: var(--fg); }
 .gn-side-note { font: 500 14px/1.2 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
-.gn-kv { display: grid; grid-template-columns: auto auto; gap: 14px 20px; justify-content: start; }
+.gn-side-sub { display: grid; gap: 2px; font: 500 13px/1.35 var(--font-mono); color: var(--fg-3); margin-top: -4px; }
+.gn-kv { display: grid; grid-template-columns: auto auto; gap: 12px 20px; justify-content: start; }
 .gn-block { display: grid; gap: 6px; justify-items: start; }
+.gn-block[hidden] { display: none; }
 .gn-block-l { font: 600 15px/1.2 var(--font-mono); color: var(--fg-2); }
+.gn-more { font: 500 14px/1.2 var(--font-mono); color: var(--fg-3); }
+.gn-more[hidden] { display: none; }
 .gn-pair { display: flex; gap: 4px; }
 .gn-col { display: grid; gap: 4px; justify-items: start; }
 .gn-col.k { --c: var(--c-k); }
@@ -134,23 +157,26 @@ useStyle('generation', `
 .gn-scene .gn-stack-wrap > .k-mat { display: flex; width: max-content; }
 .gn-scene .k-mat-body { padding: 3px; border-radius: 6px; background: var(--surface-2); box-shadow: 0 6px 14px rgba(0, 0, 0, .08); }
 .gn-scene .k-grid { gap: 0; }
-.gn-scene .k-cell { border-radius: 1px; box-shadow: none; }
+.gn-scene .k-cell { border-radius: 1px; box-shadow: none; transition: background-color .5s ease, opacity .45s ease; }
 .gn-scene .k-cell.gn-future { background: color-mix(in srgb, var(--fg-3) 14%, transparent) !important; }
+.gn-scene .k-cell.gn-unread { opacity: .2; }
 .gn-scene .k-cell.ell { background: none !important; }
 .gn-scene .k-row-band { border-radius: 2px; }
-.gn-scene .gn-stack-k .k-row-band { border-color: var(--c-k); box-shadow: 0 0 8px var(--c-k); }
-.gn-scene .gn-stack-v .k-row-band { border-color: var(--c-v); box-shadow: 0 0 8px var(--c-v); }
-.gn-ruler { position: absolute; left: -30px; top: 4px; width: 24px; display: grid; grid-auto-rows: var(--rh); text-align: right; font: 500 12px/var(--rh) var(--font-mono); color: var(--fg-3); pointer-events: none; }
+.gn-scene .gn-stack-k .k-row-band { border-color: var(--c-k); background: color-mix(in srgb, var(--c-k) 16%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-k) 26%, transparent), 0 0 8px var(--c-k); }
+.gn-scene .gn-stack-v .k-row-band { border-color: var(--c-v); background: color-mix(in srgb, var(--c-v) 16%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-v) 26%, transparent), 0 0 8px var(--c-v); }
+.gn-read { position: absolute; left: 3px; border-radius: 3px; border: 1.5px solid var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); pointer-events: none; transition: top .45s cubic-bezier(.65, 0, .35, 1), height .45s cubic-bezier(.65, 0, .35, 1); }
+.gn-read[hidden] { display: none; }
+.gn-ruler { position: absolute; left: -30px; top: 3px; width: 24px; display: grid; grid-auto-rows: var(--rh); text-align: right; font: 500 13px/var(--rh) var(--font-mono); color: var(--fg-3); pointer-events: none; }
 .gn-ruler span { display: block; height: var(--rh); white-space: nowrap; }
-.gn-ruler .gn-now { color: var(--fg-2); font-weight: 650; }
+.gn-ruler .gn-now { color: var(--fg); font-weight: 650; }
 .gn-counts { display: grid; gap: 6px; }
-.gn-count { display: grid; grid-template-columns: 104px 1fr 56px; align-items: center; gap: 10px; font: 500 15px/1 var(--font-mono); color: var(--fg-2); }
-.gn-count > b { font: 650 16px/1 var(--font-mono); color: var(--fg); text-align: right; }
+.gn-count { display: grid; grid-template-columns: 96px 1fr 150px; align-items: center; gap: 10px; font: 500 15px/1 var(--font-mono); color: var(--fg-2); }
+.gn-count .gn-val { text-align: right; white-space: nowrap; }
+.gn-count .gn-val b { font: 650 16px/1 var(--font-mono); color: var(--fg); }
+.gn-count .gn-val small { font: 500 13px/1 var(--font-mono); color: var(--fg-3); }
 .gn-track { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
 .gn-track i { display: block; width: 0; height: 100%; border-radius: 4px; background: var(--fg-2); transition: width .6s cubic-bezier(.65, 0, .35, 1); }
 .gn-count.without .gn-track i { background: var(--fg-3); }
-.gn-bytes { font: 500 14px/1.4 var(--font-mono); color: var(--fg-3); }
-.gn-muted { font-size: 15px; line-height: 1.4; color: var(--fg-3); }
 .gn-note-card { padding: 14px 16px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); font-size: 16px; line-height: 1.5; color: var(--fg-2); }
 @media (prefers-reduced-motion: reduce) { .gn-scene * { transition: none !important; animation: none !important; } }
 `);
@@ -167,11 +193,11 @@ export default {
     // ------------------------------------------------------------ state
     let base = null;          // readBase(): the model and the prompt for the current input
     let seq = [];             // prompt + generated ids
-    let g = 0;                // generated tokens so far
+    let g = 0;                // generated tokens so far (a step in flight counts as soon as it starts)
     let cache = null;         // engine KV cache (causal and sliding masks only)
     let next = null;          // the upcoming choice: {id, probs, logits}
     let rng = null;           // seeded uniform source, used only when sampling
-    let chk = null;           // checks against a full pass: queued, done, largest differences so far
+    let chk = null;           // checks against a full pass: jobs done, prefix checked, largest differences, new rows
     const checkQueue = [];    // pending checks: {ep, ids, row}
     let pumping = false;
     let epoch = 0;            // bumps on every reset, so a stale check or animation does not paint
@@ -180,7 +206,9 @@ export default {
     let autoOn = true, autoCalling = false;
     let work = Promise.resolve();
     const waiters = [];       // settle() callers, woken when a prompt feed ends or is superseded
-    let tiles = [], layers = [], vis = null, rowsShown = 0, firstRow = 0, cnt = {};
+    let tiles = [], layers = [], vis = null, rowsShown = 0, stackRange = 1, cnt = {}, sideRefs = {};
+    let shownL = 0, shownG = 0;   // what paintAll last put on screen: cache length and generated count
+    let capShown = null;
 
     // ------------------------------------------------------------ static parts
     const header = sceneHeader(st, {
@@ -189,19 +217,21 @@ export default {
     });
     const eyebrow = header.el.querySelector('.k-eyebrow');
 
-    const playBtn = button('Play', () => onPlay(), { variant: 'primary', title: 'Generate up to 16 tokens' });
+    // Play, Reset and Use as input act on the sequence, so they sit on its header row.
+    const playBtn = button('Play', () => onPlay(), { variant: 'primary', title: `Generate up to ${MAX_NEW} tokens` });
     const resetBtn = button('Reset', () => ctx.setStep(0), { title: 'Back to the original input' });
-    const useBtn = button('Use as input', () => useAsInput(), { title: 'Make the generated text the new input' });
+    const useBtn = button('Use as input', () => useAsInput(), { variant: 'ghost', title: 'Make the generated text the new input' });
+    // Temperature changes the candidate list, so it sits on that list's header.
     const tempCtl = slider({
       id: `${uid}-temp`, label: 'temperature', min: 0, max: 1.5, step: 0.05, value: 0,
       format: (v) => (v === 0 ? 'greedy' : `T = ${v.toFixed(2)}`), onInput: () => cancelAuto(),
     });
     tempCtl.input.addEventListener('change', () => applyTemp());
-    const controls = h('div', { class: 'gn-controls' }, playBtn, resetBtn, tempCtl.el, useBtn);
-    st.add(controls, ZONES.controls);
+    tempCtl.el.classList.add('gn-temp');
 
     const seqLabel = h('div', { class: 'gn-label' });
-    st.add(seqLabel, { x: ZONES.hero.x, y: ZONES.hero.y });
+    const seqHead = h('div', { class: 'gn-seqhead', style: { width: `${SEQ.w}px` } }, seqLabel, h('div', { class: 'gn-seqctl' }, playBtn, resetBtn, useBtn));
+    st.add(seqHead, { x: SEQ.x, y: ZONES.hero.y });
     const seqRow = h('div', { class: 'gn-seq' });
     st.add(seqRow, { x: SEQ.x, y: SEQ.y });
 
@@ -214,9 +244,10 @@ export default {
     const modelEl = h('div', { class: 'gn-model' });
     st.add(modelEl, { x: MODEL.x, y: MODEL.y });
 
-    const candLabel = h('div', { class: 'gn-label', style: { marginBottom: '8px' } });
+    const candLabel = h('div', { class: 'gn-label' });
+    const candHead = h('div', { class: 'gn-candhead' }, candLabel, tempCtl.el);
     const candBox = h('div', { class: 'gn-cands' });
-    const cands = Array.from({ length: 5 }, () => {
+    const cands = Array.from({ length: CAND_ROWS }, () => {
       const ch = h('span', { class: 'gn-cand-ch' });
       const fill = h('i');
       const pctEl = h('span', { class: 'gn-cand-p' });
@@ -225,13 +256,19 @@ export default {
       candBox.append(row);
       return { row, ch, fill, pctEl, tag };
     });
-    const candWrap = h('div', null, candLabel, candBox);
+    const stopPanel = h('div', { class: 'gn-stop', hidden: true });
+    const candWrap = h('div', { class: 'gn-candwrap' }, candHead, candBox, stopPanel);
     st.add(candWrap, { x: CANDS.x, y: CANDS.y });
 
-    const eqMain = h('div'), eqLive = h('div', { class: 'gn-live' }), eqChecks = h('div', { class: 'gn-checks' });
-    const eqEl = h('div', { class: 'gn-eq' }, eqMain, eqLive, eqChecks);
+    // The step's label heads its equation, with the check on the same row; the card holds the live numbers.
+    const stepLab = h('div', { class: 'k-label gn-steplab' });
+    const eqChecks = h('div', { class: 'gn-checks' });
+    const eqMain = h('div', { class: 'gn-eq-main' });
+    const eqLive = h('div', { class: 'gn-eq-live' });
+    const eqEl = h('div', { class: 'gn-eq' }, h('div', { class: 'gn-eqhead' }, stepLab, eqChecks), eqMain, eqLive);
     st.add(eqEl, { x: EQ.x, y: EQ.y });
     const cap = sceneCaption(st, ZONES.caption);
+    const capEl = cap.el;
 
     const sideEl = h('div', { class: 'gn-side', style: { width: `${SIDE.w}px` } });
     st.add(sideEl, { x: SIDE.x, y: SIDE.y });
@@ -285,31 +322,39 @@ export default {
     function buildSide() {
       const { cfg, kvOn, S } = base;
       layers = [];
-      cnt = { with: h('b'), without: h('b'), barWith: h('i'), barWithout: h('i'), bytes: h('div', { class: 'gn-bytes' }) };
+      cnt = { with: h('b'), without: h('b'), barWith: h('i'), barWithout: h('i'), bytes: h('small') };
+      sideRefs = { note: h('span', { class: 'gn-side-note' }), sub: h('div', { class: 'gn-side-sub' }), more: h('div', { class: 'gn-more' }) };
       let body;
       if (kvOn) {
         const geo = stackGeom();
-        rowsShown = Math.min(S, geo.rows);
-        firstRow = S - rowsShown;
+        rowsShown = Math.min(geo.rows, S);     // never more rows than the input can ever hold
         body = buildStacks(geo);
       } else {
         rowsShown = 0;
-        firstRow = S;
+        sideRefs.note.textContent = `mask “${cfg.mask}”`;
         body = h('div', { class: 'gn-note-card' }, noCacheNote(cfg));
       }
+      const counts = h('div', { class: 'gn-counts' },
+        h('div', { class: 'gn-count' }, h('span', null, 'with cache'), h('span', { class: 'gn-track' }, cnt.barWith), h('span', { class: 'gn-val' }, cnt.with, cnt.bytes)),
+        h('div', { class: 'gn-count without' }, h('span', null, 'without'), h('span', { class: 'gn-track' }, cnt.barWithout), h('span', { class: 'gn-val' }, cnt.without)));
       sideEl.replaceChildren(
-        h('div', { class: 'gn-side-head' },
-          h('span', { class: 'gn-side-title' }, kvOn ? 'KV cache' : 'no KV cache'),
-          h('span', { class: 'gn-side-note' }, kvOn ? `head 0 · rows ${firstRow}–${S - 1} of ${S}` : `mask “${cfg.mask}”`)),
-        body,
-        h('div', { class: 'gn-counts' },
-          h('div', { class: 'gn-count' }, h('span', null, 'with cache'), h('span', { class: 'gn-track' }, cnt.barWith), cnt.with),
-          h('div', { class: 'gn-count without' }, h('span', null, 'without'), h('span', { class: 'gn-track' }, cnt.barWithout), cnt.without)),
-        cnt.bytes);
+        h('div', { class: 'gn-side-head' }, h('span', { class: 'gn-side-title' }, kvOn ? 'KV cache' : 'no KV cache'), sideRefs.note),
+        ...(kvOn ? [sideRefs.sub] : []),
+        body, sideRefs.more, counts);
+      setLayers();
+    }
+
+    // Steps 0 and 1 show layer 0 only; the note says the rest share its shape. Steps 2 and 3 show every layer.
+    function setLayers() {
+      const all = step >= 2 || !base.kvOn || base.cfg.n_layer < 2;
+      layers.forEach((blk, l) => { blk.el.hidden = !all && l > 0; });
+      const more = base.cfg.n_layer - 1;
+      sideRefs.more.hidden = all;
+      sideRefs.more.textContent = `+${more} more ${more === 1 ? 'layer' : 'layers'} · same shape`;
     }
 
     // Shape of one K or V stack: kv head 0, one row per position, the first 12 and last 4 dims for wide heads
-    // (the kit's convention). Rows are cut to what the side column can hold; the newest rows are kept.
+    // (the kit's convention). Rows are cut to what the side column can hold.
     function stackGeom() {
       const { cfg, dh } = base;
       const dims = dh <= 17 ? Array.from({ length: dh }, (_, d) => d)
@@ -322,7 +367,7 @@ export default {
     }
 
     function buildStacks({ dims, cell }) {
-      const { cfg, P, rope } = base;
+      const { cfg, rope } = base;
       const cols = dims.length, rows = rowsShown;
       const grid = h('div', { class: 'gn-kv' });
       for (let l = 0; l < cfg.n_layer; l++) {
@@ -330,32 +375,30 @@ export default {
         const pair = h('div', { class: 'gn-pair' });
         for (const kind of ['k', 'v']) {
           const trace = `L${l}.attn.${kind === 'k' ? (rope ? 'k_rot' : 'k_heads') : 'v_heads'}`;
-          const m = mat(new Float64Array(rows * cols), rows, cols, {
-            cell, gap: 0, mode: 'diverging', range: 1, kind, trace,
-            cellOf: (r, c) => `${firstRow + r},${dims[c]},0`,
-          });
+          const m = mat(new Float64Array(rows * cols), rows, cols, { cell, gap: 0, mode: 'diverging', range: 1, kind, trace });
           m.classList.add(kind === 'k' ? 'gn-stack-k' : 'gn-stack-v');
-          // Every cell starts as a placeholder; paintStacks fills the rows the cache holds. Elided columns and generated
-          // positions have no trace value (the store holds the prompt only), so they get no hover card.
+          // Every cell starts as a placeholder; paintStacks fills the rows the cache holds.
           for (let r = 0; r < rows; r++) {
             for (let c = 0; c < cols; c++) {
               const cellEl = m.cellEl(r, c);
               cellEl.classList.add('gn-future');
               if (dims[c] < 0) cellEl.classList.add('ell');
-              if (dims[c] < 0 || firstRow + r >= P) cellEl.removeAttribute('data-cell');
             }
           }
+          const read = h('div', { class: 'gn-read', hidden: true });     // the rows the newest token reads (step 3)
+          m.querySelector('.k-mat-body').append(read);
           const wrap = h('div', { class: 'gn-stack-wrap' }, m);
           let ruler = null;
           if (kind === 'k' && l % 2 === 0) {          // the first column of each block row carries the position ruler
             ruler = Array.from({ length: rows }, () => h('span'));
             wrap.append(h('div', { class: 'gn-ruler', style: { '--rh': `${cell}px` } }, ruler));
           }
-          blk[kind] = { m, dims, ruler, cell };
+          blk[kind] = { m, dims, ruler, cell, read, band: m.querySelector('.k-row-band') };
           pair.append(h('div', { class: ['gn-col', kind] }, h('span', { class: 'gn-cap' }, kind === 'k' ? 'K' : 'V'), wrap));
         }
+        blk.el = h('div', { class: 'gn-block' }, h('span', { class: 'gn-block-l' }, `layer ${l}`), pair);
         layers.push(blk);
-        grid.append(h('div', { class: 'gn-block' }, h('span', { class: 'gn-block-l' }, `layer ${l}`), pair));
+        grid.append(blk.el);
       }
       return grid;
     }
@@ -387,10 +430,24 @@ export default {
       return m;
     }
 
+    // The newest row of layer 0 (kv head 0, first entries) against a full pass of the same prefix.
+    function newRowCheck(trace, L) {
+      const { dh, rope } = base, t = L - 1, n = Math.min(4, dh);
+      const K = trace[`L0.attn.${rope ? 'k_rot' : 'k_heads'}`], V = trace['L0.attn.v_heads'];
+      const ck = cache.layers[0].k[0][t], cv = cache.layers[0].v[0][t];
+      const k = [], v = [];
+      let diff = 0;
+      for (let d = 0; d < n; d++) {
+        k.push(K.data[t * dh + d]);
+        v.push(V.data[t * dh + d]);
+        diff = Math.max(diff, Math.abs(ck[d] - k[d]), Math.abs(cv[d] - v[d]));
+      }
+      return { k, v, diff };
+    }
+
     // A cached step is checked against a full pass over the same prefix. Rows already in the cache never
-    // change, so the check can run later. Checks run one per macrotask: no step waits for an engine.infer.
+    // change, so the check can run later. Checks run one per macrotask: no step waits for a full pass.
     function queueCheck(L, row) {
-      chk.queued++;
       checkQueue.push({ ep: epoch, ids: seq.slice(0, L), row });
       if (!pumping) pumpChecks();
     }
@@ -403,9 +460,11 @@ export default {
         const L = job.ids.length, V = base.V;
         const ref = E.infer(base.model, job.ids);
         chk.done++;
+        chk.doneL = Math.max(chk.doneL, L);
         chk.maxLogits = Math.max(chk.maxLogits, maxAbs(job.row, ref.logits.data, (L - 1) * V));
         chk.maxKV = Math.max(chk.maxKV, kvDiff(ref.trace, L));
-        paintChecks();
+        if (L > base.P) chk.newRow.set(L, newRowCheck(ref.trace, L));
+        paintChecks();                                                   // reads only what is on screen (shownL)
         setTimeout(runOne, 0);
       };
       setTimeout(runOne, 0);
@@ -420,7 +479,7 @@ export default {
       g = 0;
       next = null;
       rng = E.mulberry32(SEED);
-      chk = { queued: 0, done: 0, maxLogits: 0, maxKV: 0 };
+      chk = { done: 0, doneL: 0, maxLogits: 0, maxKV: 0, newRow: new Map() };
     }
 
     // Consistent: the cache holds every position of the sequence, and `next` is the choice after it. Only then may
@@ -509,7 +568,8 @@ export default {
     }
 
     // One visible step: the chosen token pops out of the model and flies into its slot while the cache
-    // step runs; then the cache row, the distribution and the bus update together.
+    // step runs; then the cache row, the distribution and the bus update together. The caption and equation
+    // of the step were already on screen (paintStep), so the flight moves only the token, the row and the bus.
     async function animateStep(id) {
       if (!base || !consistent() || g >= base.maxNew) return false;
       const e = epoch, pos = seq.length, tokId = next.id;
@@ -571,6 +631,7 @@ export default {
       step = clamp(i, 0, STEPS.length - 1);
       root.dataset.step = String(step);
       stop();
+      paintStep();                                       // the label, caption and equation change now, not after the flight
       const max = base.maxNew;
       const settled = () => settle().then(() => { if (!dead) paintAll(); });   // a frame, once the state is consistent
       if (step === 0) work = rebuild(0);
@@ -600,19 +661,144 @@ export default {
         if (p < 1) requestAnimationFrame(frame);
       };
       requestAnimationFrame(frame);
+      // A frame that never comes (a background tab, a slow browser) must not leave a stale number: settle it.
+      setTimeout(() => { if (tweenTok.get(elx) === tok) { tweenTok.set(elx, tok + 1); elx.textContent = fmt(to, 0); } }, 700);
+    }
+
+    // The caption's words change at once; only the opacity animates, so a slow frame never leaves old text behind.
+    function setCap(html) {
+      if (html === capShown) return;
+      capShown = html;
+      capEl.innerHTML = html;
+      capEl.getAnimations().forEach((a) => a.cancel());
+      if (!reducedMotion()) capEl.animate([{ opacity: 0.45 }, { opacity: 1 }], { duration: 260, easing: MOTION.easeOut });
+    }
+    function setEq(main, live) {
+      eqMain.innerHTML = texHTML(main, { display: true });
+      eqLive.innerHTML = live ? texHTML(live, { display: true }) : '';
+      eqLive.hidden = !live;
+    }
+
+    // The caption and equations of the current step. Before the state moves (live = false) they name the step and
+    // its symbols without this state's numbers, so the text changes with the step. Once the state has settled
+    // (live = true) they carry its numbers.
+    function stepText(live) {
+      const { P, cfg, kvOn, maxNew } = base;
+      const greedy = temp === 0, T = temp.toFixed(2);
+      if (maxNew === 0) {
+        return {
+          cap: `The prompt already fills the ${cfg.block_size}-token window, so there is no room to generate. Shorten the input to see the loop run.`,
+          main: `\\text{context window full: } ${P} = ${cfg.block_size}`, live: '',
+        };
+      }
+      if (step === 0) {
+        const c = live ? next : null;
+        const scores = `Position <b>${P - 1}</b> (<b>“${htmlEsc(glyph(base.ids[P - 1]))}”</b>) scores the next token${c ? `, <b>“${htmlEsc(glyph(c.id))}”</b>` : ''}.`;
+        const cap = kvOn
+          ? `The prompt goes through the model once and fills the cache: one key and one value row per token, in every layer. ${scores}`
+          : `The prompt goes through the model once. ${scores} No cache is kept, so later steps run the whole sequence again.`;
+        const main = greedy ? `\\mathit{id}_{${P}}=\\arg\\max_{v}\\, z_{${P - 1},v}` : `\\mathit{id}_{${P}}\\sim\\softmax(z_{${P - 1}}/T)`;
+        let lv = '';
+        if (c) {
+          const tch = texEsc(glyph(c.id));
+          lv = `z_{${P - 1},\\,\\text{“${tch}”}}=${num(c.logits[c.id], 2)},\\qquad p(\\text{“${tch}”})=${num(c.probs[c.id], 3)}${greedy ? '' : `\\text{ at } T=${T}`}`;
+        }
+        return { cap, main, live: lv };
+      }
+      if (step === 1) {
+        const tok = live && g >= 1 ? seq[P] : null;         // the token this step appends, once it has been appended
+        const who = tok != null ? `<b>“${htmlEsc(glyph(tok))}”</b>` : 'the next token';
+        const head = greedy ? `The highest score wins, so the model writes ${who}.` : `At T = ${T} the model draws ${who} from its distribution.`;
+        if (!kvOn) {
+          return {
+            cap: `${head} With no cache, all ${P + 1} positions run again to produce it.`,
+            main: `\\mathit{id}_{${P}}${tok != null ? `=\\text{“${texEsc(glyph(tok))}”}` : ''},\\qquad z_{${P}}=\\text{Transformer}(\\mathit{id}_{0},\\dots,\\mathit{id}_{${P}})`,
+            live: `\\text{positions run: } ${P + 1}`,
+          };
+        }
+        const lv = tok != null
+          ? `k^{(0)}_{${P}}=\\big(${vecTex(cache.layers[0].k[0][P])}\\big),\\qquad v^{(0)}_{${P}}=\\big(${vecTex(cache.layers[0].v[0][P])}\\big)`
+          : '';
+        return {
+          cap: `${head} Only that token is fed in: it adds one row to every K and V stack, and the older rows stay as they are.`,
+          main: `k^{(\\ell)}_{${P}}=${kvLaw(cfg, P).k}`,
+          live: lv,
+        };
+      }
+      if (step === 2) {
+        if (!live) {
+          return {
+            cap: kvOn
+              ? 'Each step feeds one new token through the model. Its K and V rows join the cache, and the rows already stored are not recomputed.'
+              : 'Every step reruns the whole sequence, so each step costs more than the one before.',
+            main: kvOn
+              ? `\\text{rows}_{\\text{cache}}=${P}+n,\\qquad \\text{rows}_{\\text{no cache}}=${P}+\\textstyle\\sum_{s=${P}}^{${P}+n-1}(s+1)`
+              : `\\text{positions run}=${P}+\\textstyle\\sum_{s=${P}}^{${P}+n-1}(s+1)`,
+            live: '',
+          };
+        }
+        const L = seq.length, without = withoutRows(L), why = stopReason();
+        const tail = why ? ` Generation stops: ${why}.` : '';
+        return {
+          cap: kvOn
+            ? `After ${plural(g, 'token')} the cache has processed each of the ${L} positions once: <b>${L}</b> rows. Without a cache, every step reruns the sequence: <b>${without}</b> positions in all.${tail}`
+            : `Every step reruns the whole sequence: <b>${without}</b> positions in all, for ${plural(g, 'token')}. This mask has no cache (see the last step).${tail}`,
+          main: kvOn
+            ? `\\text{rows}_{\\text{cache}}=${L},\\qquad \\text{rows}_{\\text{no cache}}=${P}+\\textstyle\\sum_{s=${P}}^{${L - 1}}(s+1)=${without}`
+            : `\\text{positions run}=${P}+\\textstyle\\sum_{s=${P}}^{${L - 1}}(s+1)=${without}`,
+          live: kvOn
+            ? `\\text{without the cache: } ${num(without / L, 1)}\\times\\text{ the work with it}`
+            : `\\text{the last step alone ran } ${L} \\text{ positions}`,
+        };
+      }
+      // step 3: the cache step; its text depends on the config only
+      if (kvOn) {
+        return {
+          cap: cacheCaption(cfg),
+          main: `x^{(\\ell)}_{j}=f_{\\ell}\\big(x^{(\\ell-1)}_{0},\\dots,x^{(\\ell-1)}_{j}\\big)`,
+          live: attnLaw(cfg),
+        };
+      }
+      const L = live ? seq.length : P + maxNew;
+      return {
+        cap: `No cache for mask “${cfg.mask}”. ${noCacheWhy(cfg)}`,
+        main: cfg.mask === 'prefix'
+          ? `x^{(\\ell)}_{j}=f_{\\ell}\\big(x^{(\\ell-1)}_{0},\\dots,x^{(\\ell-1)}_{\\max(j,\\,${Math.min(cfg.prefix_len, L) - 1})}\\big)`
+          : `x^{(\\ell)}_{j}=f_{\\ell}\\big(x^{(\\ell-1)}_{0},\\dots,x^{(\\ell-1)}_{${L - 1}}\\big)`,
+        live: cfg.mask === 'prefix' ? `\\text{rows } j<${cfg.prefix_len} \\text{ see the whole prefix}` : '\\text{from layer } 1 \\text{ on, } x_j \\text{ depends on the later tokens}',
+      };
+    }
+
+    // The step's label, layers and text, before any state moves. The numbers follow in paintAll.
+    function paintStep() {
+      if (!base) return;
+      stepLab.textContent = STEPS[step];
+      stepLab.style.setProperty('--kind', `var(--c-${STEP_KIND[step]})`);
+      setLayers();
+      if (consistent() && shownL === seq.length) paintStacks(-1);     // not while a token is in flight
+      const t = stepText(false);
+      setCap(t.cap);
+      setEq(t.main, t.live);
+    }
+
+    function paintText() {
+      const t = stepText(true);
+      setCap(t.cap);
+      setEq(t.main, t.live);
     }
 
     function paintChrome() {
       const { cfg, P, kvOn } = base;
       eyebrow.replaceChildren(
         chip(`${cfg.n_layer} ${cfg.n_layer === 1 ? 'layer' : 'layers'}`, 'resid'),
-        chip(temp > 0 ? `T = ${temp.toFixed(2)}` : 'greedy', 'head'),
-        chip(kvOn ? 'KV cache' : 'no cache', kvOn ? 'k' : 'mask'));
+        chip(temp > 0 ? `T = ${temp.toFixed(2)}` : 'greedy'),        // a setting, so a neutral chip
+        chip(kvOn ? 'KV cache' : 'no cache'));                         // a method, so a neutral chip
       seqLabel.textContent = `tokens · prompt ${P}${g ? ` · generated ${g}` : ''} · context ${seq.length} of ${cfg.block_size}${stopReason() ? ' · stopped' : ''}`;
     }
 
     function paintSeq(fresh) {
       const L = seq.length;
+      const labelOn = (pos) => pos === L - 1 || (pos % vis.labelEvery === 0 && Math.abs(pos - (L - 1)) > vis.labelEvery / 2);
       for (const t of tiles) {
         if (t.pos < 0) continue;
         const has = t.pos < L;
@@ -620,7 +806,7 @@ export default {
         t.el.classList.toggle('gn-empty', !has);
         t.el.classList.toggle('gn-new', has && g > 0 && t.pos === L - 1);
         t.ch.textContent = has ? glyph(seq[t.pos]) : '';
-        t.idx.classList.toggle('gn-on', t.pos % vis.labelEvery === 0 || t.pos === L - 1);
+        t.idx.classList.toggle('gn-on', labelOn(t.pos));
         if (t.pos === fresh && !reducedMotion()) {
           t.el.animate([{ transform: 'scale(.4)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], { duration: 460, easing: MOTION.easeOut });
         }
@@ -646,14 +832,15 @@ export default {
     // Once generation has stopped the next token is never appended, so the list gives way to the reason.
     function paintCands() {
       const why = stopReason();
+      candBox.hidden = !!why;
+      stopPanel.hidden = !why;
       if (why) {
-        candLabel.textContent = `${why}: the next token is not appended`;
-        candBox.hidden = true;
+        stopPanel.textContent = `Generation has stopped: ${why}. The next token is not appended.`;
+        candLabel.textContent = 'next token';
         delete candBox.dataset.trace;
         candBox.querySelectorAll('[data-cell]').forEach((r) => r.removeAttribute('data-cell'));
         return;
       }
-      candBox.hidden = false;
       const { probs } = next;
       let order = Array.from(probs.keys()).sort((a, b) => probs[b] - probs[a]).slice(0, cands.length);
       if (!order.includes(next.id)) order[order.length - 1] = next.id;   // always show the chosen token
@@ -673,51 +860,79 @@ export default {
         c.tag.textContent = chosen ? (temp > 0 ? 'sampled' : 'greedy') : '';
         if (traced) c.row.dataset.cell = `${base.P - 1},${id},0`; else delete c.row.dataset.cell;
       });
-      candLabel.textContent = temp > 0 ? `next token · T = ${temp.toFixed(2)}` : 'next token · greedy takes the highest score';
+      candLabel.textContent = temp > 0 ? `next token · drawn at T = ${temp.toFixed(2)}` : 'next token · the highest score wins';
     }
 
-    // Each stack: rows are positions, columns are the dims of kv head 0. Rows the cache does not hold yet are placeholders.
+    // Each stack: rows are positions, columns are the dims of kv head 0. The window ends at the newest row and
+    // starts 28 (or fewer) rows earlier; rows the cache does not hold yet are placeholders. One colour scale for all.
     function paintStacks(fresh) {
       if (!base.kvOn || !cache || !layers.length) return;
-      const L = seq.length, cols = layers[0].k.dims.length;
-      const showNew = g > 0 && L - 1 >= firstRow;
+      const { cfg, P } = base;
+      const L = seq.length, qpos = L - 1;
+      const top = Math.max(0, L - rowsShown);
+      // step 3: the rows the newest token reads (all of them, or the last `window` for a sliding mask)
+      const readLo = step === 3 ? (cfg.mask === 'sliding' ? Math.max(0, qpos - cfg.window + 1) : 0) : -1;
       layers.forEach((blk, l) => {
+        if (blk.el.hidden) return;
         for (const kind of ['k', 'v']) {
-          const { m, dims, ruler, cell } = blk[kind];
-          const data = cache.layers[l][kind][0];        // kv head 0: one row per position
-          const have = data.length;                     // rows in the cache: a short cache paints placeholders
-          let range = 0;
-          for (let t = 0; t < have; t++) for (const x of data[t]) range = Math.max(range, Math.abs(x));
+          const { m, dims, ruler, cell, band, read } = blk[kind];
+          const cols = dims.length, data = cache.layers[l][kind][0];   // kv head 0: one row per position
+          const have = data.length;
           const vals = new Float64Array(rowsShown * cols);
           for (let i = 0; i < rowsShown; i++) {
-            const t = firstRow + i, filled = t < have;
+            const t = top + i, filled = t < have, unread = readLo >= 0 && filled && (t < readLo || t > qpos);
             for (let c = 0; c < cols; c++) {
+              const cellEl = m.cellEl(i, c);
               if (filled && dims[c] >= 0) vals[i * cols + c] = data[t][dims[c]];
-              m.cellEl(i, c).classList.toggle('gn-future', !filled);
+              cellEl.classList.toggle('gn-future', !filled);
+              cellEl.classList.toggle('gn-unread', unread);
+              if (filled && dims[c] >= 0 && t < P) cellEl.dataset.cell = `${t},${dims[c]},0`;   // prompt rows have trace values
+              else cellEl.removeAttribute('data-cell');
             }
           }
-          m.update(vals, { range: range || 1 });
+          m.update(vals, { range: stackRange });
+          if (read) {
+            const r0 = Math.max(readLo, top) - top, r1 = Math.min(qpos, top + rowsShown - 1) - top;
+            read.hidden = readLo < 0 || r1 < r0;
+            if (!read.hidden) {
+              read.style.top = `${3 + r0 * cell}px`;
+              read.style.height = `${(r1 - r0 + 1) * cell}px`;
+              read.style.width = `${cols * cell}px`;
+            }
+          }
           // The band's place follows from the cell size and the frame (3 px padding, 1 px border), so it is set
           // directly: reading layout here would force a new layout for every stack on every step.
-          const band = m.querySelector('.k-row-band');
-          if (showNew && L - 1 < have && band) {
-            const r = L - 1 - firstRow;
-            band.style.top = `${2 + r * cell}px`;
-            band.style.left = '1px';
-            band.style.width = `${cols * cell + 6}px`;
-            band.style.height = `${cell + 4}px`;
-            band.hidden = false;
-            if (fresh >= firstRow && fresh === L - 1 && !reducedMotion()) band.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: 520, easing: MOTION.easeOut });
-          } else if (band) band.hidden = true;
+          if (band) {
+            const r = qpos - top, on = g > 0 && r >= 0 && r < rowsShown;
+            band.hidden = !on;
+            if (on) {
+              band.style.top = `${2 + r * cell}px`;
+              band.style.left = '1px';
+              band.style.width = `${cols * cell + 6}px`;
+              band.style.height = `${cell + 4}px`;
+              if (fresh === qpos && !reducedMotion()) band.animate([{ opacity: 0.2 }, { opacity: 1 }], { duration: 520, easing: MOTION.easeOut });
+            }
+          }
           if (ruler) {
+            // a label every RULER_EVERY rows; none within NEAR_ROWS of the newest row, which carries its own label
             for (let i = 0; i < rowsShown; i++) {
-              const t = firstRow + i, show = t < L && (t % 8 === 0 || t === firstRow || t === L - 1);
+              const t = top + i, has = t < L;
+              const show = has && (t === qpos || (t % RULER_EVERY === 0 && Math.abs(t - qpos) > NEAR_ROWS));
               ruler[i].textContent = show ? String(t) : '';
-              ruler[i].classList.toggle('gn-now', t === L - 1);
+              ruler[i].classList.toggle('gn-now', has && t === qpos);
             }
           }
         }
       });
+      const heads = cfg.n_head, kvHeads = cfg.n_kv_head;
+      sideRefs.note.textContent = `${L} rows cached`;
+      const lines = [
+        `kv head 0 of ${kvHeads} · rows ${top}–${qpos} shown`,
+        `one colour scale for every stack: ±${fmt(stackRange, 2)}`,
+      ];
+      if (readLo >= 0) lines.push(`token ${qpos} reads rows ${readLo}–${qpos}`);
+      if (kvHeads < heads) lines.push(`each kv head serves ${heads / kvHeads} query heads`);
+      sideRefs.sub.replaceChildren(...lines.map((t) => h('div', null, t)));
     }
 
     function paintCounts(animate) {
@@ -727,100 +942,41 @@ export default {
       if (base.kvOn) {
         setNum(cnt.with, L, animate);
         cnt.barWith.style.width = `${(L / Math.max(1, without)) * 100}%`;
-        cnt.bytes.textContent = `KV cache: ${fmtBytes(E.cacheBytes(base.cfg, L, 2))} at fp16`;
+        cnt.bytes.textContent = ` · ${kib(E.cacheBytes(base.cfg, L, 2))}`;    // fp16
       } else {
         cnt.with.textContent = 'off';
         cnt.barWith.style.width = '0%';
-        cnt.bytes.textContent = 'Nothing is stored between steps.';
+        cnt.bytes.textContent = ' · none stored';
       }
     }
 
-    // The checks sit under the equations, where the reader reads the maths.
+    // One line under the equations. Step 1 checks the new row; the other steps check the whole cache. Both are built
+    // from what is on screen (shownL, shownG), never from the state that is still moving.
+    function checkLine(kind, text) {
+      eqChecks.replaceChildren(h('span', { class: ['k-check', kind] }, text));
+    }
     function paintChecks() {
       if (!base || !chk) return;
-      if (!base.kvOn) {
-        eqChecks.replaceChildren(h('span', { class: 'gn-muted' }, 'Nothing to check: every step is a full pass.'));
+      if (!base.kvOn) { eqChecks.replaceChildren(h('span', { class: 'gn-muted' }, 'Nothing to check: every step is a full pass.')); return; }
+      const L = shownL;
+      if (!L) { checkLine('wait', 'checking against a full forward pass over the same prefix…'); return; }
+      if (step === 1 && L > base.P) {
+        const nr = chk.newRow.get(L);
+        if (!nr) checkLine('wait', 'checking the new row against a full forward pass…');
+        else if (nr.diff <= TOL) checkLine('ok', '✓ the new row equals a full forward pass');
+        else checkLine('bad', `✗ the new row differs from a full forward pass by ${sci(nr.diff)}`);
         return;
       }
-      const pending = chk.done < chk.queued;
-      const note = pending
-        ? `checking against engine.infer: ${chk.done} of ${chk.queued}`
-        : `${g ? `the prompt and ${plural(g, 'step')} match` : 'the prompt matches'} engine.infer on the same prefix`;
-      eqChecks.replaceChildren(
-        checkBadge(chk.maxLogits, 0, { label: `logits max |Δ| = ${sci(chk.maxLogits)}`, tol: TOL }),
-        checkBadge(chk.maxKV, 0, { label: `K, V max |Δ| = ${sci(chk.maxKV)}`, tol: TOL }),
-        h('span', { class: 'gn-muted' }, note));
-    }
-
-    function setEq(main, live) {
-      eqMain.innerHTML = texHTML(main, { display: true });
-      eqLive.innerHTML = live ? texHTML(live, { display: true }) : '';
-    }
-
-    function paintText() {
-      const { P, cfg, kvOn, maxNew } = base;
-      const L = seq.length, c = next, greedy = temp === 0, without = withoutRows(L);
-      const ch = htmlEsc(glyph(c.id)), tch = texEsc(glyph(c.id)), T = temp.toFixed(2);
-      if (maxNew === 0) {
-        cap.set(`The prompt already fills the ${cfg.block_size}-token window, so there is no room to generate. Shorten the input to see the loop run.`);
-        setEq(`\\text{context window full: } ${P} = ${cfg.block_size}`, '');
-        return;
-      }
-      let capHTML = '', main = '', live = '';
-      if (step === 0) {
-        capHTML = kvOn
-          ? `The prompt goes through the model once and fills the cache: one key and one value row per token, in every layer. The last position scores the next token, <b>“${ch}”</b>.`
-          : `The prompt goes through the model once. The last position scores the next token, <b>“${ch}”</b>. No cache is kept, so later steps run the whole sequence again.`;
-        main = greedy ? `\\mathit{id}_{${P}}=\\arg\\max_{v}\\, z_{${P - 1},v}` : `\\mathit{id}_{${P}}\\sim\\softmax(z_{${P - 1}}/T)`;
-        live = `z_{${P - 1},\\,\\text{“${tch}”}}=${num(c.logits[c.id], 2)},\\qquad p(\\text{“${tch}”})=${num(c.probs[c.id], 3)}${greedy ? '' : `\\text{ at } T=${T}`}`;
-      } else if (step === 1) {
-        const lastCh = htmlEsc(glyph(seq[L - 1])), lastTex = texEsc(glyph(seq[L - 1]));
-        const head = greedy
-          ? `The highest score wins, so the model writes <b>“${lastCh}”</b>.`
-          : `At T = ${T} the model draws <b>“${lastCh}”</b> from its distribution.`;
-        capHTML = kvOn
-          ? `${head} Only that token is fed in: it adds one row to every K and V stack, and the older rows stay as they are.`
-          : `${head} With no cache, all ${L} positions ran again to produce it.`;
-        if (kvOn) {
-          const law = kvLaw(cfg, L - 1);
-          main = `k^{(\\ell)}_{${L - 1}}=${law.k}`;
-          live = `v^{(\\ell)}_{${L - 1}}=${law.v}`;
-        } else {
-          main = `\\mathit{id}_{${L - 1}}=\\text{“${lastTex}”},\\qquad z_{${L - 1}}=\\text{Transformer}(\\mathit{id}_{0},\\dots,\\mathit{id}_{${L - 1}})`;
-          live = `\\text{positions run: } ${L}`;
-        }
-      } else if (step === 2) {
-        const why = stopReason(), tail = why ? ` Generation stops: ${why}.` : '';
-        capHTML = kvOn
-          ? `After ${plural(g, 'token')} the cache has processed each of the ${L} positions once: <b>${L}</b> rows. Without a cache, every step reruns the sequence: <b>${without}</b> positions in all.${tail}`
-          : `Every step reruns the whole sequence: <b>${without}</b> positions in all, for ${plural(g, 'token')}. This mask has no cache (see the last step).${tail}`;
-        main = kvOn
-          ? `\\text{rows}_{\\text{cache}}=${L},\\qquad \\text{rows}_{\\text{no cache}}=${P}+\\textstyle\\sum_{s=${P}}^{${L - 1}}(s+1)=${without}`
-          : `\\text{positions run}=${P}+\\textstyle\\sum_{s=${P}}^{${L - 1}}(s+1)=${without}`;
-        live = kvOn
-          ? `\\text{without the cache: } ${num(without / L, 1)}\\times\\text{ the work with it}`
-          : `\\text{the last step alone ran } ${L} \\text{ positions}`;
-      } else {
-        if (kvOn) {
-          capHTML = cacheCaption(cfg);
-          main = `x^{(\\ell)}_{j}=f_{\\ell}\\big(x^{(\\ell-1)}_{0},\\dots,x^{(\\ell-1)}_{j}\\big)`;
-          live = attnLaw(cfg);
-        } else {
-          capHTML = `No cache for mask “${cfg.mask}”. ${noCacheWhy(cfg)}`;
-          main = cfg.mask === 'prefix'
-            ? `x^{(\\ell)}_{j}=f_{\\ell}\\big(x^{(\\ell-1)}_{0},\\dots,x^{(\\ell-1)}_{\\max(j,\\,${Math.min(cfg.prefix_len, L) - 1})}\\big)`
-            : `x^{(\\ell)}_{j}=f_{\\ell}\\big(x^{(\\ell-1)}_{0},\\dots,x^{(\\ell-1)}_{${L - 1}}\\big)`;
-          live = cfg.mask === 'prefix'
-            ? `\\text{rows } j<${cfg.prefix_len} \\text{ see the whole prefix}`
-            : '\\text{from layer } 1 \\text{ on, } x_j \\text{ depends on the later tokens}';
-        }
-      }
-      cap.set(capHTML);
-      setEq(main, live);
+      if (chk.doneL < L) { checkLine('wait', 'checking against a full forward pass over the same prefix…'); return; }
+      const worst = Math.max(chk.maxLogits, chk.maxKV);
+      if (worst <= TOL) checkLine('ok', `✓ ${shownG ? `the prompt and ${plural(shownG, 'step')} match` : 'the prompt matches'} a full forward pass · max |Δ| ${sci(worst)}`);
+      else checkLine('bad', `✗ differs from a full forward pass by ${sci(worst)}`);
     }
 
     function paintAll({ animate = false, fresh = -1 } = {}) {
       if (dead || !base || !consistent()) return;      // mid-feed: the finished state paints when the feed ends
+      shownL = seq.length;
+      shownG = g;
       paintChrome();
       paintSeq(animate ? fresh : -1);
       paintBus();
@@ -833,18 +989,37 @@ export default {
     }
 
     // ------------------------------------------------------------ input changes (the store's trace event)
+    // One colour scale for every stack of this input: the largest prompt value, so a value keeps its colour
+    // across steps and layers. Generated rows above it saturate.
+    function promptRange(trace) {
+      const { cfg, dh, rope, P } = base;
+      let m = 0;
+      for (let l = 0; l < cfg.n_layer; l++) {
+        for (const key of [`L${l}.attn.${rope ? 'k_rot' : 'k_heads'}`, `L${l}.attn.v_heads`]) {
+          const t = trace[key];
+          if (!t) continue;
+          const n = Math.min(t.data.length, P * dh);   // kv head 0 holds the first P rows
+          for (let i = 0; i < n; i++) m = Math.max(m, Math.abs(t.data[i]));
+        }
+      }
+      return m || 1;
+    }
+
     function setup() {
-      base = readBase();
-      buildDom();
-      header.setSub(subFor(base.cfg, base.kvOn));
       step = 0;
       root.dataset.step = '0';
+      next = null;                                       // not consistent until the prompt is read (rebuild)
+      base = readBase();
+      buildDom();
+      stackRange = promptRange(ctx.state.trace);
+      header.setSub(subFor(base.cfg, base.kvOn));
+      paintStep();
     }
 
     setup();
     work = rebuild(0);
     ctx.setSteps(STEPS, setStep);
-    appear([header.el, controls, seqRow, modelEl, candWrap, sideEl, eqEl], { stagger: MOTION.stagger });
+    appear([header.el, seqHead, seqRow, modelEl, candWrap, sideEl, eqEl], { stagger: MOTION.stagger });
     el.addEventListener('pointerdown', cancelAuto, { once: true });
 
     // explain itself once on first view: one token, then the run, then the cache; the reader takes over on any input
