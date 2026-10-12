@@ -1,6 +1,8 @@
 // Headless browser check for one or all views.
 //   tools/smoke.sh --view attention [--theme dark] [--width 420] [--out shot.png] [--eval "js expr"] [--full]
 //   tools/smoke.sh --all            (every view, light + dark, desktop; prints a table)
+//   tools/smoke.sh --all --preset tinystories   (any mode: open that model via ?preset=)
+//   tools/smoke.sh --all --shots dir --wait 2500 (also save every view's screenshot)
 //   tools/smoke.sh --file dist/transformer-atlas.html --view head   (single-file build via file://)
 //   tools/smoke.sh --url https://saidgurbuz.github.io/transformer-atlas/ --view model   (deployed site)
 // Prints JSON per view: console errors, page errors, horizontal overflow, stub status.
@@ -46,7 +48,8 @@ async function check(view, { theme = 'light', width = 1440, height = 900, out = 
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('requestfailed', (r) => { if (!/fonts\.(googleapis|gstatic)/.test(r.url())) errors.push(`request failed: ${r.url()}`); });
   await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.fulfill({ status: 200, contentType: 'text/css', body: '' }));
-  await page.goto(`${base}#${view}`, { waitUntil: 'load' });
+  const q = opt('preset', null) ? `?preset=${opt('preset')}` : '';
+  await page.goto(`${base}${q}#${view}`, { waitUntil: 'load' });
   await page.waitForTimeout(wait);
   const info = await page.evaluate(() => ({
     title: document.title,
@@ -71,8 +74,9 @@ try {
     const { PATTERNS } = await import('../src/atlas/nodes.js');
     const VIEWS = PATTERNS.map((p) => ({ id: p.pattern.replace(':l', '0').replace(':h', '0').replace(':n', '1') }));
     const rows = [];
+    const shots = opt('shots', null);    // --shots dir: also save <view>-<theme>.png there
     for (const v of VIEWS) for (const theme of ['light', 'dark']) {
-      const r = await check(v.id, { theme, wait: 700 });
+      const r = await check(v.id, { theme, wait: Number(opt('wait', 700)), out: shots ? join(shots, `${v.id}-${theme}.png`) : null });
       rows.push(r);
       console.log(`${(r.errors.length || r.failed ? 'FAIL' : r.stub ? 'stub' : 'ok').padEnd(5)} ${v.id.padEnd(11)} ${theme.padEnd(5)} errors=${r.errors.length} overflow=${r.overflowX || r.viewOverflow} ${r.errors.slice(0, 2).join(' | ').slice(0, 200)}`);
     }
