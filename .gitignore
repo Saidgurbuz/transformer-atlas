@@ -14,3 +14,7 @@ drafts/
 # downloaded corpus (fetch with tools/fetch_data.sh)
 data/*.txt
 .pages/
+data/tinystories/
+src/presets/*_smoke.js
+tests/fixtures/*_smoke.json
+.venv-gpu/
