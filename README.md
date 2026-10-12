@@ -26,6 +26,15 @@ the exact line of PyTorch that computes it. Arrow keys walk the forward pass as 
 - **Trained demo models:** `src/presets/` ships four tiny models trained with the reference
   code (Alice char-LM GPT-2 style, Alice char-LM LLaMA style, induction heads, word reversal).
 
+## Interview prep
+
+- Atlas levels: every component, animated on real numbers, with its equation and its line of code.
+- **Code ↔ forward pass** (menu): walk `reference/model.py` line by line with the live tensors.
+- **Interview cheat sheet** (menu): live shapes, formula sheet, flashcards and a quiz.
+- `reference/numpy_transformer.py`: the whole model in NumPy with every backward pass written out
+  and derived in comments (softmax, LayerNorm, attention, RoPE, GQA...). Its test
+  (`tests/test_numpy_reference.py`) matches PyTorch on every tensor and gradient.
+
 ## Run it
 
 Open `dist/transformer-explorer.html` (built by `node tools/build_single.mjs`) directly, or serve the
@@ -56,7 +65,7 @@ publishes that branch automatically.
 
 ```
 reference/model.py              PyTorch ground truth with @trace markers
-reference/numpy_transformer.py  NumPy implementation with a hand-written backward pass
+reference/numpy_transformer.py  NumPy implementation with a hand-written backward pass (interview study)
 src/atlas/                      the zoomable explorer: host, node hierarchy, 2.5D kit, scenes/
 src/scene/                      3D engine, tensor sheets, v0.1 tower and explorer plug-ins
 src/engine/                     JS tensor ops + autograd, model, KV-cache decoding, tokenizer
