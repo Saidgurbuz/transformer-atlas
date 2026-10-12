@@ -1,9 +1,12 @@
 // Tokens: how text becomes integers, on the real tokenizer and the real ids (ctx.state.ids).
-// The input text is split into character tiles; each tile flips to show its vocabulary id; the ids
-// drop into the integer row the model reads; the 32-entry vocabulary shows which entries this text
-// uses. A toy BPE, labelled as an illustration, shows subword pieces. Zoom target: vision.
+// This file holds the character model's scene. The input text is split into character tiles; each tile
+// flips to show its vocabulary id; the ids drop into the integer row the model reads; the 32-entry
+// vocabulary shows which entries this text uses. A toy BPE, labelled as an illustration, shows subword
+// pieces. A subword model (tokenizer kind 'bpe') gets its own scene in tokens-bpe.js: the default export
+// at the end of this file picks one by ctx.state.tokenizer.kind. Zoom target: vision.
 import { stage2d, sceneHeader, sceneCaption, checkBadge, token, chip, appear, useStyle, ZONES, MOTION } from '../kit.js';
 import { h, texHTML, reducedMotion, slider } from '../../ui/index.js';
+import bpeScene from './tokens-bpe.js';
 
 const STEPS = ['Text', 'Characters', 'Ids', 'Vocabulary', 'Subwords'];
 const EASE = MOTION.ease;
@@ -170,7 +173,7 @@ function embedErr(s) {
   return worst;
 }
 
-export default {
+const charScene = {
   mount(el, ctx) {
     const st = stage2d(el);
     st.root.classList.add('tk-scene');
@@ -518,10 +521,76 @@ export default {
         cancelAuto();
         document.removeEventListener('pointerdown', interact, true);
         window.removeEventListener('keydown', interact, true);
+        el.removeEventListener('atlas:interrupt', cancelAuto);   // a swap to the other scene reuses this layer element
         st.destroy();
       },
       pause() { away = true; flush(); cancelAuto(); },
       resume() { away = false; paint({ animate: false }); },   // re-measure: the field was hidden while a pending edit flushed
+    };
+  },
+};
+
+// The scene for the loaded model's tokenizer. Chosen at mount, and again on every 'config' and 'trace' event:
+// a preset switch while this scene is open swaps the implementation in the same element, and the story keeps
+// its place (the same step, by its name in the other model). A scene sees the layer's context, except that the
+// listeners it adds and the steps it declares are recorded here, so a swap can take them away.
+const SAME_STEP = { Text: 'Text', Ids: 'Ids', Vocabulary: 'Vocabulary', Characters: 'Words', Words: 'Characters', Subwords: 'Merges', Merges: 'Subwords' };
+
+export default {
+  mount(el, ctx) {
+    let inst = null, kind = null, away = false, dead = false, busy = false;
+    const kindNow = () => (ctx.state.tokenizer?.kind === 'bpe' ? 'bpe' : 'char');
+
+    function start(k) {
+      const own = [];
+      let names = [], index = 0;
+      const sub = Object.create(ctx, {
+        on: { value: (event, fn) => { const off = ctx.on(event, fn); own.push(off); return off; } },
+        setSteps: { value: (labels, onStep) => { names = labels; index = 0; ctx.setSteps(labels, (i) => { index = i; onStep(i); }); } },
+      });
+      const handle = (k === 'bpe' ? bpeScene : charScene).mount(el, sub) || {};
+      kind = k;
+      inst = { handle, own, names: () => names, index: () => index };
+      if (away) handle.pause?.();
+      return inst;
+    }
+
+    function unmount(i) {
+      try { i.handle.destroy?.(); } catch (err) { console.error(err); }
+      i.own.forEach((off) => off());
+    }
+
+    function swap(k) {
+      const prev = inst;
+      const was = prev ? SAME_STEP[prev.names()[prev.index()]] : undefined;
+      if (prev) unmount(prev);
+      inst = null;                            // if the new scene fails to mount, nothing is left to destroy twice
+      const next = start(k);
+      const at = was === undefined ? -1 : next.names().indexOf(was);
+      if (at >= 0) ctx.setStep(at);           // the same step, and it ends the new scene's own walk (the reader is in control)
+    }
+
+    function sync() {
+      if (dead || busy) return;
+      const k = kindNow();
+      if (k === kind) return;
+      busy = true;                            // a swap may flush a pending edit, which emits 'trace' again
+      try { swap(k); } finally { busy = false; }
+    }
+
+    const offTrace = ctx.on('trace', sync);
+    const offConfig = ctx.on('config', sync);
+    inst = start(kindNow());
+    return {
+      destroy() {
+        dead = true;
+        offTrace();
+        offConfig();
+        if (inst) unmount(inst);
+        inst = null;
+      },
+      pause() { away = true; inst?.handle.pause?.(); },
+      resume() { away = false; inst?.handle.resume?.(); },
     };
   },
 };
