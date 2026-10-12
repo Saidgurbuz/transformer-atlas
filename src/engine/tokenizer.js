@@ -8,6 +8,7 @@ export function makeTokenizer(vocab = DEFAULT_VOCAB) {
   const chars = Array.from(vocab);
   const index = new Map(chars.map((c, i) => [c, i]));
   return {
+    kind: 'char',
     vocab: chars,
     size: chars.length,
     // Returns {ids, dropped}: characters outside the vocabulary are skipped and reported.
@@ -24,4 +25,13 @@ export function makeTokenizer(vocab = DEFAULT_VOCAB) {
     // Printable label for a token chip (space shown as a visible glyph).
     label(id) { const c = chars[id]; return c === ' ' ? '␣' : c ?? '?'; },
   };
+}
+
+export { makeBPETokenizer } from './bpe.js';
+
+/** Tokenizer from a preset: {type: 'bpe', vocab, merges, special} or a character string. */
+import { makeBPETokenizer as _bpe } from './bpe.js';
+export function tokenizerFromPreset(data) {
+  if (data.tokenizer?.type === 'bpe') return _bpe(data.tokenizer);
+  return makeTokenizer(data.vocab);
 }
