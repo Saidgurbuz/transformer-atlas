@@ -191,3 +191,5 @@
   .atlas-tools { align-self: flex-end; }
   .atlas-tool { width: 30px; height: 30px; }
 }
+/* hidden levels stay hidden even if a component sets visibility on its own elements */
+.atlas-layer.hidden, .atlas-layer.hidden * { visibility: hidden !important; }
