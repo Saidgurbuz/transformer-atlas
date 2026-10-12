@@ -3,14 +3,16 @@
 // One left-to-right row of real matrices, every cell at least 4 units and never scaled below that
 // for any sequence the trace allows. A head wider than 17 columns draws its first 12 and last 4 with
 // an ellipsis column, as vec() does, and keeps the true indices in data-cell and in the maths.
-// Each stage is a zoom target. Below the row: the step's equation, then four measurements of this
-// head's pattern and one line that reads them (faded in from softmax on, where the pattern exists).
+// Each stage is a zoom target. Under the row sit the step name, the step's equation with its check,
+// and the caption; from softmax on, a readout of this head's pattern sits in the side column.
+// The dot product and the weighted sum accumulate on screen, and softmax morphs the masked scores
+// into the pattern. A head or layer that the config no longer has gets a note, not numbers.
 // Structure and restraint follow softmax.js; the shared parts come from the kit.
 import { stage2d, sceneHeader, sceneCaption, tokenPicker, mat, op, texLabel, appear, checkBadge, rangeOf, useStyle, MOTION, ZONES } from '../kit.js';
-import { h, fmt, num, texHTML, sliceOf, clamp, reducedMotion } from '../../ui/index.js';
+import { h, fmt, num, texHTML, sliceOf, clamp, diverging, reducedMotion } from '../../ui/index.js';
 import { infer, mulberry32 } from '../../engine/index.js';
 
-const STEPS = ['Queries and keys', 'Scores', 'Scale by 1/√d_h', 'Mask', 'Softmax', 'Mix with values'];
+const STEPS = ['Queries and keys', 'Scores', 'Scale by 1/√dₕ', 'Mask', 'Softmax', 'Mix with values'];
 const OP = 48;          // operator node size (design units)
 const OP_GAP = 60;      // room for an operator between two matrices: 48 plus clearance
 const CHAIN_GAP = 144;  // room for the stacked stage pills between S and A
@@ -22,13 +24,18 @@ const MAX_SPAN = 256;   // the tallest column of cells: a cell never grows past 
 const MIN_CELL = 4, MAX_CELL = 14;   // design units; the row keeps MIN_CELL up to about 77 tokens
 const ZX = ZONES.hero.x, ZW = ZONES.hero.w, CX = ZX + ZW / 2;   // the hero's centre line (x = 800)
 const PILL_Y = [30, 62, 94];   // the stage pills hang below the flow arrow: their centres relative to MID_Y
-const BAND_GAP = 30, EQ_H = 48, GROUP_GAP = 30;   // pipeline to equation; equation box; air above the metrics
+const BAND_GAP = 30;                                    // pipeline to the lower band
+const LEFT_X = ZONES.caption.x, LEFT_W = 1000;          // lower band, left: step name, equation, caption
+const STEP_H = 20, EQ_DY = 30, EQ_H = 96, CAP_DY = 24;  // name; equation box top below the band top; box height (a display fraction and its subscripts); caption below the box
+const SIDE_X = ZONES.side.x, SIDE_W = ZONES.side.w;     // lower band, right: the readout (from softmax on)
+const SWEEP_MS = 46, SWEEP_BUDGET = 1100;               // a sweep ticks every SWEEP_MS and ends within SWEEP_BUDGET (lm-head's pace)
 const ANCHOR = { tl: '0 0', c: '-50% -50%', tc: '-50% 0', bc: '-50% -100%' };
 const probes = new WeakMap();   // model -> Map(config|layer|head -> induction probe result)
 
 useStyle('head', `
 .hd-pipe > * { transition: opacity .6s cubic-bezier(.65,0,.35,1); }
 .hd-pipe .is-dim { opacity: .22; }
+.hd-pipe .is-hidden { opacity: 0; pointer-events: none; }
 .hd-pipe .k-cell.hl { outline: 2px solid var(--accent); outline-offset: 1px; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); z-index: 1; }
 .hd-pipe .k-cell.hl-soft { outline: 2px solid color-mix(in srgb, var(--kind, var(--fg-3)) 50%, transparent); outline-offset: 1px; }
 .hd-pipe .k-row-band.soft { border-color: color-mix(in srgb, var(--kind, var(--fg-3)) 55%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--kind, var(--fg-3)) 14%, transparent); }
@@ -45,30 +52,41 @@ useStyle('head', `
 .hd-pill sub { font-size: 10px; }
 .hd-pill:hover { border-color: var(--line-strong); color: var(--fg); }
 .hd-pill.is-on { border-color: var(--c-attn); color: var(--fg); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-attn) 24%, transparent); }
-.hd-eq { display: flex; align-items: center; gap: 18px; height: 48px; font-size: 24px; color: var(--fg); white-space: nowrap; }
+.hd-step { height: ${STEP_H}px; font: 600 16px/${STEP_H}px var(--font-mono); color: var(--c-attn); white-space: nowrap; }
+.hd-eq { box-sizing: border-box; width: ${LEFT_W}px; height: ${EQ_H}px; display: flex; align-items: center; gap: 18px; padding: 0 20px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); box-shadow: 0 8px 22px rgba(0,0,0,.08); font-size: 24px; color: var(--fg); white-space: nowrap; }
 .hd-eq .katex-display { margin: 0; }
-.hd-metrics { display: flex; flex-direction: column; gap: 8px; width: 1380px; opacity: 0; transition: opacity .6s cubic-bezier(.65,0,.35,1); }
-.hd-metrics.on { opacity: 1; }
-.hd-chips { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-.hd-chip { min-width: 0; padding: 8px 14px 9px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 82%, transparent); border: 1px solid var(--line); box-shadow: 0 8px 20px rgba(0,0,0,.10); }
-.hd-chip-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
-.hd-chip-k { flex: 1 1 auto; min-width: 0; font: 600 12px/1.2 var(--font-mono); color: var(--fg-3); text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.hd-chip-v { flex: none; font: 650 18px/1.1 var(--font-mono); color: var(--fg); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.hd-bar { height: 3px; border-radius: 2px; background: var(--surface-2); margin-top: 7px; overflow: hidden; }
+.hd-eq .k-check { margin-left: auto; flex: none; }
+.hd-readout { box-sizing: border-box; width: ${SIDE_W}px; display: grid; gap: 12px; padding: 14px 16px 16px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); box-shadow: 0 8px 22px rgba(0,0,0,.08); opacity: 0; transition: opacity .6s cubic-bezier(.65,0,.35,1); }
+.hd-readout.on { opacity: 1; }
+.hd-chips { display: grid; gap: 12px; }
+.hd-chip { min-width: 0; }
+.hd-chip-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; min-width: 0; }
+.hd-chip-k { min-width: 0; font: 500 14px/1.3 var(--font-mono); color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hd-chip-v { flex: none; font: 650 17px/1.2 var(--font-mono); color: var(--fg); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hd-bar { height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--fg) 10%, transparent); margin-top: 6px; overflow: hidden; }
 .hd-bar i { display: block; height: 100%; border-radius: 2px; background: var(--c-attn); transition: width .6s cubic-bezier(.65,0,.35,1); }
-.hd-read { font-size: 19px; line-height: 1.4; color: var(--fg-2); white-space: nowrap; }
-.hd-read b { color: var(--fg); }
-@media (prefers-reduced-motion: reduce) { .hd-pipe > *, .hd-bar i, .hd-metrics { transition: none !important; } }
+.hd-read { font: 400 15px/1.45 var(--font-body); color: var(--fg-2); }
+.hd-read b { color: var(--fg); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .hd-pipe > *, .hd-bar i, .hd-readout { transition: none !important; } }
 `);
 
 const clamp01 = (v) => clamp(v, 0, 1);
 const pct = (v) => (v == null || !Number.isFinite(v) ? '—' : `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`);
 const col = (rows, c) => Array.from({ length: rows }, (_, r) => [r, c]);   // the cells of column c
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 // The d_h columns drawn: every column up to 17, otherwise the first 12, an ellipsis (-1) and the last 4.
 function dimCols(dh) {
   if (dh <= HEAD_KEEP + TAIL_KEEP + 1) return Array.from({ length: dh }, (_, i) => i);
   return [...Array.from({ length: HEAD_KEEP }, (_, i) => i), -1, ...Array.from({ length: TAIL_KEEP }, (_, i) => dh - TAIL_KEEP + i)];
+}
+
+// The story steps for this config. A step that does nothing here says so in its name.
+function stepNames(cfg) {
+  const names = [...STEPS];
+  if (!cfg.attn_scale) names[2] = cfg.pos_encoding === 'alibi' ? 'ALiBi bias' : 'Scale (off)';
+  if (cfg.mask === 'none') names[3] = 'Mask (none)';
+  return names;
 }
 
 // Probe tokens for the induction score: L distinct tokens when the vocabulary has them, so the one
@@ -158,9 +176,9 @@ function chipsFor(met, ind) {
       'Mean weight a query puts on the token right before it: A[i, i−1], averaged over queries i ≥ 1.'),
     metricChip('Position 0', met ? pct(met.pos0) : none, met?.pos0,
       'Mean weight on the first token: A[i, 0], averaged over queries i ≥ 1. A large value is the attention-sink pattern.'),
-    metricChip(ind ? `Induction · L ${ind.L} ${kind}` : 'Induction', ind ? pct(ind.score) : none, ind?.score,
+    metricChip(ind ? `Induction · ${ind.L} ${kind} tokens` : 'Induction', ind ? pct(ind.score) : none, ind?.score,
       ind ? `Weight on the token after the earlier copy of the current token, averaged over the second copy of ${ind.L} ${kind} tokens repeated once.` : 'The probe needs a block size of at least 4.'),
-    metricChip(met ? `Entropy · uniform ${met.uni.toFixed(2)}` : 'Entropy', met ? `${met.ent.toFixed(2)} nats` : none, met ? met.ent / Math.max(met.uni, 1e-9) : undefined,
+    metricChip(met ? `Entropy · uniform ${met.uni.toFixed(2)} nats` : 'Entropy', met ? met.ent.toFixed(2) : none, met ? met.ent / Math.max(met.uni, 1e-9) : undefined,
       'Mean over queries of −Σ A ln A, in nats. The bar is the ratio to the uniform value over the visible keys, the entropy of an even spread.'),
   ];
 }
@@ -185,7 +203,8 @@ export default {
   mount(el, ctx) {
     const st = stage2d(el);
     const { l, h: hd } = ctx.params;
-    let step = 0, built = null, drawn = false;
+    let step = 0, built = null, drawn = false, timers = [];
+    let names = stepNames(ctx.cfg);   // the story steps for the current config
     let x0 = 0, k = 1;   // the pipeline's placement on the canvas: local x maps to x0 + k·x
 
     // The menu's zoom targets for this head's keys follow the selected head: select this scene's head.
@@ -195,15 +214,34 @@ export default {
     const header = sceneHeader(st, { chips: [[`Layer ${l}`, 'resid'], [`Head ${hd}`, 'attn']], title: 'One attention head' });
     const picker = tokenPicker(st, ctx, { label: 'query', kind: 'attn' });
     const pipe = h('div', { class: 'hd-pipe' });
+    const stepLab = h('div', { class: 'hd-step' });
     const eqBox = h('div', { class: 'hd-eq' });
     const chipsEl = h('div', { class: 'hd-chips' });
     const readEl = h('div', { class: 'hd-read' });
-    const metrics = h('div', { class: 'hd-metrics' }, chipsEl, readEl);
+    const readout = h('div', { class: 'hd-readout' }, chipsEl, readEl);
     st.add(pipe, { x: 0, y: 0 });
-    st.add(eqBox, { x: ZX, y: 591 });
-    st.add(metrics, { x: ZX, y: 679 });
-    const cap = sceneCaption(st, {});
+    st.add(stepLab, { x: LEFT_X, y: 600 });
+    st.add(eqBox, { x: LEFT_X, y: 630 });
+    st.add(readout, { x: SIDE_X, y: 600 });
+    const cap = sceneCaption(st, { x: LEFT_X, y: 700, w: LEFT_W });   // only its element is used: capSet writes the text
     const flow = st.arrow({ x: 0, y: MID_Y }, { x: 1, y: MID_Y }, { kind: 'attn', width: 2.5 });   // S to A, placed in build()
+
+    // The caption cross-fades. A newer caption cancels a fade still running, so only the latest text is ever written.
+    let capText = null;
+    function capSet(html) {
+      if (html === capText) return;
+      capText = html;
+      if (reducedMotion()) { cap.el.innerHTML = html; return; }
+      cap.el.getAnimations().forEach((a) => a.cancel());
+      cap.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140 }).finished.then(() => {
+        if (html !== capText) return;
+        cap.el.innerHTML = html;
+        cap.el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: MOTION.easeOut });
+      }).catch(() => {});
+    }
+
+    const tokName = (i) => (ctx.label(i) === '␣' ? 'space' : ctx.label(i));   // the token at position i
+    const tok = (i) => `“<b>${esc(tokName(i))}</b>”`;
 
     // Place a node inside the pipeline (design units, local to the pipeline).
     function put(node, x, y, anchor = 'tl') {
@@ -215,12 +253,25 @@ export default {
       return node;
     }
 
+    function stopTimers() { timers.forEach(clearTimeout); timers = []; }
+
     function teardown() {
+      stopTimers();
       if (!built) return;
       Object.values(built.mats).forEach((m) => m.destroy());
       pipe.replaceChildren();
       built = null;
     }
+
+    /** Registers the story steps. Returns true when the names changed. */
+    function useSteps(labels) {
+      if (labels.join('|') === names.join('|')) return false;
+      names = labels;
+      ctx.setSteps(names, setStep);
+      return true;
+    }
+
+    function setStep(i) { step = i; paint(); }
 
     // Numbers for the query in view: its strongest key, the dot product, the masked row softmax.
     function derive(b) {
@@ -277,15 +328,25 @@ export default {
       }
     }
 
-    // One or two sentences per step, naming the real query token and its key.
-    function caption(b, d) {
-      const { dh, cfg } = b, qL = `“<b>${ctx.label(d.q)}</b>”`, jL = `“<b>${ctx.label(d.j)}</b>”`;
+    function showEq(b, d) {
+      const eq = equation(b, d);
+      eqBox.replaceChildren(h('div', { html: texHTML(eq.tex) }), ...(eq.check ? [eq.check] : []));
+    }
+
+    // One or two sentences per step, naming the real query and key by token and position.
+    function captionFor(b, d) {
+      const { dh, cfg } = b, { q, j } = d;
       switch (step) {
-        case 0:
-          return `Q and K are T × d<sub>h</sub> matrices. Row ${qL} of Q (position ${d.q}) and row ${jL} of K, its strongest key, are highlighted.`
-            + (b.elided ? ` d<sub>h</sub> = ${dh} is elided: the first 12 and last 4 columns are drawn; the maths uses all ${dh}.` : '');
+        case 0: {
+          const notes = [
+            cfg.pos_encoding === 'rope' ? 'Both are the rotated vectors (after RoPE).' : '',
+            b.gqa ? 'K and V rows are shared by the heads in this head’s group.' : '',
+            b.elided ? `The first ${HEAD_KEEP} and last ${TAIL_KEEP} of d<sub>h</sub> = ${dh} columns are drawn; the maths uses all ${dh}.` : '',
+          ].filter(Boolean);
+          return [`Q and K are T × d<sub>h</sub> matrices. Row ${tok(q)} (position ${q}) of Q and row ${tok(j)} (position ${j}) of K are highlighted: ${tok(j)} is the highest-weight key for ${tok(q)}, found in the softmax step.`, ...notes].join(' ');
+        }
         case 1:
-          return 'S = QKᵀ has one dot product for every query and key. The accent cell is the dot product of the two highlighted rows.';
+          return `S = QKᵀ has one dot product for every query and key. The accent cell is the dot product of ${tok(q)} (position ${q}) and ${tok(j)} (position ${j}), summed over the ${dh} entries of d<sub>h</sub>.`;
         case 2: {
           const first = cfg.attn_scale
             ? `Dividing by √d<sub>h</sub> = √${dh} = ${Math.sqrt(dh).toFixed(2)} keeps the dot products from growing with the head width, so softmax does not saturate.`
@@ -300,29 +361,112 @@ export default {
             sliding: `This config is sliding-window: a query sees itself and the ${cfg.window - 1} keys before it`,
             prefix: `This config is prefix-LM: every query sees the first ${cfg.prefix_len} tokens, and the rest is causal`,
           }[cfg.mask] || 'The mask hides the keys a query may not see';
-          if (cfg.mask === 'none') return `${lead}. The mask pill opens its own scene.`;
-          return `${lead}. ${d.nMask ? `For ${qL}, ${d.nMask} of ${b.T} keys are hatched` : `For ${qL}, no key is hatched`}; the mask pill opens its own scene.`;
+          if (cfg.mask === 'none') return `${lead}.`;
+          const n = d.nMask;
+          return `${lead}. For ${tok(q)} (position ${q}), ${n ? `${n} of ${b.T} ${n === 1 ? 'key is' : 'keys are'} hatched` : 'no key is hatched'}.`;
         }
         case 4:
-          return `Softmax turns each row into weights: subtract the row maximum m for stability, exponentiate, then divide by the row sum. The row for ${qL} now adds up to ${fmt(d.rowSum, 2)}.`;
+          return `Softmax turns each row into weights: subtract the row maximum m for stability, exponentiate, then divide by the row sum. The row for ${tok(q)} (position ${q}) now adds up to ${fmt(d.rowSum, 2)}.`;
         default:
-          return 'Each output row is a weighted average of the value rows: ctx<sub>q</sub> = Σ<sub>j</sub> A<sub>qj</sub> V<sub>j</sub>. Concatenating the heads and applying W<sub>O</sub> comes next.';
+          return `Each output row is a weighted average of the value rows. For ${tok(q)} (position ${q}), ctx<sub>q</sub> = Σ<sub>j</sub> A<sub>qj</sub> V<sub>j</sub>, added one key at a time. Concatenating the heads and applying W<sub>O</sub> comes next.`;
       }
     }
 
-    // Stage visibility, the morphing scores matrix, the highlights, the equation and the caption for this step.
-    function paint() {
-      if (!built) return;
-      const b = built, m = b.mats, d = derive(b);
+    /** One row of a head-width matrix, drawn columns only: get(c) is the value at true column c. */
+    function paintRow(node, b, r, get) {
+      for (let cc = 0; cc < b.nd; cc++) {
+        const c = b.dc[cc];
+        if (c >= 0) node.cellEl(r, cc).style.background = diverging(get(c) / b.RO);
+      }
+    }
 
-      // Stages: finished ones stay, later ones are dimmed; a matrix fills in when its stage is reached.
+    /** Softmax: each cell starts as its masked score (hatched where masked) and takes its weight over the cell's colour transition. */
+    function morphTo(b) {
+      const { T, M, A, R, mats } = b, node = mats.A;
+      if (!reducedMotion()) {
+        for (let r = 0; r < T; r++) for (let c = 0; c < T; c++) {
+          const v = M[r * T + c], cell = node.cellEl(r, c);
+          cell.style.transition = 'none';
+          cell.style.background = v === -Infinity ? 'transparent' : diverging(v / R);
+          cell.classList.toggle('masked', v === -Infinity);
+        }
+        void node.offsetWidth;   // the starting colours are applied before the transition runs
+        node.querySelectorAll('.k-cell').forEach((cell) => { cell.style.transition = ''; });
+      }
+      node.update(A, { range: 1 });
+    }
+
+    /** One accent focus per step. Earlier operands (the query row, the key row) use the component colour. */
+    function highlightFor(b, d) {
+      const m = b.mats;
+      for (const node of Object.values(m)) { clearCells(node); setRow(node, null); }
+      if (step === 0) { setRow(m.Q, d.q, true); setRow(m.K, d.j, false); }
+      if (step === 1) { mark(m.S, [[d.q, d.j]], 'hl'); setRow(m.Q, d.q, false); setRow(m.K, d.j, false); }
+      if (step === 2 || step === 3) setRow(m.S, d.q, true);
+      if (step === 4) setRow(m.A, d.q, true);
+      if (step === 5) { mark(m.O, [[d.q, 0]], 'hl'); setRow(m.O, d.q, false); setRow(m.A, d.q, false); mark(m.V, col(b.T, 0), 'hl-soft'); }
+    }
+
+    /** Step 1: the accent runs across the drawn entries of Q's row and K's row, and the equation carries the running sum. */
+    function sweepDot(b, d) {
+      const { dh, dc, mats, Q, K } = b, q = d.q, j = d.j;
+      const pre = new Float64Array(dh);
+      let acc = 0;
+      for (let c = 0; c < dh; c++) { acc += Q[q * dh + c] * K[j * dh + c]; pre[c] = acc; }
+      const ticks = [];
+      dc.forEach((c, i) => { if (c >= 0) ticks.push({ c, i }); });
+      const per = Math.min(SWEEP_MS, Math.floor(SWEEP_BUDGET / Math.max(1, ticks.length)));
+      let n = 0, lit = [];
+      const tick = () => {
+        lit.forEach((cell) => cell.classList.remove('hl'));
+        lit = [];
+        if (n >= ticks.length) { highlightFor(b, d); showEq(b, d); return; }
+        const { c, i } = ticks[n++];
+        lit = [mats.Q.cellEl(q, i), mats.K.cellEl(j, i)].filter(Boolean);
+        lit.forEach((cell) => cell.classList.add('hl'));
+        eqBox.replaceChildren(h('div', { html: texHTML(`\\sum_{c=0}^{${c}} Q_{${q},c}\\,K_{${j},c} = ${num(pre[c], 2)}`) }));
+        timers.push(setTimeout(tick, per));
+      };
+      tick();
+    }
+
+    /** Step 5: the value rows are weighted by this row's attention and added up one key at a time; output row q fills in. */
+    function sweepMix(b, d) {
+      const { T, dh, A, V, O, mats } = b, q = d.q;
+      const part = new Float64Array(dh);
+      const per = Math.min(SWEEP_MS, Math.floor(SWEEP_BUDGET / Math.max(1, T)));
+      let j = 0, lit = null;
+      const tick = () => {
+        if (j >= T) { paintRow(mats.O, b, q, (c) => O[q * dh + c]); highlightFor(b, d); showEq(b, d); return; }
+        const w = A[q * T + j];
+        for (let c = 0; c < dh; c++) part[c] += w * V[j * dh + c];
+        paintRow(mats.O, b, q, (c) => part[c]);
+        lit?.classList.remove('hl');
+        lit = mats.A.cellEl(q, j);   // the weight this key contributes
+        lit?.classList.add('hl');
+        setRow(mats.V, j, true);
+        eqBox.replaceChildren(h('div', { html: texHTML(`\\text{ctx}_{${q},0} = \\sum_{k \\le ${j}} A_{${q},k}\\,V_{k,0} = ${num(part[0], 2)}`) }));
+        j++;
+        timers.push(setTimeout(tick, per));
+      };
+      tick();
+    }
+
+    // Stage visibility, the morphing scores matrix, the highlights, the equation and the caption for this step.
+    function paint({ animate = true } = {}) {
+      if (!built) return;
+      stopTimers();
+      const b = built, m = b.mats, d = derive(b), live = animate && !reducedMotion();
+
+      // Stages: finished ones stay, later ones are dimmed; a matrix fills in when its stage is first reached.
       for (const it of b.staged) {
-        it.node.classList.toggle('is-dim', it.k > step);
+        if (it.hide) it.node.classList.toggle('is-hidden', step < it.k);   // the pattern does not exist before softmax
+        else it.node.classList.toggle('is-dim', it.k > step);
         if (it.pill) it.node.classList.toggle('is-on', it.k === step);
         if (it.wave && it.k === step && !b.seen.has(it.node)) { b.seen.add(it.node); wave(it.node); }
       }
-      // The measurements describe the finished pattern: they appear from softmax on.
-      metrics.classList.toggle('on', step >= 4);
+      flow.setOpacity(step >= 4 ? 1 : 0.35);      // S to A is lit once the pattern exists
+      readout.classList.toggle('on', step >= 4);  // the measurements describe the finished pattern
 
       // The scores matrix morphs in place: S, then the scaled (or biased) scores, then the masked ones.
       const src = step <= 1 ? 'S' : step === 2 ? 'Sc' : 'M';
@@ -331,23 +475,47 @@ export default {
         m.S.update(src === 'S' ? b.S : src === 'Sc' ? b.Sc : b.M, { range: b.R });
         m.S.dataset.trace = b.keys[src];
       }
+      const sTeX = step <= 1 ? `S_{${hd}}` : step === 2 ? `\\hat S_{${hd}}` : `\\text{masked}_{${hd}}`;
+      if (b.sTeX !== sTeX) { b.sTeX = sTeX; b.tagS.innerHTML = texHTML(sTeX); }
 
-      // One accent focus per step. Earlier operands (the query row, the key row) use the component colour.
-      for (const node of Object.values(m)) { clearCells(node); setRow(node, null); }
-      if (step === 0) { setRow(m.Q, d.q, true); setRow(m.K, d.j, false); }
-      if (step === 1) { mark(m.S, [[d.q, d.j]], 'hl'); setRow(m.Q, d.q, false); setRow(m.K, d.j, false); }
-      if (step === 2 || step === 3) setRow(m.S, d.q, true);
-      if (step === 4) setRow(m.A, d.q, true);
-      if (step === 5) { mark(m.O, [[d.q, 0]], 'hl'); setRow(m.O, d.q, false); setRow(m.A, d.q, false); mark(m.V, col(b.T, 0), 'hl-soft'); }
+      // Softmax: the pattern morphs from the masked scores into the weights. Elsewhere it holds its values.
+      if (step === 4 && live) morphTo(b); else m.A.update(b.A, { range: 1 });
+      // The weighted sum: the output row starts empty and fills during its sweep; otherwise it is final.
+      paintRow(m.O, b, d.q, step === 5 && live ? () => 0 : (c) => b.O[d.q * b.dh + c]);
 
-      const eq = equation(b, d);
-      eqBox.replaceChildren(h('div', { html: texHTML(eq.tex) }), ...(eq.check ? [eq.check] : []));
-      cap.set(caption(b, d));
+      highlightFor(b, d);
+      stepLab.textContent = `${step + 1} of ${names.length} · ${names[step]}`;
+      showEq(b, d);
+      capSet(captionFor(b, d));
+      if (live && step === 1) sweepDot(b, d);
+      if (live && step === 5) sweepMix(b, d);
+    }
+
+    /** A note in place of the pipeline: the head or layer is not in this model, or there is no forward pass yet. */
+    function showNote(text) {
+      teardown();
+      useSteps(['Not in this model']);
+      flow.setOpacity(0);
+      stepLab.textContent = '';
+      eqBox.replaceChildren();
+      chipsEl.replaceChildren();
+      readEl.textContent = '';
+      readout.classList.remove('on');
+      eqBox.style.display = 'none';
+      header.setSub('');
+      capSet(text);
+      st.move(cap.el, LEFT_X, MID_Y);
     }
 
     function build() {
-      teardown();
       const state = ctx.state, cfg = ctx.cfg, model = state.model, tr = state.trace;
+      teardown();
+      // The atlas redirects a node that the config removes, but a head can still be on screen for a moment,
+      // and the trace may be rebuilt first: never read a head or layer that the config does not have.
+      if (l >= cfg.n_layer || hd >= cfg.n_head) {
+        showNote(l >= cfg.n_layer ? `Layer ${l} is not in this model (n_layer = ${cfg.n_layer}).` : `Head ${hd} is not in this model (n_head = ${cfg.n_head}).`);
+        return;
+      }
       const T = state.ids.length, dh = cfg.d_model / cfg.n_head;
       const P = `L${l}.attn.`;
       const rope = cfg.pos_encoding === 'rope', alibi = cfg.pos_encoding === 'alibi', gqa = cfg.n_kv_head < cfg.n_head;
@@ -362,6 +530,8 @@ export default {
         A: P + 'probs',
         O: P + 'ctx',
       };
+      if (!tr || !Object.values(keys).every((key) => tr[key])) { showNote('No forward pass for this head yet.'); return; }
+      const changed = useSteps(stepNames(cfg));
       const hs = (key) => sliceOf(tr[key], hd).data;   // this head, flat row-major
       const Q = hs(keys.Q), K = hs(keys.K), V = hs(keys.V), S = hs(keys.S), Sc = hs(keys.Sc), M = hs(keys.M), A = hs(keys.A), O = hs(keys.O);
       const R = rangeOf(S);   // one colour scale for the scores through every step
@@ -373,6 +543,7 @@ export default {
         for (let r = 0; r < T; r++) for (let cc = 0; cc < nd; cc++) out[r * nd + cc] = dc[cc] < 0 ? 0 : src[r * dh + dc[cc]];
         return out;
       };
+      const RO = rangeOf(narrow(O));   // the output row's colour scale, shared by its partial sums
 
       // Geometry. The row holds four d_h-wide matrices (Q, K, V, O), two T-wide ones (S, A), four
       // operators and the chain between S and A. The cell is the largest size from 4 to 14 units whose
@@ -416,7 +587,7 @@ export default {
       const mS = mk(S, T, T, { kind: 'attn', range: R, trace: keys.S, cellOf: cellT });
       const mA = mk(A, T, T, { kind: 'attn', mode: 'sequential', range: 1, trace: keys.A, cellOf: cellT });
       const mV = narrowMat(V, { kind: 'v', trace: keys.V });
-      const mO = narrowMat(O, { kind: 'v', trace: keys.O });
+      const mO = narrowMat(O, { kind: 'v', trace: keys.O, range: RO });
       // Clicking a row of Q or K selects that token. The scores, the softmax and the mix are zoom targets.
       [mQ, mK].forEach((m) => m.addEventListener('click', (e) => { const cell = e.target.closest('[data-cell]'); if (cell) ctx.store.select({ token: Number(cell.dataset.cell.split(',')[0]) }); }));
       mS.classList.add('hd-zoom'); mS.dataset.node = `scores.${l}.${hd}`;
@@ -458,15 +629,15 @@ export default {
       flow.path.setAttribute('d', `M${a0.x},${a0.y} L${a1.x},${a1.y}`);
       if (!drawn) { drawn = true; flow.draw(MOTION.move); }
 
-      // Which step lights which stage. Tags dim with their matrix.
+      // Which step lights which stage. Tags dim with their matrix. The pattern is hidden until softmax.
       const staged = [
         { node: mQ, k: 0, wave: true }, { node: tQ, k: 0 },
         { node: mK, k: 0, wave: true }, { node: tK, k: 0 }, { node: opQK, k: 0 },
         { node: opEqS, k: 1 }, { node: mS, k: 1, wave: true }, { node: tS, k: 1 },
         { node: pScale, k: 2, pill: true }, { node: pMask, k: 3, pill: true }, { node: pSoft, k: 4, pill: true },
-        { node: mA, k: 4, wave: true }, { node: tA, k: 4 },
+        { node: mA, k: 4, hide: true }, { node: tA, k: 4 },
         { node: opAV, k: 5 }, { node: mV, k: 5, wave: true }, { node: tV, k: 5 },
-        { node: opEqO, k: 5 }, { node: mO, k: 5, wave: true }, { node: tO, k: 5 },
+        { node: opEqO, k: 5 }, { node: mO, k: 5 }, { node: tO, k: 5 },
       ];
 
       // Measurements on the real pattern (queries 1 … T−1), and the one line that reads them.
@@ -478,39 +649,44 @@ export default {
       readEl.innerHTML = rest ? `<b>${lead}</b>: ${rest}` : `<b>${text}</b>`;
       header.setSub(`Layer ${l}, head ${hd} on ${T} token${T === 1 ? '' : 's'}: each query scores the keys it may see, turns the scores into weights and mixes the values.`);
 
-      // The lower band follows the pipeline and clears the stage pills that hang below the arrow: the
-      // equation, then the measurements, with air between the groups. The caption keeps its zone unless
-      // the band reaches it (only beyond 64 tokens).
+      // The lower band follows the pipeline and clears the stage pills that hang below the arrow: the step name
+      // and equation on the left, the caption under them, and the readout on the right.
       const pipeBottom = MID_Y + (bS.h * k) / 2, pillBottom = MID_Y + PILL_Y[2] + 14;
       const bandY = Math.max(pipeBottom + BAND_GAP, pillBottom + 10);
-      st.move(eqBox, ZX, bandY);
-      st.move(metrics, ZX, bandY + EQ_H + GROUP_GAP);
-      st.move(cap.el, ZONES.caption.x, Math.max(ZONES.caption.y, bandY + EQ_H + GROUP_GAP + metrics.offsetHeight + 28));
+      st.move(stepLab, LEFT_X, bandY);
+      eqBox.style.display = '';
+      st.move(eqBox, LEFT_X, bandY + EQ_DY);
+      st.move(cap.el, LEFT_X, bandY + EQ_DY + EQ_H + CAP_DY);
+      st.move(readout, SIDE_X, bandY);
 
       built = {
-        T, dh, cfg, R, keys, staged, shown: 'S', seen: new Set(), elided,
-        slope: 2 ** (-8 * (hd + 1) / cfg.n_head),
+        T, dh, cfg, R, RO, keys, staged, shown: 'S', seen: new Set(), elided, gqa, rope,
+        dc, nd, slope: 2 ** (-8 * (hd + 1) / cfg.n_head), sTeX: null, tagS: tS.querySelector('.k-tex'),
         Q, K, V, S, Sc, M, A, O,
         mats: { Q: mQ, K: mK, S: mS, A: mA, V: mV, O: mO },
       };
-      paint();
+      if (changed) ctx.setStep(clamp(step, 0, names.length - 1)); else paint();
     }
 
-    function setStep(i) { step = i; paint(); }
-    ctx.setSteps(STEPS, setStep);
+    ctx.setSteps(names, setStep);
     build();
-    appear([header.el, picker.el, eqBox], { stagger: MOTION.stagger });
+    appear([header.el, picker.el, stepLab, eqBox], { stagger: MOTION.stagger });
 
     // Auto-advance the first time the scene is shown, so it explains itself.
     let auto = setTimeout(function next() {
-      if (step < STEPS.length - 1) { ctx.setStep(step + 1); auto = setTimeout(next, MOTION.step); }
+      if (step < names.length - 1) { ctx.setStep(step + 1); auto = setTimeout(next, MOTION.step); }
     }, 900);
-    el.addEventListener('pointerdown', () => clearTimeout(auto), { once: true });
+    const stopAuto = () => { clearTimeout(auto); auto = null; };
+    el.addEventListener('pointerdown', stopAuto, { once: true });
+    el.addEventListener('atlas:interrupt', stopAuto, { once: true });
 
-    const offs = [ctx.on('trace', build), ctx.on('select', paint)];
+    const offs = [ctx.on('trace', () => build()), ctx.on('select', () => paint())];
     return {
+      pause() { stopAuto(); stopTimers(); },               // hidden behind a child scene: nothing keeps running
+      resume() { if (built) paint({ animate: false }); },  // shown again: the final state, without a replay
       destroy() {
-        clearTimeout(auto);
+        stopAuto();
+        stopTimers();
         offs.forEach((f) => f());
         teardown();
         st.destroy();

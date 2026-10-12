@@ -1,7 +1,7 @@
 // LM head: how a vector becomes a guess for the next token. For the selected position t, its final
 // vector h_t is dotted with every row of W_U, giving one logit per vocabulary entry. Softmax turns the
-// logits into probabilities. The next input token is highlighted with its probability and its loss,
-// and the mean loss and perplexity are shown over the sequence. Steps: final vector, dot with every
+// logits into probabilities. The next input token is highlighted, and its probability and loss are in the
+// caption. The mean loss and perplexity are shown over the sequence. Steps: final vector, dot with every
 // token, logits, probabilities. The probability bars are the zoom target into sampling.
 // Structure follows src/atlas/scenes/softmax.js; shared parts come from kit.js.
 //
@@ -13,25 +13,26 @@ import { h, fmt, num, texHTML, clamp, diverging, sequential, onThemeChange, redu
 
 const STEPS = ['Final vector', 'Dot with every token', 'Logits', 'Probabilities'];
 
-// Geometry. Columns are 5 units wide with a 1-unit gap (pitch 6). Rows have pitch 12 up to 32 rows;
-// beyond that the rows share ROWS_SPAN units so the plate stays on the canvas.
+// Geometry. Columns are 5 units wide with a 1-unit gap (pitch 6). Rows have pitch 11 up to 32 rows;
+// beyond that the rows share ROWS_SPAN units so the plate keeps its height.
 const CELL_W = 5, COL_GAP = 1, ELL_W = 12;
-const ROW_GAP = 2, PITCH_MAX = 12, ROWS_SPAN = 384;
+const ROW_GAP = 2, PITCH_MAX = 11, ROWS_SPAN = 352;
 const PAD = 10, LABEL_W = 30, LABEL_GAP = 8, GUTTER = LABEL_W + LABEL_GAP;
 const MAX_COLS = 64, MAX_ROWS = 40;              // longer axes: first entries, an ellipsis, the last 4
 const TRACK_W = 290, VAL_W = 64, VAL_GAP = 10;
 const TRACK_X = GUTTER;                          // where the bar track starts inside the bar panel
 const TILT = 12;                                 // degrees: W_U is a tilted plane, hinged at its top edge
-const LABEL_CLEAR = 14;                          // a probability is written only if its row is this far from the last one
+const PERSPECTIVE = 2200;                        // px: a long lens keeps the tilted bottom corners near the plate's own width
+const LABEL_FIT = 0.8;                           // two value labels may sit on adjacent rows when pitch >= LABEL_FIT x the value size
 
 // Placement on the 10-unit grid (design units)
 const BODY_X = 110, CELLS_X = BODY_X + 1 + PAD + GUTTER;     // first column of W_U and h_t: x 159
 const H_Y = 260, H_H = 20, H_BOT = H_Y + H_H;               // the h_t strip: 260 .. 280
 const OP_D = 48, OP_CY = 324, OP_TOP = OP_CY - OP_D / 2, OP_BOT = OP_CY + OP_D / 2;   // the times node: 300 .. 348
-const PLATE_Y = 368;                                         // the W_U plate top (772 bottom at 32 rows)
-const PROB_X = 600, PROB_Y = 260, PROB_W = 420, PROB_H = 512;// bars: logits, then probabilities
+const PLATE_Y = 368;                                         // the W_U plate top; 32 rows end near 745, 55 above the caption
+const PROB_X = 600, PROB_Y = 260, PROB_W = 420, PROB_H = 500;// bars: logits, then probabilities; the panel ends at 760
 const SM_X = 1094, SM_Y = 570, SM_D = 64;                    // softmax node, right of the bars
-const SIDE_X = 1180, SIDE_Y = 260, CAP_Y = 800;   // below the plate's shadow; two lines end near 857
+const SIDE_X = 1180, SIDE_Y = 260, CAP_Y = 800;              // clear of the plate and its shadow; two lines end near 857
 const SWEEP_TRANS = 240, MORPH_TRANS = 600, SWEEP_MS = 46, SWEEP_BUDGET = 1100;
 const ZOOM_MS = 800;                             // the zoom into this scene takes about 760 ms
 
@@ -39,12 +40,14 @@ useStyle('lm-head', `
 .lh-body { position: relative; padding: ${PAD}px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 72%, transparent);
   border: 1px solid color-mix(in srgb, var(--c-head) 40%, transparent);
   box-shadow: 0 14px 34px rgba(0, 0, 0, .16), 0 2px 0 color-mix(in srgb, var(--c-head) 22%, transparent);
-  transform: perspective(1100px) rotateX(${TILT}deg); transform-origin: 50% 0%; transition: opacity .4s ease; }
+  transform: perspective(${PERSPECTIVE}px) rotateX(${TILT}deg); transform-origin: 50% 0%; transition: opacity .4s ease; }
 .lh-body.dim { opacity: .35; }
 .lh-row { display: flex; align-items: center; height: var(--lh-ch, 10px); }
 .lh-row + .lh-row { margin-top: ${ROW_GAP}px; }
 .lh-row.ell .lh-lab { color: var(--fg-3); }
 .lh-lab { flex: none; width: ${LABEL_W}px; margin-right: ${LABEL_GAP}px; text-align: right; font: 600 var(--lh-fs, 15px)/var(--lh-ch, 10px) var(--font-mono); color: var(--fg-2); white-space: nowrap; }
+.lh-body .lh-lab { transition: opacity .4s ease; }
+.lh-body.quiet .lh-lab { opacity: 0; }
 .lh-cells { display: flex; gap: ${COL_GAP}px; }
 .lh-c { flex: none; width: ${CELL_W}px; height: var(--lh-ch, 10px); border-radius: 2px; transition: background-color .5s ease; }
 .lh-c.ell { width: ${ELL_W}px; background: none !important; font: 600 11px/var(--lh-ch, 10px) var(--font-mono); color: var(--fg-3); text-align: center; }
@@ -52,13 +55,13 @@ useStyle('lm-head', `
 .lh-hstrip { display: flex; gap: ${COL_GAP}px; height: ${H_H}px; border-radius: 4px; transition: opacity .4s ease; }
 .lh-hstrip .lh-c { height: ${H_H}px; }
 .lh-hstrip.focus { outline: 2px solid var(--accent); outline-offset: 6px; }
-.lh-hlab { font-size: 18px; color: var(--c-resid); text-align: right; white-space: nowrap; }
+.lh-hlab { font-size: 17px; color: var(--c-resid); text-align: right; white-space: nowrap; }
 .lh-hvals { font: 500 12px/14px var(--font-mono); color: var(--fg-3); white-space: nowrap; }
 .lh-op { transition: opacity .4s ease; }
 .lh-op.lh-sm { font-size: 12px; }
 .lh-arrow { transition: opacity .4s ease; }
-.lh-wlab { text-align: right; font: 600 15px/1.25 var(--font-mono); color: var(--c-head); white-space: nowrap; transition: opacity .4s ease; }
-.lh-wlab small { display: block; font: 500 12px/1.3 var(--font-mono); color: var(--fg-3); }
+.lh-wlab { text-align: left; font: 600 15px/1.25 var(--font-mono); color: var(--c-head); white-space: nowrap; transition: opacity .4s ease; }
+.lh-wlab small { display: block; font: 500 13px/1.3 var(--font-mono); color: var(--fg-3); }
 .lh-probs { position: absolute; width: ${PROB_W}px; height: ${PROB_H}px; border-radius: 14px; border: 1px solid transparent;
   transition: transform .25s ease, background-color .25s ease, border-color .25s ease, box-shadow .25s ease; }
 .lh-probs[data-node]:hover { transform: translateY(-3px); background: color-mix(in srgb, var(--surface) 80%, transparent);
@@ -82,18 +85,17 @@ useStyle('lm-head', `
 .lh-brow.next .lh-bar { outline: 2px solid var(--accent); outline-offset: 1px; }
 .lh-brow.next .lh-lab { color: var(--accent); }
 .lh-side { width: 340px; display: grid; gap: 12px; align-content: start; }
-.lh-step { font: 600 17px/1.2 var(--font-mono); color: var(--c-head); }
 .lh-eq-main { font-size: 22px; min-height: 52px; overflow-x: auto; }
 .lh-eq-live { font-size: 18px; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent); border: 1px solid var(--line); overflow-x: auto; }
-.lh-note { margin-top: 6px; font: 500 13px/1.4 var(--font-mono); color: var(--fg-3); }
+.lh-note { margin-top: 6px; font: 500 15px/1.4 var(--font-mono); color: var(--fg-3); }
 .lh-check-row { display: flex; flex-wrap: wrap; gap: 8px; min-height: 28px; }
 .lh-read { display: grid; gap: 8px; opacity: 0; transition: opacity .4s ease; }
 .lh-read-row { display: grid; grid-template-columns: 124px 1fr; gap: 10px; align-items: baseline; }
-.lh-read-k { font: 500 13px/1.3 var(--font-mono); color: var(--fg-3); }
+.lh-read-k { font: 500 15px/1.3 var(--font-mono); color: var(--fg-3); }
 .lh-read-v { font: 600 15px/1.3 var(--font-mono); color: var(--fg); }
-.lh-read-v small { font: 500 12px/1.3 var(--font-mono); color: var(--fg-3); margin-left: 4px; }
-.lh-warn { font: 500 13px/1.45 var(--font-body); color: var(--warn); }
-@media (prefers-reduced-motion: reduce) { .lh-bar, .lh-zero, .lh-c, .lh-bars, .lh-read, .lh-probs, .lh-body, .lh-op, .lh-arrow, .lh-wlab, .lh-hstrip { transition: none !important; } }
+.lh-read-v small { font: 500 13px/1.3 var(--font-mono); color: var(--fg-3); margin-left: 4px; }
+.lh-warn { font: 500 14px/1.45 var(--font-body); color: var(--warn); }
+@media (prefers-reduced-motion: reduce) { .lh-bar, .lh-zero, .lh-c, .lh-bars, .lh-read, .lh-probs, .lh-body, .lh-op, .lh-arrow, .lh-wlab, .lh-hstrip, .lh-lab { transition: none !important; } }
 `);
 
 // ------------------------------------------------------------------ pure helpers
@@ -108,13 +110,19 @@ function geometry(cols, nRows) {
   const pitch = Math.min(PITCH_MAX, Math.floor(ROWS_SPAN / Math.max(1, nRows)));
   const cellsW = cols.reduce((w, c, i) => w + (c < 0 ? ELL_W : CELL_W) + (i ? COL_GAP : 0), 0);
   return {
-    pitch, ch: pitch - ROW_GAP, fs: clamp(pitch + 3, 11, 15), vfs: clamp(pitch + 1, 11, 13),
+    pitch, ch: pitch - ROW_GAP, fs: clamp(pitch + 3, 12, 15), vfs: clamp(pitch + 1, 10, 13),
     cellsW, plateW: cellsW + 2 * PAD + GUTTER + 2,
   };
 }
 const maxAbs = (xs) => { let m = 0; for (const x of xs) m = Math.max(m, Math.abs(x)); return m || 1; };
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const pct = (p) => `${(p * 100).toFixed(1)}%`;
+const pct = (p) => `${(p * 100).toFixed(p < 0.1 ? 1 : 0)}%`;   // as head.js and softmax.js: one decimal below 10%, none above
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const minus = (s) => String(s).replace(/-/g, '−');              // a typographic minus for every hyphen in plain text
+/** Two decimals in a typographic minus. A value that rounds to zero reads 0.00, never -0.00 or an exponent. */
+const dec2 = (v) => minus(Math.abs(v) < 0.005 ? '0.00' : v.toFixed(2));
+/** A loss is never negative: a tiny one reads as below 0.01 rather than 0.00. */
+const lossTxt = (v) => (v > 0 && v < 0.005 ? '&lt; 0.01' : dec2(v));
 
 export default {
   mount(el, ctx) {
@@ -140,13 +148,13 @@ export default {
     const hVals = h('div', { class: 'lh-hvals' });
     st.add(hStrip, { x: CELLS_X, y: H_Y });
     st.add(hLab, { x: CELLS_X - 10, y: H_Y + H_H / 2, anchor: 'rc' });
-    st.add(hVals, { x: CELLS_X, y: H_BOT + 4 });
+    st.add(hVals, { x: CELLS_X, y: H_BOT + 8 });
 
-    // ------------------------------------------------------------ W_U plate (tilted) and its operation
+    // ------------------------------------------------------------ W_U plate (tilted), its tag and its operation
     const body = h('div', { class: 'lh-body' });
     st.add(body, { x: BODY_X, y: PLATE_Y });
-    const wLab = h('div', { class: 'lh-wlab' });
-    st.add(wLab, { x: CELLS_X - 40, y: OP_CY, anchor: 'rc' });
+    const wLab = h('div', { class: 'lh-wlab' });                           // the matrix tag sits above the plate, as in head.js
+    st.add(wLab, { x: BODY_X, y: PLATE_Y - LABEL_GAP, anchor: 'bl' });
     const timesOp = op('\\times', { kind: 'head', size: OP_D });
     timesOp.classList.add('lh-op');
     st.add(timesOp, { x: CELLS_X, y: OP_CY, anchor: 'c' });
@@ -168,7 +176,7 @@ export default {
     smOut.el.classList.add('lh-arrow');
 
     // ------------------------------------------------------------ right column: equations, checks, readout
-    const stepLab = h('div', { class: 'lh-step' });
+    const stepLab = h('div', { class: 'k-label', style: { textAlign: 'left' } });   // the kit's step title, as in softmax.js
     const eqMain = h('div', { class: 'lh-eq-main' });
     const eqLive = h('div', { class: 'lh-eq-live' });
     const eqCheck = h('div', { class: 'lh-check-row' });
@@ -243,14 +251,13 @@ export default {
       st.canvas.style.setProperty('--lh-vfs', `${geo.vfs}px`);
       const HX = CELLS_X + geo.cellsW / 2;                 // the operation sits over the centre of the columns
       st.move(timesOp, HX, OP_CY);
-      st.move(wLab, HX - 32, OP_CY);
       buildStrip();
       buildPlate(D);
       buildBars();
       buildFlow();
     }
 
-    const wTip = (v, c, D) => `W_U[${v}, ${c}] = ${fmt(D.W.data[v * D.d + c], 3)}\n${name(v)} · row ${v} · column ${c}\n${D.tied ? 'wte.weight, tied with W_E · model.py:241' : 'lm_head.weight · model.py:278'}`;
+    const wTip = (v, c, D) => `W_U[${v}, ${c}] = ${minus(fmt(D.W.data[v * D.d + c], 3))}\n${name(v)} · row ${v} · column ${c}\n${D.tied ? 'wte.weight, tied with W_E · model.py:241' : 'lm_head.weight · model.py:278'}`;
 
     function buildStrip() {
       hCells = [];
@@ -329,25 +336,23 @@ export default {
         el.style.transitionDelay = animate && step === 0 ? `${c * 12}ms` : '0ms';   // cascade on the first step
         el.dataset.cell = `${D.t},${c},0`;
       }
-      hVals.textContent = [0, 1, 2, 3].filter((c) => c < D.d).map((c) => fmt(D.hv[c], 2)).join('   ');
+      hVals.textContent = [0, 1, 2, 3].filter((c) => c < D.d).map((c) => dec2(D.hv[c])).join('   ');
     }
 
-    /** Probability rows that write their value: the top five and the next token, largest first, skipping any that would touch a value already written. */
+    /** The probability rows that write their value: the next input token first, so its row always carries its number,
+     *  then the top five by probability. Two labels may sit on adjacent rows when the rows are far enough apart. */
     function valueRows(D) {
       const rowOf = new Map(bars.map((b, i) => [b.v, i]));
-      const cands = new Set(D.rank.slice(0, 5));
-      if (D.hasNext) cands.add(D.next);
-      const want = [...cands].sort((a, b) => D.p[b] - D.p[a] || a - b);
-      const picked = new Set(), taken = [];
-      for (const v of want) {
+      const picked = [];
+      const take = (v, minP) => {
         const ri = rowOf.get(v);
-        if (ri === undefined || picked.has(ri)) continue;
-        if (D.p[v] < 0.0005) continue;
-        if (taken.some((r) => Math.abs(r - ri) * geo.pitch < LABEL_CLEAR)) continue;
-        picked.add(ri);
-        taken.push(ri);
-      }
-      return picked;
+        if (ri === undefined || picked.includes(ri) || D.p[v] < minP) return;
+        if (picked.some((r) => Math.abs(r - ri) * geo.pitch < LABEL_FIT * geo.vfs)) return;
+        picked.push(ri);
+      };
+      if (D.hasNext) take(D.next, 0);
+      for (const v of D.rank.slice(0, 5)) take(v, 0.0005);     // a value under 0.05% is not written
+      return new Set(picked);
     }
 
     /** mode: 'zero' (not computed), 'logit' (the first `upTo` rows are computed), 'prob' (softmax). */
@@ -378,7 +383,7 @@ export default {
           b.bar.style.left = `${on ? Math.min(x0, xOf(z)) : x0}px`;
           b.bar.style.width = `${on ? Math.abs(xOf(z) - x0) : 0}px`;
           b.bar.style.background = diverging(on ? z / D.zAbs : 0);
-          b.val.textContent = on ? fmt(z, 2) : '';
+          b.val.textContent = on ? dec2(z) : '';
           b.row.className = 'lh-brow';
         }
       });
@@ -444,22 +449,25 @@ export default {
       readout.style.opacity = step >= 3 ? '1' : '0';
     }
 
+    /** The caption for the current step. Position t is the last one when it has no next input token. */
     function captionFor(D) {
-      const { V, d, t } = D;
+      const { V, d, t, T, nScored } = D;
       if (step === 0) return D.preLN
         ? `The head reads one vector per position: h<sub>t</sub>, the state of position <b>${t}</b> after the final norm. Earlier tokens reach the prediction only through this vector.`
         : `The head reads one vector per position: h<sub>t</sub>, the output of the last block at position <b>${t}</b>. Earlier tokens reach the prediction only through this vector.`;
       if (step === 1) return `Each of the ${V} rows of W<sub>U</sub> is dotted with h<sub>t</sub>: one multiply-and-add over each of the ${d} entries, giving one score per vocabulary entry.`;
       if (step === 2) return 'These are the logits: raw scores that can be negative. Adding one constant to every logit changes nothing, so only their differences matter.';
-      if (D.hasNext) return `Softmax makes every score positive and rescales the row to sum to 1. The next input token <b>“${esc(tokName(t + 1))}”</b> gets <b>${pct(D.pNext)}</b>, so its loss is <b>${fmt(-Math.log(D.pNext), 2)} nats</b>.`;
-      return `Softmax makes every score positive and rescales the row to sum to 1. Position <b>${t}</b> is the last one, so no token in this text is scored.`;
+      const soft = 'Softmax makes every score positive and rescales the row to sum to 1.';
+      if (D.hasNext) return `${soft} The next input token <b>“${esc(tokName(t + 1))}”</b> gets <b>${pct(D.pNext)}</b>, so its loss is <b>${lossTxt(-Math.log(D.pNext))} nats</b>.`;
+      if (T === 1) return `${soft} Position 0 is the only token, so no token is scored.`;
+      return `${soft} Position <b>${t}</b> is the last one, so it predicts no input token. The mean loss still scores the other ${plural(nScored, 'position')}.`;
     }
 
     /** Equations, checks and caption for the current step. `v` is the row the sweep is on (step 1). */
     function renderSide(D, v = null) {
       const { t, z, p, hv, d, V, W } = D;
       const f = v ?? D.focus;
-      const K = (x) => num(x, 2);
+      const K = (x) => num(x, 2);                            // numbers inside the equations (KaTeX)
       let main = '', live = '', note = '', checks = [];
       if (step === 0) {
         const hNorm = D.preLN ? (D.rms ? '\\RMSNorm_f\\big(\\xres_t\\big)' : '\\LN_f\\big(\\xres_t\\big)') : `\\xres^{(${D.nLayer - 1})}_t`;
@@ -475,16 +483,15 @@ export default {
       } else if (step === 2) {
         main = `z_t = h_t\\,\\WU^{\\top} \\in \\R^{${V}}`;
         live = `\\max_v z_{t,v} = ${K(D.zMax)}`;
-        note = `largest: entry ${D.argmaxZ}, “${esc(name(D.argmaxZ))}” · smallest: ${K(D.zMin)}`;
+        note = `largest: entry ${D.argmaxZ}, “${esc(name(D.argmaxZ))}” · smallest: ${dec2(D.zMin)}`;
       } else {
         const zf = z[f], m = D.zMax;
         const pRe = Math.exp(zf - m) / D.Zs;
         const shifted = Math.abs(zf - m) < 5e-3 ? 0 : zf - m;   // no "-0.00" in the exponent
-        const sum = p.reduce((a, b) => a + b, 0);
         main = `p_{t,v} = \\frac{e^{z_{t,v}}}{\\sum_{k} e^{z_{t,k}}}`;
         live = `p_{${t},${f}} = \\frac{e^{${K(shifted)}}}{${num(D.Zs, 3)}} = ${num(pRe, 3)}`;
-        note = `entry ${f}, “${esc(name(f))}”, scores shifted by the largest logit ${K(m)}`;
-        checks = [checkBadge(pRe, p[f], { label: 'equals the traced probability' }), checkBadge(sum, 1, { label: 'sums to 1' })];
+        note = `entry ${f}, “${esc(name(f))}”, scores shifted by the largest logit ${dec2(m)}`;
+        checks = [checkBadge(pRe, p[f], { label: 'equals the traced probability' })];   // the one check: the equation gives the traced value
       }
       if (main !== lastMain) { eqMain.innerHTML = texHTML(main, { display: true }); lastMain = main; }
       eqLive.innerHTML = (live ? texHTML(live, { display: true }) : '') + (note ? `<div class="lh-note">${note}</div>` : '');
@@ -493,23 +500,16 @@ export default {
       capSet(captionFor(D));
     }
 
-    /** Next-token probability and loss, the mean loss and perplexity over the sequence. */
+    /** The context for the probabilities: the mean next-token loss over the sequence and its perplexity. */
     function renderReadout(D) {
-      const { t, z, p, hasNext, next, meanLoss, nScored, zMax, Zs } = D;
-      const pNext = hasNext ? p[next] : null;
-      const lossNext = pNext == null ? null : -Math.log(pNext);
+      const { meanLoss, nScored, leak } = D;
       const ppl = meanLoss == null ? null : Math.exp(meanLoss);
       const line = (k, v) => h('div', { class: 'lh-read-row' }, h('span', { class: 'lh-read-k' }, k), h('span', { class: 'lh-read-v', html: v }));
       const rows = [
-        line('next input', hasNext ? `“${esc(tokName(t + 1))}” <small>position ${t + 1}</small>` : `none <small>position ${t} is the last</small>`),
-        line('p(next)', pNext == null ? '—' : pct(pNext)),
-        line('loss −log p', lossNext == null ? '—' : `${fmt(lossNext, 2)} nats`),
-        line('mean loss', meanLoss == null ? '—' : `${fmt(meanLoss, 2)} nats <small>${nScored} positions</small>`),
-        line('perplexity', ppl == null ? '—' : `${fmt(ppl, 2)} <small>= e^loss</small>`),
+        line('mean loss', meanLoss == null ? '—<small>one token</small>' : `${lossTxt(meanLoss)} nats <small>${plural(nScored, 'position')}</small>`),
+        line('perplexity', ppl == null ? '—' : `${dec2(ppl)} <small>= e^loss</small>`),
       ];
-      const extra = [];
-      if (lossNext != null) extra.push(checkBadge(zMax + Math.log(Zs) - z[next], lossNext, { label: 'equals −log p from the logits' }));
-      if (D.leak) extra.push(h('div', { class: 'lh-warn' }, 'This mask lets some positions see the token they predict, so these losses do not measure prediction.'));
+      const extra = leak ? [h('div', { class: 'lh-warn' }, 'This mask lets some positions see the token they predict, so these losses do not measure prediction.')] : [];
       readout.replaceChildren(...rows, ...extra);
     }
 
@@ -531,6 +531,7 @@ export default {
       paintW(D);
       paintH(D, animate);
       body.classList.toggle('dim', step === 0);
+      body.classList.toggle('quiet', step >= 2);             // from the logits on, the bars carry the vocabulary labels
       barsHost.classList.toggle('off', step === 0);
       barsHost.classList.toggle('probs', step === 3);
       alignBars();

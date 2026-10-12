@@ -1,43 +1,49 @@
 // Sampling: how the next character is chosen from the model's distribution.
-// Hero: one bar per vocabulary entry, sorted by score, for the selected position. Temperature,
-// top-k and top-p reshape the bars through engine.samplingDistribution; removed characters turn
-// grey. A draw is inverse-CDF sampling: a seeded uniform U (mulberry32) lands on a unit strip cut
-// into the final probabilities, and the segment it lands in is the character that is chosen.
-// The histogram counts draws from one distribution. It is marked stale when the position, the
-// settings, the vocabulary or the logits row change.
-// Each step owns the controls it teaches. A step sets its own settings when it is chosen; moving a
-// control on an earlier step moves the scene to the step that shows it, so every caption and equation
-// describes the bars on screen. A bar carries data-trace (the atlas hover card and maths) only while it
-// equals the traced softmax (tau 1, no filters). Otherwise a tooltip gives its sampling weight.
+// Hero: one bar per vocabulary entry, sorted by score, for the selected position. Temperature, top-k and top-p
+// reshape the bars through engine.samplingDistribution; removed characters fade. The Draw step is inverse-CDF
+// sampling: a seeded uniform U lands on a unit strip cut into the final probabilities, and the segment it lands
+// in is the character chosen. The strip, the histogram and the draw controls appear on that step only, so before
+// it the bars and the step equation are the only focus.
+// The histogram counts draws from one distribution. It is marked stale when the position, the settings, the
+// vocabulary or the logits row change.
+// Each step owns the controls it teaches. A step sets its own settings when it is chosen; moving a control on an
+// earlier step moves the scene to the step that shows it, so every caption and equation describes the bars on
+// screen. A bar carries data-trace (the atlas hover card and maths) only while it equals the traced softmax
+// (tau 1, no filters). Otherwise a tooltip gives its sampling weight.
 import { stage2d, sceneHeader, sceneCaption, tokenPicker, checkBadge, appear, pulse, useStyle, ZONES, MOTION } from '../kit.js';
 import { samplingDistribution, sampleFrom, argmax, mulberry32 } from '../../engine/index.js';
-import { h, fmt, num, texHTML, slider, button, reducedMotion, ease, showTip, hideTip } from '../../ui/index.js';
+import { h, fmt, num, texHTML, slider, button, reducedMotion, ease, showTip, hideTip, sequential } from '../../ui/index.js';
 
 useStyle('sampling', `
 .sp-plot { position: absolute; border-radius: 12px; background: color-mix(in srgb, var(--surface) 74%, transparent);
   border: 1px solid color-mix(in srgb, var(--c-head) 26%, var(--line));
   box-shadow: 0 16px 36px rgba(0, 0, 0, .14), 0 2px 0 color-mix(in srgb, var(--c-head) 16%, transparent); }
 .sp-plot.still * { transition: none !important; }
-.sp-grid { position: absolute; border-top: 1px dashed var(--line-strong); opacity: .7; }
+.sp-grid { position: absolute; border-top: 1px dashed var(--line-strong); opacity: .7; transition: top .6s cubic-bezier(.65, 0, .35, 1); }
 .sp-grid.sp-base { border-top: 1px solid var(--line-strong); opacity: 1; }
-.sp-tick { position: absolute; width: 46px; text-align: right; font: 500 12px/1 var(--font-mono); color: var(--fg-3); transform: translateY(-50%); }
+.sp-tick { position: absolute; width: 46px; text-align: right; font: 500 12px/1 var(--font-mono); color: var(--fg-3); transform: translateY(-50%);
+  transition: top .6s cubic-bezier(.65, 0, .35, 1); }
 .sp-sigma { font: 600 14px/1 var(--font-mono); color: var(--fg-2); }
-.sp-col { position: absolute; }
+.sp-col { position: absolute; transition: height .6s cubic-bezier(.65, 0, .35, 1); }
 .sp-fill { position: absolute; left: 16%; right: 16%; bottom: 0; border-radius: 4px 4px 2px 2px; background: var(--c-head);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 6px 12px rgba(0, 0, 0, .12);
   transition: height .6s cubic-bezier(.65, 0, .35, 1), background-color .4s, opacity .4s, box-shadow .4s; }
-.sp-fill.off { background: var(--c-mask); opacity: .42; box-shadow: none; }
+.sp-fill.off { background: color-mix(in srgb, var(--fg-3) 26%, transparent); box-shadow: none; }
 .sp-fill.pick { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sp-val { position: absolute; left: -12px; right: -12px; text-align: center; font: 600 12px/1 var(--font-mono); color: var(--fg-2);
   white-space: nowrap; transition: bottom .6s cubic-bezier(.65, 0, .35, 1); }
 .sp-val.top { color: var(--fg); }
-.sp-frame { position: absolute; border: 1px dashed var(--fg-3); border-radius: 8px; pointer-events: none; }
+.sp-frame { position: absolute; border: 1px dashed var(--fg-3); border-radius: 8px; pointer-events: none;
+  transition: top .6s cubic-bezier(.65, 0, .35, 1), height .6s cubic-bezier(.65, 0, .35, 1); }
 .sp-flab { position: absolute; font: 500 12px/1 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
-.sp-chars { position: absolute; }
+.sp-chars { position: absolute; transition: top .6s cubic-bezier(.65, 0, .35, 1); }
 .sp-char { position: absolute; top: 0; height: 18px; line-height: 18px; text-align: center; font: 600 15px/18px var(--font-mono);
   color: var(--fg); transition: color .3s, opacity .3s; }
 .sp-char.off { color: var(--fg-3); opacity: .5; }
 .sp-char.pick { color: var(--accent); }
+.sp-char.sp-ell { color: var(--fg-3); }
+.sp-group { transition: opacity .4s ease, visibility .4s; }
+.sp-group.sp-off { opacity: 0; visibility: hidden; }
 .sp-track { position: absolute; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--line); overflow: hidden; }
 .sp-seg { position: absolute; top: 0; bottom: 0; background: var(--c-head); box-shadow: inset -1.5px 0 0 var(--surface);
   transition: left .6s cubic-bezier(.65, 0, .35, 1), width .6s cubic-bezier(.65, 0, .35, 1), background-color .3s; }
@@ -47,7 +53,8 @@ useStyle('sampling', `
 .sp-marker { position: absolute; width: 2px; border-radius: 1px; background: var(--accent); opacity: 0;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); transition: opacity .3s; }
 .sp-pill { position: absolute; transform: translateX(-50%); padding: 3px 8px; border-radius: 999px; opacity: 0;
-  font: 600 12px/1.2 var(--font-mono); color: var(--surface); background: var(--accent); white-space: nowrap; transition: opacity .3s; }
+  font: 600 12px/1.2 var(--font-mono); color: var(--surface); background: var(--accent); white-space: nowrap;
+  transition: opacity .3s, top .6s cubic-bezier(.65, 0, .35, 1); }
 .sp-hcol { position: absolute; }
 .sp-hbar { position: absolute; left: 16%; right: 16%; bottom: 0; border-radius: 3px 3px 1px 1px; background: var(--c-head); opacity: .9;
   transition: height .6s cubic-bezier(.65, 0, .35, 1), opacity .4s; }
@@ -57,83 +64,110 @@ useStyle('sampling', `
 .sp-hcnt { position: absolute; left: -10px; right: -10px; text-align: center; font: 600 11px/1 var(--font-mono); color: var(--fg-2);
   transition: bottom .6s cubic-bezier(.65, 0, .35, 1); }
 .sp-hcap { position: absolute; font: 500 12px/1.2 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
-.sp-note { position: absolute; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
-  font: 500 13px/1.2 var(--font-mono); color: var(--fg-2); white-space: nowrap;
-  background: color-mix(in srgb, var(--c-mask) 16%, var(--surface)); border: 1px solid color-mix(in srgb, var(--c-mask) 45%, transparent); }
+.sp-note { position: absolute; font: 500 13px/1.2 var(--font-mono); color: var(--fg-2); white-space: nowrap; }
 .sp-note[hidden] { display: none; }
-.sp-note::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--c-mask); flex: none; }
-.sp-point { display: block; white-space: normal; max-width: 640px; line-height: 1.45; padding: 8px 14px; border-radius: 12px;
-  background: color-mix(in srgb, var(--surface) 88%, transparent); border-color: var(--line); color: var(--fg-2); }
-.sp-point::before { display: inline-block; vertical-align: middle; margin: -2px 8px 0 0; background: var(--accent); }
-.sp-point[hidden] { display: none; }
-.sp-check { position: absolute; }
-.sp-go { background: none; border: 0; padding: 0; font: inherit; color: var(--accent); cursor: pointer;
-  text-decoration: underline; text-underline-offset: 4px; }
+.sp-note::before { content: ''; display: inline-block; width: 7px; height: 7px; margin: 0 8px 1px 0; border-radius: 50%;
+  background: var(--c-mask); vertical-align: middle; }
+.sp-note.point::before { background: var(--fg-3); }
+.sp-go { background: none; border: 0; padding: 0; font: inherit; color: var(--fg); cursor: pointer; text-decoration: underline; text-underline-offset: 4px; }
 .sp-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .sp-side { position: absolute; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; }
 .sp-side > * { min-width: 0; }
-.sp-ctl { display: grid; gap: 4px; }
-.sp-ctl .field { gap: 2px; }
-.sp-btns { display: flex; gap: 8px; align-items: center; }
-.sp-seed { margin-left: auto; font: 500 12px/1 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
+.sp-eq-main { font-size: 22px; min-height: 58px; overflow-x: auto; }
+.sp-eq-live { font-size: 16px; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent);
+  border: 1px solid var(--line); overflow-x: auto; }
+.sp-check-row { min-height: 24px; display: flex; align-items: center; }
 .sp-stats { display: grid; gap: 3px; }
 .sp-stat { font: 500 14px/1.4 var(--font-mono); color: var(--fg-2); }
 .sp-stat b { color: var(--fg); font-weight: 600; }
-.sp-eq-main { font-size: 22px; overflow-x: auto; }
-.sp-eq-live { font-size: 16px; padding: 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 85%, transparent);
-  border: 1px solid var(--line); overflow-x: auto; }
+.sp-ctl { display: grid; gap: 4px; }
+.sp-ctl .field { gap: 2px; }
+#sampling-temp, #sampling-topk, #sampling-topp { accent-color: var(--c-head); }
+.sp-btns { display: flex; gap: 8px; align-items: center; }
+.sp-seed { margin-left: auto; font: 500 12px/1 var(--font-mono); color: var(--fg-3); white-space: nowrap; }
 `);
 
 const STEPS = ['Distribution', 'Temperature', 'Top-k and top-p', 'Draw'];
+const DRAW_STEP = 3;                                        // the strip, the histogram and the draw controls show from here on
 const SEED = 1337;                                          // mulberry32 seed: the same draws on every visit
+const ZOOM_MS = 800;                                        // the zoom into this scene takes about 760 ms
 const PLOT = { x: ZONES.hero.x, y: ZONES.hero.y, w: 1000, h: 470 };
 const SIDE = { x: ZONES.side.x, y: ZONES.hero.y, w: ZONES.side.w };
 const GL = 56, GR = 24, PW = PLOT.w - GL - GR;              // left gutter, right margin, width of every row
-const TOP = 56, BH = 204, BASE = TOP + BH;                  // bars: top edge, height, baseline
-const CHR = BASE + 6;                                       // character labels under the bars
-const PILL = CHR + 24;                                      // readout of U, above the strip
-const STRIP = { y: 312, h: 22 };                            // cumulative strip, [0, 1]
-const HIST = { y: 352, h: 72 };                             // histogram of 100 draws
+const TOP = 56, BH_PLAIN = 344, BH_DRAW = 204;              // the 1.0 line; bar height before the draw, and on the draw step
+const MAX_BARS = 40;                                        // longer vocabularies: the first entries, an ellipsis, the last 4
+const STRIP = { y: 312, h: 22 };                            // cumulative strip, [0, 1] (draw step)
+const HIST = { y: 352, h: 72 };                             // histogram of 100 draws (draw step)
 const NEAR = 0.9;                                           // a top probability this high is "nearly certain" (top-p 0.9 keeps one character then)
-// What a step sets when it is chosen from the step bar. Step 3 draws with the settings on screen.
+// What a step sets when it is chosen from the step bar. The draw uses the settings on screen.
 const SETTINGS = [{ tau: 1, k: 0, p: 1 }, { tau: 2, k: 0, p: 1 }, { k: 8, p: 0.9 }];
 
 const px = (n) => `${n}px`;
 const r2 = (x) => Math.round(x * 100) / 100;
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
-const pct = (p) => (p >= 0.995 ? '100%' : p >= 0.1 ? `${Math.round(p * 100)}%` : p >= 0.001 ? `${(p * 100).toFixed(1)}%` : p > 0 ? '<0.1%' : '0%');
+const word = (label) => (label === '␣' ? 'space' : esc(label));           // a character as it reads in a caption
+// A probability as the reader sees it. "100%" only for values that round to it at two decimals; a value just short of 1 reads >99.9%.
+const pct = (p) => (p >= 0.99995 ? '100%' : p >= 0.999 ? '>99.9%' : p >= 0.99 ? `${(p * 100).toFixed(1)}%`
+  : p >= 0.1 ? `${Math.round(p * 100)}%` : p >= 0.001 ? `${(p * 100).toFixed(1)}%` : p > 0 ? '<0.1%' : '0%');
 const entropy = (p) => -p.reduce((a, x) => (x > 0 ? a + x * Math.log(x) : a), 0);
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const plural = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
 const TEX_ESC = { '\\': '\\backslash', '{': '\\{', '}': '\\}', '$': '\\$', '&': '\\&', '#': '\\#', '^': '\\textasciicircum',
   '_': '\\_', '%': '\\%', '~': '\\textasciitilde', "'": "\\text{'}", ' ': '\\text{space}', '\n': '\\text{newline}', '\t': '\\text{tab}' };
 const texChar = (ch) => `\\mathtt{${TEX_ESC[ch] ?? ch}}`;
+const put = (el, tex) => { if (el.dataset.tex !== tex) { el.dataset.tex = tex; el.innerHTML = texHTML(tex, { display: true }); } };
+
+/** Indices to draw for an axis of length n: all of them, or the first ones, -1 (an ellipsis), the last 4. */
+function elide(n, max) {
+  if (n <= max) return Array.from({ length: n }, (_, i) => i);
+  const tail = 4, head = max - tail - 1;
+  return [...Array.from({ length: head }, (_, i) => i), -1, ...Array.from({ length: tail }, (_, i) => n - tail + i)];
+}
+/** Where the bars stop for a bar height: the baseline, and the character labels under it. */
+const geoOf = (BH) => ({ BH, BASE: TOP + BH, CHR: TOP + BH + 6 });
+/** U and the segment it falls in, at one precision: six decimals, more only where U sits within a rounding step of a
+ *  bound, so the comparison on screen is the one the draw made. */
+function segText(U, lo, hi) {
+  for (let d = 6; d <= 12; d++) {
+    const a = lo.toFixed(d), b = U.toFixed(d), c = hi.toFixed(d);
+    if (Number(a) <= Number(b) && Number(b) < Number(c)) return [a, b, c];
+  }
+  return [lo.toFixed(12), U.toFixed(12), hi.toFixed(12)];
+}
 
 export default {
   mount(el, ctx) {
     const st = stage2d(el);
     const rng = mulberry32(SEED);
     const view = { tau: 1, k: 0, p: 1, step: 0, lastU: null, hist: null };
-    let cur = null, builtV = -1, anim = 0, auto = 0, autoDriving = false, keeping = false, lastPointer = '';
-    let plot, cols = [], chars = [], segs = [], hcols = [], marker, pill, histCap;
+    let cur = null, builtV = -1, anim = 0, auto = 0, autoDriving = false, keeping = false;
+    let lastNote = '', capText = null;
+    let plot, grid = [], cols = [], chars = [], segs = [], hcols = [], drawEls = [];
+    let frame, chRow, track, marker, pill, histCap;
     const stopAuto = () => { clearTimeout(auto); auto = 0; };
 
     // ------------------------------------------------------------------ shared parts
-    const header = sceneHeader(st, {
-      chips: [['LM head', 'head']], title: 'Sampling',
-      sub: 'Every vocabulary entry gets a score. Sampling decides which one becomes the next character.',
-    });
+    const header = sceneHeader(st, { chips: [['LM head', 'head']], title: 'Sampling' });
     const picker = tokenPicker(st, ctx, { label: 'after', kind: 'head' });
     const cap = sceneCaption(st);
+    // The kit's caption fades but does not cancel a fade already running, so an older text can land last. As in
+    // lm-head.js, a newer caption cancels the running fade and only the latest text is ever written.
+    const capSet = (html) => {
+      if (html === capText) return;
+      capText = html;
+      if (reducedMotion()) { cap.el.innerHTML = html; return; }
+      cap.el.getAnimations().forEach((a) => a.cancel());
+      cap.el.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 140 }).finished.then(() => {
+        if (html !== capText) return;
+        cap.el.innerHTML = html;
+        cap.el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 260, easing: MOTION.easeOut });
+      }).catch(() => {});
+    };
 
     plot = h('div', { class: 'sp-plot', style: { width: px(PLOT.w), height: px(PLOT.h) } });
     st.add(plot, { x: PLOT.x, y: PLOT.y });
-    // Top right of the plot: the mask note (a bidirectional mask applies) or the pointer to a spread position.
+    // One line above the plot, right-aligned to it: the bidirectional-mask note, or the pointer to a spread position.
     const note = h('div', { class: 'sp-note', hidden: true });
-    const ptr = h('div', { class: 'sp-note sp-point', hidden: true });
-    const check = h('div', { class: 'sp-check' });
-    st.add(note, { x: PLOT.x + PLOT.w - 16, y: PLOT.y + 14, anchor: 'tr' });
-    st.add(ptr, { x: PLOT.x + PLOT.w - 16, y: PLOT.y + 14, anchor: 'tr' });
-    st.add(check, { x: PLOT.x + PLOT.w - 16, y: PLOT.y + PLOT.h - 14, anchor: 'br' });
+    st.add(note, { x: PLOT.x + PLOT.w, y: PLOT.y - 6, anchor: 'br' });
 
     // A bar that is not the traced softmax has no data-trace, so the atlas card would show the wrong number.
     // Its tooltip gives the sampling weight instead. Leaving the plot hides it.
@@ -145,29 +179,33 @@ export default {
     plot.addEventListener('pointerleave', hideTip);
 
     // ------------------------------------------------------------------ side column
-    // A control moved on an earlier step moves the scene to the step that shows it (the Temperature step for
-    // tau, the filters step for top-k and top-p). The values the reader set are kept.
+    // A control moved on an earlier step moves the scene to the step that shows it (the Temperature step for tau,
+    // the filters step for top-k and top-p). The values the reader set are kept.
     const own = (step) => { if (view.step < step) jumpTo(step); else paint(); };
     const jumpTo = (i) => { keeping = true; try { ctx.setStep(i); } finally { keeping = false; } };
+    const stepLab = h('div', { class: 'k-label', style: { textAlign: 'left' } });    // the step's name, as in softmax.js
+    const eqMain = h('div', { class: 'sp-eq-main' }), eqLive = h('div', { class: 'sp-eq-live' });
+    const eqCheck = h('div', { class: 'sp-check-row' });
+    const statH = h('div', { class: 'sp-stat' }), statG = h('div', { class: 'sp-stat' }), statU = h('div', { class: 'sp-stat sp-group' });
     const tauS = slider({ id: 'sampling-temp', label: 'temperature τ', min: 0.1, max: 2, step: 0.05, value: view.tau,
       format: (v) => v.toFixed(2), onInput: (v) => { stopAuto(); view.tau = r2(v); own(1); } });
     const kS = slider({ id: 'sampling-topk', label: 'top-k', min: 0, max: ctx.state.logits.shape[1], step: 1, value: view.k,
       format: (v) => (v ? String(v) : 'off'), onInput: (v) => { stopAuto(); view.k = v; own(2); } });
     const pS = slider({ id: 'sampling-topp', label: 'top-p', min: 0.1, max: 1, step: 0.05, value: view.p,
-      format: (v) => v.toFixed(2), onInput: (v) => { stopAuto(); view.p = r2(v); own(2); } });
-    const statH = h('div', { class: 'sp-stat' }), statG = h('div', { class: 'sp-stat' }), statU = h('div', { class: 'sp-stat' });
-    const eqMain = h('div', { class: 'sp-eq-main' }), eqLive = h('div', { class: 'sp-eq-live' });
+      format: (v) => (v < 1 ? v.toFixed(2) : 'off'), onInput: (v) => { stopAuto(); view.p = r2(v); own(2); } });
+    const btns = h('div', { class: 'sp-btns sp-group' },
+      button('Sample', () => { stopAuto(); draw(); }, { title: 'Draw one character from the current distribution' }),
+      button('Sample 100', () => { stopAuto(); sampleMany(100); }, { title: 'Draw 100 characters and fill the histogram' }),
+      h('span', { class: 'sp-seed', title: 'U comes from the mulberry32 generator with this seed' }, `seed ${SEED}`));
     const side = h('div', { class: 'sp-side', style: { width: px(SIDE.w) } },
-      h('div', { class: 'sp-ctl' }, tauS.el, kS.el, pS.el),
-      h('div', { class: 'sp-btns' },
-        button('Sample', () => { stopAuto(); draw(); }, { variant: 'primary', title: 'Draw one character from the current distribution' }),
-        button('Sample 100', () => { stopAuto(); sampleMany(100); }, { title: 'Draw 100 characters and fill the histogram' }),
-        h('span', { class: 'sp-seed', title: 'U comes from the mulberry32 generator with this seed' }, `seed ${SEED}`)),
+      stepLab, eqMain, eqLive, eqCheck,
       h('div', { class: 'sp-stats' }, statH, statG, statU),
-      eqMain, eqLive);
+      h('div', { class: 'sp-ctl' }, tauS.el, kS.el, pS.el),
+      btns);
     st.add(side, { x: SIDE.x, y: SIDE.y });
+    const sideDraw = [statU, btns];                         // the draw readouts and buttons: the Draw step only
 
-    // A position named in the caption or in the pointer can be clicked to select it.
+    // A position named in the note can be clicked to select it.
     const onPick = (e) => {
       const go = e.target.closest?.('[data-pos]');
       if (!go) return;
@@ -244,39 +282,59 @@ export default {
     // ------------------------------------------------------------------ DOM of the plot (rebuilt when V changes)
     function buildPlot(V) {
       builtV = V;
-      const colW = PW / V;
+      const slots = elide(V, MAX_BARS);                     // the ranks drawn, left to right; -1 is an ellipsis
+      const colW = PW / slots.length;
       const kids = [];
-      for (const [y, base, label] of [[TOP, false, '1.0'], [TOP + BH / 2, false, '0.5'], [BASE, true, '0']]) {
-        kids.push(h('div', { class: base ? 'sp-grid sp-base' : 'sp-grid', style: { left: px(GL), width: px(PW), top: px(y) } }));
-        kids.push(h('div', { class: 'sp-tick', style: { left: px(4), top: px(y) } }, label));
+      grid = [];
+      for (const [label, key, base] of [['1.0', 'top', false], ['0.5', 'mid', false], ['0', 'base', true]]) {
+        const line = h('div', { class: base ? 'sp-grid sp-base' : 'sp-grid', style: { left: px(GL), width: px(PW) } });
+        const tick = h('div', { class: 'sp-tick', style: { left: px(4) } }, label);
+        grid.push({ key, line, tick });
+        kids.push(line, tick);
       }
-      kids.push(h('div', { class: 'sp-tick sp-sigma', style: { left: px(4), top: px(STRIP.y + STRIP.h / 2) } }, 'Σp'));
-      // the histogram band has a baseline and a label, so it reads as a frame for the counts before the first draw
-      kids.push(h('div', { class: 'sp-grid sp-base', style: { left: px(GL), width: px(PW), top: px(HIST.y + HIST.h) } }));
-      kids.push(h('div', { class: 'sp-tick', style: { left: px(4), top: px(HIST.y + HIST.h / 2) } }, 'draws'));
+      // the draw parts: the strip, the histogram and their labels, shown on the Draw step
+      const sigma = h('div', { class: 'sp-tick sp-sigma sp-group', style: { left: px(4), top: px(STRIP.y + STRIP.h / 2) } }, 'Σp');
+      const drawsTick = h('div', { class: 'sp-tick sp-group', style: { left: px(4), top: px(HIST.y + HIST.h / 2) } }, 'draws');
+      const histBase = h('div', { class: 'sp-grid sp-base sp-group', style: { left: px(GL), width: px(PW), top: px(HIST.y + HIST.h) } });
       // the greedy column is the argmax (the first column, since the bars are sorted by score), framed and labelled
-      const frame = h('div', { class: 'sp-frame', style: { left: px(GL - 4), width: px(colW + 8), top: px(TOP - 26), height: px(CHR + 24 - (TOP - 26)) } });
+      frame = h('div', { class: 'sp-frame', style: { left: px(GL - 4), width: px(colW + 8), top: px(TOP - 26) } });
       const frameLab = h('div', { class: 'sp-flab', style: { left: px(GL - 4), top: px(12) } }, 'greedy');
-      cols = []; chars = []; segs = []; hcols = [];
-      for (let r = 0; r < V; r++) {
-        const x = GL + r * colW;
+      cols = new Array(V).fill(null); chars = new Array(V).fill(null); hcols = new Array(V).fill(null);
+      const colEls = [], charEls = [], histEls = [];
+      slots.forEach((r, i) => {
+        if (r < 0) { charEls.push(h('div', { class: 'sp-char sp-ell', style: { left: px(i * colW), width: px(colW) } }, '⋯')); return; }
         const fill = h('div', { class: 'sp-fill' }), val = h('div', { class: 'sp-val' });
-        const col = h('div', { class: 'sp-col', style: { left: px(x), width: px(colW), top: px(TOP), height: px(BH) } }, fill, val);
-        cols.push({ fill, val, el: col });
-        chars.push(h('div', { class: 'sp-char', style: { left: px(r * colW), width: px(colW) } }));
-        segs.push(h('div', { class: 'sp-seg' }));
+        const el = h('div', { class: 'sp-col', style: { left: px(GL + i * colW), width: px(colW), top: px(TOP) } }, fill, val);
+        cols[r] = { fill, val, el };
+        colEls.push(el);
+        chars[r] = h('div', { class: 'sp-char', style: { left: px(i * colW), width: px(colW) } });
+        charEls.push(chars[r]);
         const bar = h('div', { class: 'sp-hbar' }), exp = h('div', { class: 'sp-hexp' }), cnt = h('div', { class: 'sp-hcnt' });
-        hcols.push({ el: h('div', { class: 'sp-hcol', style: { left: px(x), width: px(colW), top: px(HIST.y), height: px(HIST.h) } }, bar, exp, cnt), bar, exp, cnt });
-      }
-      const chRow = h('div', { class: 'sp-chars', dataset: { trace: 'logits' }, style: { left: px(GL), top: px(CHR), width: px(PW), height: '18px' } }, chars);
-      const track = h('div', { class: 'sp-track', style: { left: px(GL), top: px(STRIP.y), width: px(PW), height: px(STRIP.h) } }, segs);
+        const hel = h('div', { class: 'sp-hcol sp-group', style: { left: px(GL + i * colW), width: px(colW), top: px(HIST.y), height: px(HIST.h) } }, bar, exp, cnt);
+        hcols[r] = { el: hel, bar, exp, cnt };
+        histEls.push(hel);
+      });
+      segs = Array.from({ length: V }, () => h('div', { class: 'sp-seg' }));
+      chRow = h('div', { class: 'sp-chars', dataset: { trace: 'logits' }, style: { left: px(GL), width: px(PW), height: '18px' } }, charEls);
+      track = h('div', { class: 'sp-track sp-group', style: { left: px(GL), top: px(STRIP.y), width: px(PW), height: px(STRIP.h) } }, segs);
       marker = h('div', { class: 'sp-marker', style: { top: px(STRIP.y - 8), height: px(STRIP.h + 16) } });
-      pill = h('div', { class: 'sp-pill', style: { top: px(PILL) } });
-      histCap = h('div', { class: 'sp-hcap', style: { left: px(GL), top: px(HIST.y + HIST.h + 12) } });
-      plot.replaceChildren(...kids, frame, frameLab, ...cols.map((c) => c.el), chRow, track, marker, pill, ...hcols.map((c) => c.el), histCap);
+      pill = h('div', { class: 'sp-pill' });
+      histCap = h('div', { class: 'sp-hcap sp-group', style: { left: px(GL), top: px(HIST.y + HIST.h + 12) } });
+      drawEls = [sigma, drawsTick, histBase, track, histCap, ...histEls];
+      plot.replaceChildren(...kids, sigma, drawsTick, histBase, frame, frameLab, ...colEls, chRow, track, marker, pill, ...histEls, histCap);
     }
 
-    // Move the U marker along the strip; with D, the segment under it is highlighted.
+    /** The bars' height depends on the step: taller while the draw is hidden. The lines, labels and frame follow it. */
+    function placeBars(g) {
+      const at = { top: TOP, mid: TOP + g.BH / 2, base: g.BASE };
+      for (const q of grid) { q.line.style.top = px(at[q.key]); q.tick.style.top = px(at[q.key]); }
+      for (const c of cols) if (c) c.el.style.height = px(g.BH);
+      chRow.style.top = px(g.CHR);
+      frame.style.height = px(g.CHR + 24 - (TOP - 26));
+      pill.style.top = px(g.CHR + 24);
+    }
+
+    /** Move the U marker along the strip; with D, the segment under it is highlighted. */
     function placeMarker(x, D) {
       const on = x != null;
       marker.style.opacity = on ? '1' : '0';
@@ -285,7 +343,7 @@ export default {
       if (!on) return;
       marker.style.left = px(GL + x * PW - 1);
       pill.style.left = px(GL + Math.min(PW - 40, Math.max(40, x * PW)));
-      pill.textContent = `U = ${x.toFixed(4)}`;
+      pill.textContent = `U = ${x.toFixed(6)}`;
       if (D) segs[D.rankOf[pickFor(D, x)]].classList.add('hot');
     }
 
@@ -294,73 +352,99 @@ export default {
       const D = compute();
       cur = D;
       if (D.V !== builtV) buildPlot(D.V);
+      const drawing = view.step === DRAW_STEP;
+      const BH = drawing ? BH_DRAW : BH_PLAIN;
+      placeBars(geoOf(BH));
+      [...drawEls, ...sideDraw].forEach((e) => e.classList.toggle('sp-off', !drawing));
       kS.input.max = String(D.V);
       if (kS.get() !== view.k) kS.set(view.k);
       plot.classList.toggle('still', reducedMotion());
       const sweeping = anim !== 0;
       const hist = view.hist, stale = !!hist && hist.key !== keyOf(D);
-      const pick = view.lastU == null || sweeping ? -1 : D.rankOf[pickFor(D, view.lastU)];
+      const U = drawing && !sweeping && view.lastU != null ? view.lastU : null;      // the draw on screen, once it has landed
+      const pick = U == null ? -1 : D.rankOf[pickFor(D, U)];
       let ki = 0;                                              // index among the kept characters (alternating tints)
       for (let r = 0; r < D.V; r++) {
         const v = D.order[r], kept = D.pFin[v] > 0, p = kept ? D.pFin[v] : D.pRaw[v];
-        const c = cols[r], ch = chars[r], sg = segs[r], hc = hcols[r], cell = `${D.t},${v},0`;
+        const cell = `${D.t},${v},0`;
+        const sg = segs[r];
         sg.classList.toggle('alt', kept && ki++ % 2 === 1);
-        c.el.dataset.v = String(v);
-        if (D.exact) { c.el.dataset.trace = 'probs'; c.el.dataset.cell = cell; }
-        else { delete c.el.dataset.trace; delete c.el.dataset.cell; }
-        c.fill.style.height = px(p * BH);
-        c.fill.classList.toggle('off', !kept);
-        c.fill.classList.toggle('pick', r === pick);
-        c.val.style.bottom = px(p * BH + 4);
-        c.val.classList.toggle('top', r === 0);
-        c.val.textContent = kept && (r === 0 || r === pick || (r < 3 && p >= 0.05)) ? pct(p) : '';
-        ch.textContent = D.s.tokenizer.label(v);
-        ch.dataset.cell = cell;
-        ch.classList.toggle('off', !kept);
-        ch.classList.toggle('pick', r === pick);
-        sg.style.left = px(D.start[r] * PW);
-        sg.style.width = px(D.pFin[v] * PW);
         sg.classList.toggle('pick', r === pick);
         sg.classList.remove('hot');
-        const n = hist ? hist.n : 0, cnt = hist ? (hist.counts.get(v) ?? 0) : 0, f = n ? cnt / n : 0;
-        hc.el.classList.toggle('stale', stale);
-        hc.bar.style.height = px(f * HIST.h);
-        hc.cnt.textContent = cnt ? String(cnt) : '';
-        hc.cnt.style.bottom = px(f * HIST.h + 3);
-        hc.exp.style.bottom = px(D.pFin[v] * HIST.h);
-        hc.exp.style.opacity = kept && D.pFin[v] >= 0.001 ? '1' : '0';
+        sg.style.left = px(D.start[r] * PW);
+        sg.style.width = px(D.pFin[v] * PW);
+        const c = cols[r];
+        if (c) {
+          c.el.dataset.v = String(v);
+          if (D.exact) { c.el.dataset.trace = 'probs'; c.el.dataset.cell = cell; }
+          else { delete c.el.dataset.trace; delete c.el.dataset.cell; }
+          c.fill.style.height = px(p * BH);
+          c.fill.style.background = kept ? sequential(p, 'head') : '';     // kept bars on the sequential ramp; removed ones grey
+          c.fill.classList.toggle('off', !kept);
+          c.fill.classList.toggle('pick', r === pick);
+          c.val.style.bottom = px(p * BH + 4);
+          c.val.classList.toggle('top', r === 0);
+          c.val.textContent = kept && (r === 0 || r === pick || (r < 3 && p >= 0.05)) ? pct(p) : '';
+          const ch = chars[r];
+          ch.textContent = D.s.tokenizer.label(v);
+          ch.dataset.cell = cell;
+          ch.classList.toggle('off', !kept);
+          ch.classList.toggle('pick', r === pick);
+        }
+        const hc = hcols[r];
+        if (hc) {
+          const n = hist ? hist.n : 0, cnt = hist ? hist.counts.get(v) ?? 0 : 0, f = n ? cnt / n : 0;
+          hc.el.classList.toggle('stale', stale);
+          hc.bar.style.height = px(f * HIST.h);
+          hc.cnt.textContent = cnt ? String(cnt) : '';
+          hc.cnt.style.bottom = px(f * HIST.h + 3);
+          hc.exp.style.bottom = px(D.pFin[v] * HIST.h);
+          hc.exp.style.opacity = kept && D.pFin[v] >= 0.001 ? '1' : '0';
+        }
       }
       histCap.textContent = !hist ? 'Sample 100 fills this histogram. The ticks mark the probabilities.'
         : stale ? `${hist.n} draws from an earlier distribution. Press Sample 100 to redraw.`
           : `${hist.n} draws. The ticks mark the probabilities.`;
-      note.hidden = !D.seesNext;
-      if (D.seesNext) note.textContent = `Bidirectional mask: position ${D.t} can see the next character, so these bars are not a prediction.`;
-      if (!sweeping) placeMarker(view.lastU, null);
-      paintText(D, sweeping);
+      if (!sweeping) placeMarker(U, null);
+      paintText(D, U, sweeping, drawing);
     }
 
-    function paintText(D, sweeping) {
-      const lab = (v) => esc(D.s.tokenizer.label(v));
-      const tex = (v) => texChar(D.s.tokenizer.token(v));
-      const g = D.greedy, tau = view.tau, step = view.step, hist = view.hist;
-      const U = sweeping ? null : view.lastU, pv = U == null ? null : pickFor(D, U), pr = pv == null ? -1 : D.rankOf[pv];
-      const Z1 = D.z.reduce((a, x) => a + Math.exp(x), 0);
-      const Zt = D.z.reduce((a, x) => a + Math.exp(x / tau), 0);
-      const at = esc(ctx.label(D.t));
-      const p2 = view.p.toFixed(2), k = view.k, kOn = k > 0, pOn = view.p < 1, nF = D.kept.length;
-      const top = `<b>“${lab(g)}”</b>`;
+    /** The note above the plot: the mask note, or the pointer to a spread position where the bars move. One line. */
+    function noteHtml(D, step) {
+      if (D.seesNext) return { cls: 'sp-note mask', html: `Bidirectional mask: position ${D.t} can see the next character, so these bars are not a prediction.` };
+      if (D.topFin < NEAR) return null;
+      const lead = step === DRAW_STEP ? `Position ${D.t} is nearly certain, so most draws pick <b>“${word(D.s.tokenizer.label(D.greedy))}”</b>.`
+        : step === 0 ? `Position ${D.t} is nearly certain.` : `Position ${D.t} is nearly certain at these settings.`;
+      if (!D.spread) return { cls: 'sp-note point', html: `${lead} No other position has a top probability below ${pct(NEAR)}.` };
+      const why = step === DRAW_STEP ? 'to see spread-out draws' : step === 0 ? 'to see a spread-out distribution' : 'to see the settings act';
+      return { cls: 'sp-note point', html: `${lead} Select <button type="button" class="sp-go" data-pos="${D.spread.r}">position ${D.spread.r}</button> (top ${pct(D.spread.top)}) ${why}.` };
+    }
 
-      // Step 0, the softmax at tau 1 with no filters (the step's own settings: they hold until another step is chosen).
+    function paintText(D, U, sweeping, drawing) {
+      const { tau, k, p } = view, step = view.step, hist = view.hist;
+      const kOn = k > 0, pOn = p < 1, p2 = p.toFixed(2), nF = D.kept.length;
+      const g = D.greedy, top = `<b>“${word(D.s.tokenizer.label(g))}”</b>`;
+      const nm = (v) => word(D.s.tokenizer.label(v));
+      const tok = (i) => word(ctx.label(i));
+      const tex = (v) => texChar(D.s.tokenizer.token(v));
+      const pv = U == null ? null : pickFor(D, U), pr = pv == null ? -1 : D.rankOf[pv];
+      const seg = pv == null ? null : segText(U, D.start[pr], D.start[pr] + D.pFin[pv]);
+      // The live equations subtract the largest score, as lm-head does, so the greedy character's exponent is 0.
+      const m = D.z[g];
+      const Zs = D.z.reduce((a, x) => a + Math.exp(x - m), 0);
+      const Zt = D.z.reduce((a, x) => a + Math.exp((x - m) / tau), 0);
+
+      // Step 0: the softmax at tau 1 with no filters (the step's own settings: they hold until another step is chosen).
       const s0 = D.topFin >= NEAR
         ? `${top} has ${pct(D.topFin)} of the mass, so the choice is nearly certain.`
-        : `${top} has ${pct(D.topFin)}${D.runner == null ? '' : `, and the runner-up <b>“${lab(D.runner)}”</b> has ${pct(D.pFin[D.runner])}`}.`;
-
-      // Step 1, the temperature with no filters. The numbers are the bars' own.
+        : `${top} has ${pct(D.topFin)}${D.runner == null ? '' : `, and the runner-up <b>“${nm(D.runner)}”</b> has ${pct(D.pFin[D.runner])}`}.`;
+      // Step 1: the temperature with no filters. The numbers are the bars' own.
+      const dH = D.H.toFixed(2) === D.H1.toFixed(2);                      // the same at the two decimals shown
       const change = tau === 1
         ? `At τ = 1 the bars are the plain softmax, with entropy ${D.H1.toFixed(2)} nats.`
-        : `The top character, ${top}, moves from ${pct(D.pRef[g])} at τ = 1 to ${pct(D.topFin)} at τ = ${tau.toFixed(2)}, and the entropy from ${D.H1.toFixed(2)} to ${D.H.toFixed(2)} nats.`;
-
-      // Step 2, the filters at the current temperature. The engine applies top-k first, then top-p inside the top-k set.
+        : `The top character, ${top}, moves from ${pct(D.pRef[g])} at τ = 1 to ${pct(D.topFin)} at τ = ${tau.toFixed(2)}, and ${dH
+          ? `the entropy stays at ${D.H.toFixed(2)} nats.` : `the entropy from ${D.H1.toFixed(2)} to ${D.H.toFixed(2)} nats.`}`;
+      // Step 2: the filters at the current temperature. The engine applies top-k first, then top-p inside the top-k set.
       const kTxt = k === 1 ? 'keeps the most likely character' : `keeps the ${k} most likely characters`;
       let filt;
       if (!kOn && !pOn) filt = 'Top-k and top-p are both off.';
@@ -372,17 +456,20 @@ export default {
       else if (nF === 1) filt = `Top-k ${kTxt}, and top-p cuts that set to ${top}, which reaches ${p2} on its own.`;
       else if (nF < k) filt = `Top-k ${kTxt}, and top-p cuts that set to the ${plural(nF, 'character')} reaching ${p2}.`;
       else filt = `Top-k ${kTxt}, and top-p at ${p2} cuts none of them.`;
-      const cut = nF < D.V ? 'Grey bars are removed, and the rest are renormalised to sum to 1.' : 'Nothing is removed, so the bars are unchanged.';
-
-      const captions = [
-        `Softmax turns the ${D.V} scores after <b>“${at}”</b> into probabilities that sum to 1. ${s0}`,
+      const cut = nF < D.V ? 'Faded bars are removed, and the rest are renormalised to sum to 1.' : 'Nothing is removed, so the bars are unchanged.';
+      // Step 3: the draw, with the settings it uses named.
+      const setTxt = `τ = ${tau.toFixed(2)}${kOn || pOn ? `, ${[kOn ? `top-k ${k}` : '', pOn ? `top-p ${p2}` : ''].filter(Boolean).join(', ')}` : ', no filters'}`;
+      const draws = U != null
+        ? `Draws use ${setTxt}. U = ${seg[1]} falls in the segment of <b>“${nm(pv)}”</b>, so that character comes next; greedy would always take the tallest bar.`
+        : sweeping
+          ? `Draws use ${setTxt}. A seeded uniform number U lands on the strip, and the segment under it is the character chosen.`
+          : `Draws use ${setTxt}. Press Sample to draw one character, or Sample 100 to fill the histogram.`;
+      capSet([
+        `Softmax turns the ${D.V} scores after position ${D.t}, <b>“${tok(D.t)}”</b>, into probabilities that sum to 1. ${s0}`,
         `Dividing every score by τ before the softmax: below 1 sharpens the bars, above 1 flattens them. ${change}`,
         `${filt} ${cut}`,
-        U == null
-          ? 'A seeded uniform number U picks the character whose segment on the strip contains it. Greedy would always take the tallest bar.'
-          : `U = ${U.toFixed(4)} falls in the segment of <b>“${lab(pv)}”</b>, so that character comes next. Greedy would always take the tallest bar.`,
-      ];
-      cap.set(captions[step]);
+        draws,
+      ][step]);
 
       const main = [
         String.raw`\textstyle p_v = \frac{e^{z_v}}{\sum_k e^{z_k}}`,
@@ -390,35 +477,32 @@ export default {
         String.raw`\textstyle p'_v = \frac{p_v}{\sum_{u \in S} p_u} \quad (v \in S)`,
         String.raw`\textstyle \sum_{i<j} p'_i \le U < \sum_{i \le j} p'_i`,
       ][step];
-      const zg = D.z[g];
       const live = [
-        String.raw`\textstyle p_{${tex(g)}} = \frac{e^{${num(zg, 2)}}}{${num(Z1, 2)}} = ${num(D.pRef[g], 2)}`,
-        String.raw`\textstyle p_{${tex(g)}}(\tau = ${tau.toFixed(2)}) = \frac{e^{${num(zg / tau, 2)}}}{${num(Zt, 2)}} = ${num(D.pRaw[g], 2)}`,
-        String.raw`\sum_{u \in S} p_u = ${num(D.mass, 3)}, \quad |S| = ${D.kept.length}`,
-        U == null ? String.raw`U \sim \mathrm{Uniform}[0, 1)`
-          : String.raw`${num(D.start[pr], 2)} \le U = ${num(U, 4)} < ${num(D.start[pr] + D.pFin[pv], 2)} \Rightarrow ${tex(pv)}`,
+        String.raw`\textstyle p_{${tex(g)}} = \frac{e^{0}}{${num(Zs, 3)}} = ${num(D.pRef[g], 2)}`,
+        String.raw`\textstyle p_{${tex(g)}}(\tau = ${tau.toFixed(2)}) = \frac{e^{0}}{${num(Zt, 3)}} = ${num(D.pRaw[g], 2)}`,
+        String.raw`\sum_{u \in S} p_u = ${num(D.mass, 3)}, \quad |S| = ${nF}`,
+        seg == null ? String.raw`U \sim \mathrm{Uniform}[0, 1)`
+          : String.raw`\begin{aligned} ${seg[0]} &\le U = ${seg[1]} \\ &< ${seg[2]} \;\Rightarrow\; ${tex(pv)} \end{aligned}`,
       ][step];
-      eqMain.innerHTML = texHTML(main, { display: true });
-      eqLive.innerHTML = texHTML(live, { display: true });
+      put(eqMain, main);
+      put(eqLive, live);
+      stepLab.textContent = STEPS[step];
+      eqCheck.replaceChildren(checkBadge(D.maxDiff, 0, { label: 'untempered softmax = traced probs' }));
 
       statH.innerHTML = `Entropy <b>${D.H.toFixed(2)}</b> nats, about <b>${Math.exp(D.H).toFixed(1)}</b> equally likely characters.`;
       statG.innerHTML = `Greedy (argmax) takes ${top}, at <b>${pct(D.topFin)}</b>.`;
-      statU.innerHTML = sweeping ? 'Drawing U from the seeded generator…'
+      statU.innerHTML = !drawing ? '' : sweeping ? 'Drawing U from the seeded generator…'
         : U == null ? (hist ? `The histogram holds ${hist.n} draws. Press <b>Sample</b> to draw one and see its U.` : 'No draw yet. Press <b>Sample</b>.')
-          : `U = <b>${U.toFixed(4)}</b> lands on “<b>${lab(pv)}</b>”, the segment from ${pct(D.start[pr])} to ${pct(D.start[pr] + D.pFin[pv])}.`;
+          : `U = <b>${seg[1]}</b> lands on “<b>${nm(pv)}</b>”, the segment from ${seg[0]} to ${seg[2]}.`;
+      header.setSub(`Position <b>${D.t}</b> (<b>“${tok(D.t)}”</b>) scores all ${D.V} vocabulary entries. Sampling decides which one comes next.`);
 
-      // The pointer, on every step: the selected position is nearly certain at these settings, so the bars hardly move
-      // there. It points to a position where they do move. Hidden when a bidirectional mask owns the note.
-      let pointer = '';
-      if (!D.seesNext && D.topFin >= NEAR) {
-        pointer = D.spread
-          ? `Position ${D.t} is nearly certain at these settings. Select <button type="button" class="sp-go" data-pos="${D.spread.r}">position ${D.spread.r}</button> (top ${pct(D.spread.top)}) to see the settings act.`
-          : `Position ${D.t} is nearly certain at these settings. No other position in this text has a top probability below ${pct(NEAR)}.`;
+      const nt = noteHtml(D, step);
+      const key = nt ? `${nt.cls}|${nt.html}` : '';
+      if (key !== lastNote) {
+        lastNote = key;
+        if (nt) { note.className = nt.cls; note.innerHTML = nt.html; }
       }
-      ptr.hidden = !pointer;
-      if (pointer !== lastPointer) { lastPointer = pointer; ptr.innerHTML = pointer; }
-
-      check.replaceChildren(checkBadge(D.maxDiff, 0, { label: 'untempered softmax = traced probs' }));
+      note.hidden = !nt;
     }
 
     // ------------------------------------------------------------------ draws
@@ -439,7 +523,7 @@ export default {
           return;
         }
         anim = 0;
-        paint();                               // landed: the pick is shown and the bar pulses
+        paint();                               // landed: the pick is shown and its bar pulses
         pulse(cols[cur.rankOf[pickFor(cur, u)]]?.fill);
       };
       anim = requestAnimationFrame(sweep);
@@ -468,13 +552,20 @@ export default {
       paint();
     }
 
-    // Steps set one thing each: the raw softmax, a temperature (flatter), the filters at that temperature,
-    // then a draw. A step the reader picks (story dot, arrow or key) ends the walk. A jump made by a control
-    // keeps the values the reader has set (see own()).
+    // Steps set one thing each: the raw softmax, a temperature (flatter), the filters at that temperature, then a
+    // draw. A step the reader picks (story dot, arrow or key) ends the walk. A jump made by a control keeps the
+    // values the reader has set (see own()).
     function setStep(i) {
       if (!autoDriving && !keeping) stopAuto();
+      if (i !== DRAW_STEP) { cancelAnimationFrame(anim); anim = 0; }     // leaving the draw ends its sweep
+      const from = view.step;
       view.step = i;
-      if (i === 3) { paint(); draw(); return; }
+      if (i === DRAW_STEP) {
+        // Reached before the filters step with the filters off: the draw uses the filtered distribution, as the walk does.
+        if (from < 2 && view.k === 0 && view.p >= 1) setSettings(SETTINGS[2]);
+        draw();
+        return;
+      }
       if (keeping) paint();
       else setSettings(SETTINGS[i]);
     }
@@ -484,7 +575,8 @@ export default {
     paint();
     appear([header.el, picker.el, plot, side], { stagger: MOTION.stagger });
 
-    // The walk runs once on first view, so the scene explains itself: one step every MOTION.step ms.
+    // The walk runs once on first view, so the scene explains itself: one step every MOTION.step ms, the first one
+    // read for a full step after the zoom has finished (as lm-head.js does).
     function walk() {
       auto = 0;
       if (view.step >= STEPS.length - 1) return;
@@ -492,8 +584,9 @@ export default {
       try { ctx.setStep(view.step + 1); } finally { autoDriving = false; }
       if (view.step < STEPS.length - 1) auto = setTimeout(walk, MOTION.step);
     }
-    auto = setTimeout(walk, 900);
+    auto = setTimeout(walk, ZOOM_MS + MOTION.step);
     el.addEventListener('pointerdown', stopAuto);
+    el.addEventListener('atlas:interrupt', stopAuto);
 
     const offs = [ctx.on('trace', paint), ctx.on('select', paint)];
     return {
@@ -501,6 +594,7 @@ export default {
         stopAuto();
         cancelAnimationFrame(anim);
         el.removeEventListener('pointerdown', stopAuto);
+        el.removeEventListener('atlas:interrupt', stopAuto);
         el.removeEventListener('click', onPick);
         hideTip();
         offs.forEach((f) => f());
