@@ -346,7 +346,10 @@ export function startAtlas(root) {
       if (!present.length) body.append(h('p', { class: 'muted' }, 'No equations for this view yet.'));
       for (const k of present) {
         const cell = normalizeCell(st, k, st.cellFocus?.key === k ? st.cellFocus.cell : rightArg.cell);
-        const c = mathCard(st, k, cell);
+        const c = mathCard(st, k, cell, {
+          onMath: key => openRight('maths', { key }),
+          onReference: (reference, returnMath) => openRight('code', { reference, returnMath }),
+        });
         if (c) {
           const controls = cellControls(st, k, cell, (next) => store.focusCell(k, next));
           if (controls) body.append(controls);
@@ -382,7 +385,9 @@ export function startAtlas(root) {
       if (ref) {
         const source = referenceSource(ref.file), range = source?.regions[ref.region];
         if (!source || !range) { body.append(h('p', { class: 'muted' }, 'This reference region is unavailable.')); return; }
-        body.append(h('p', { class: 'small muted' }, `reference/${ref.file} · executable PyTorch counterpart, checked against this lesson’s JavaScript implementation.`));
+        if (rightArg.returnMath) body.append(ui.button('Return to explanation', () => openRight('maths', { key: rightArg.returnMath })));
+        const language = ref.file === 'numpy_transformer.py' ? 'NumPy' : 'Python';
+        body.append(h('p', { class: 'small muted' }, `reference/${ref.file} · executable ${language} reference. Validation and assumptions are described in the linked explanation.`));
         body.append(codeView({ lines: source.lines, ...range, maxHeight: 4000 }).el);
         return;
       }

@@ -5,6 +5,7 @@ import { mathFor, mathEquation, runLive } from './math/index.js';
 import { dimValues } from './describe.js';
 import { equationSources } from './math/sources.js';
 import { REFERENCES } from './references.js';
+import { furtherStudy } from './math/study.js';
 
 function dimsText(dims, cfg, T) {
   if (!dims?.length) return '';
@@ -13,7 +14,7 @@ function dimsText(dims, cfg, T) {
 }
 
 /** Full card. `cell` ({r, band, x}) enables the live instantiation. */
-export function mathCard(state, key, cell = null, { compact = false } = {}) {
+export function mathCard(state, key, cell = null, { compact = false, onMath = null, onReference = null } = {}) {
   const e = mathFor(key);
   if (!e) return null;
   const T = state.ids.length;
@@ -38,8 +39,14 @@ export function mathCard(state, key, cell = null, { compact = false } = {}) {
   if (!compact && e.derivation?.length) {
     for (const d of e.derivation) {
       parts.push(h('details', { class: 'math-deriv' }, h('summary', null, d.title),
-        d.steps.map((s) => tex(s, { display: true })), d.note && h('p', { class: 'small muted' }, d.note)));
+        d.steps.map((s) => tex(s, { display: true })), d.note && h('p', { class: 'small muted' }, d.note),
+        d.reference && onReference ? studyButton(d.reference.label || 'Read the implementation', () => onReference(d.reference, key), { mathReference: d.reference.region }) : null));
     }
+  }
+  if (!compact && onMath) {
+    const related = furtherStudy(key).filter(k => mathFor(k));
+    if (related.length) parts.push(h('details', { class: 'math-deriv math-study' }, h('summary', null, 'Further study'),
+      related.map(k => h('div', null, studyButton(mathFor(k).title, () => onMath(k), { mathConcept: k })))));
   }
   const sources = equationSources(key, state.config);
   if (sources.length) parts.push(h('div', { class: 'math-sources' }, h('div', { class: 'eyebrow' }, 'Equation sources & implementation conventions'),
@@ -49,6 +56,11 @@ export function mathCard(state, key, cell = null, { compact = false } = {}) {
         h('p', { class: 'muted' }, source.note));
     })));
   return h('div', { class: 'math-card' }, parts);
+}
+
+function studyButton(label, action, dataset) {
+  return h('button', { type: 'button', class: 'btn small', onClick: action, dataset,
+    style: { marginBlock: '6px', maxWidth: '100%', whiteSpace: 'normal', textAlign: 'left' } }, label);
 }
 
 /** HTML for tooltips: compact formula and, if available, the live line. */

@@ -1,7 +1,11 @@
 """Counterexamples and exact identities behind the explanatory corrections."""
 import unittest
+import sys
+from pathlib import Path
 import torch
 from torch.nn import functional as F
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'reference'))
+from numpy_transformer import gelu_forward, gelu_backward, rmsnorm_forward, rmsnorm_backward
 torch.set_num_threads(1)
 
 class Assumptions(unittest.TestCase):
@@ -34,6 +38,25 @@ class Assumptions(unittest.TestCase):
     def test_large_common_logits_do_not_force_saturation(self):
         scores = torch.tensor([10000., 10000.], dtype=torch.float64)
         torch.testing.assert_close(scores.softmax(0), torch.tensor([.5, .5], dtype=torch.float64))
+
+    def test_implemented_gelu_derivative(self):
+        x = torch.linspace(-5, 5, 31, dtype=torch.float64, requires_grad=True)
+        wanted, = torch.autograd.grad(F.gelu(x, approximate='tanh').sum(), x)
+        _, cache = gelu_forward(x.detach().numpy())
+        got = gelu_backward(torch.ones_like(x).numpy(), cache)
+        torch.testing.assert_close(torch.from_numpy(got), wanted, atol=1e-12, rtol=1e-12)
+
+    def test_rmsnorm_backward_including_zero(self):
+        x = torch.tensor([[0., 0., 0., 0.], [1., -2., .5, 3.]], dtype=torch.float64, requires_grad=True)
+        gamma = torch.tensor([1., .5, 2., -1.], dtype=torch.float64, requires_grad=True)
+        dy = torch.tensor([[1., 2., -1., .2], [-2., .4, 1., 3.]], dtype=torch.float64)
+        for eps in (1e-5, .1):
+            y = F.rms_norm(x, (4,), gamma, eps=eps)
+            dx, dg = torch.autograd.grad(y, (x, gamma), dy)
+            _, cache = rmsnorm_forward(x.detach().numpy(), gamma.detach().numpy(), eps)
+            got = rmsnorm_backward(dy.numpy(), cache)
+            for a, b in zip(got, (dx, dg)):
+                torch.testing.assert_close(torch.from_numpy(a), b, atol=1e-11, rtol=1e-11)
 
 if __name__ == '__main__':
     unittest.main()

@@ -3,6 +3,9 @@ import { parseKey } from '../describe.js';
 
 export function equationSources(key, cfg) {
   const { pattern } = parseKey(key);
+  if (pattern === 'concept:attention-backward') return [{ id: 'vaswani2017', where: '§3.2.1–3.2.3', note: 'The forward attention definition is from the paper. The complete VJP is derived here and checked against SDPA/autograd; no dropout is included.' }, { id: 'ainslie2023gqa', where: '§2.2', note: 'Shared KV heads require summing their repeated query-head gradient contributions.' }];
+  if (pattern === 'concept:rmsnorm-backward') return [{ id: 'zhang2019rms', where: '§4', note: 'The epsilon-aware VJP is derived for the RMSNorm denominator used by Atlas and checked against PyTorch.' }];
+  if (pattern === 'concept:gelu') return [{ id: 'hendrycks2016', where: '§2', note: 'Exact GELU and its tanh approximation are different functions. The code uses the approximation and differentiates that computation.' }];
   if (pattern === 'concept:architecture-choices') return [{ id: 'radford2019', where: '§2.3', note: 'Pre-LayerNorm and an additional final norm in GPT-2.' }, { id: 'touvron2023', where: '§2.2', note: 'RMSNorm, SwiGLU and rotary positions.' }, { id: 'ainslie2023gqa', where: '§2.2', note: 'Contiguous groups of queries share KV heads.' }];
   if (pattern === 'concept:encoder-decoder') return [{ id: 'vaswani2017', where: '§3.1, §3.2.3, §3.3–3.5', note: 'The encoder–decoder lesson follows the original post-norm topology, √d embedding scaling and tied vocabulary weights. This differs from the main configurable decoder engine.' }];
   if (pattern === 'concept:adamw') return [{ id: 'adamw2017', where: 'Algorithm 2', note: 'The decay is decoupled from the adaptive gradient update. Parameter grouping is an explicit lesson convention.' }];

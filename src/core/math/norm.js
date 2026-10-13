@@ -382,6 +382,7 @@ export const ENTRIES = {
       },
       {
         title: 'Chain rule',
+        reference: { file: 'numpy_transformer.py', region: 'layernorm_backward' },
         steps: [
           '\\frac{\\partial L}{\\partial x_{t,c}} = \\sum_{k=1}^{d} g_{t,k}\\,\\frac{\\partial \\hat x_{t,k}}{\\partial x_{t,c}} = \\frac{1}{s_t}\\Big(g_{t,c} - \\frac{1}{d}\\sum_{k=1}^{d} g_{t,k} - \\hat x_{t,c}\\,\\frac{1}{d}\\sum_{k=1}^{d} g_{t,k}\\hat x_{t,k}\\Big)',
         ],

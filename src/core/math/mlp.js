@@ -189,6 +189,12 @@ export const ENTRIES = {
         steps: ['\\Phi(x) \\approx \\tfrac12\\Big(1+\\tanh\\Big(\\sqrt{\\tfrac{2}{\\pi}}\\,(x+0.044715\\,x^{3})\\Big)\\Big)'],
         note: 'The tanh form avoids erf and is the approximation used by GPT-2 and by the reference model. Its largest error against the exact GELU is about 4.7e-4 (on [-8, 8], near x = -2.7).',
       },
+      {
+        title: 'Derivative of the tanh form used by the code',
+        steps: [String.raw`c=\sqrt{2/\pi},\quad a=0.044715,\quad u=c(x+ax^3),\quad t=\tanh(u)`, String.raw`\frac{dy}{dx}=\tfrac12(1+t)+\tfrac12x(1-t^2)c(1+3ax^2)`],
+        note: 'Differentiate the implemented approximation itself. The Φ(x)+xφ(x) expression above is the derivative of exact GELU; it is not the exact derivative of this tanh computation. Backpropagation multiplies the upstream gradient by the displayed slope.',
+        reference: { file: 'numpy_transformer.py', region: 'gelu_backward' },
+      },
     ],
   },
 

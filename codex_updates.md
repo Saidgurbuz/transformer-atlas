@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Optional backward explanations
+
+Connected the full attention VJP, RMSNorm and implemented GELU derivatives to executable source through collapsed equation sections. Desktop/mobile checks verify source round trips and unchanged main-lesson text; derivative and equation checks pass.
+
 ## 2026-10-13 · Attention backward reference
 
 Added a readable manual attention VJP and KV-sharing gradient reduction, including rectangular attention, additive score bias and masked edges. Independent SDPA/autograd comparisons verify the complete Q/K/V chain and contiguous head-group accumulation.
