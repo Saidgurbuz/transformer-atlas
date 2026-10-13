@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Softmax scene correctness
+
+Removed a remaining display equation that added a Boolean mask as if it were an additive bias. Captions now follow the configured score/mask conventions and disclose floating-point roundoff.
+
 ## 2026-10-13 · Encoder–decoder lesson
 
 Added real source/target attention matrices and residual states through all three decoder sub-layers, with selectable heads, queries and padding examples. Numerical/PyTorch source correspondence and desktop/mobile bounds were verified without modifying the main model.

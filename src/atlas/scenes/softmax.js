@@ -179,7 +179,7 @@ export default {
         `m = \\max_j \\hat S_{${d.q},j} = ${num(d.m, 2)}, \\qquad \\hat S_{${d.q},j} - m \\le 0`,
         `e^{\\hat S_{${d.q},j} - m}\\;:\\; e^{${num(d.sc[j] - d.m, 2)}} = ${num(d.ex[j], 3)}, \\quad e^{-\\infty} = 0`,
         `\\Aw_{${d.q},${j}} = \\frac{e^{\\hat S_{${d.q},${j}} - m}}{\\sum_k e^{\\hat S_{${d.q},k} - m}} = \\frac{${num(d.ex[j], 3)}}{${num(d.Z, 3)}} = ${num(d.p[j], 3)}`,
-        `\\Aw = \\softmax\\!\\Big(\\tfrac{\\Q\\K^{\\top}}{\\sqrt{d_h}} + \\Mk\\Big) \\in \\R^{T\\times T}`,
+        `\\Aw = \\softmax(\\hat S) \\in \\R^{T\\times T},\\qquad \\hat S_{ij}=-\\infty\\text{ for blocked keys}`,
       ];
       eq.replaceChildren(
         h('div', { class: 'k-label', style: { textAlign: 'left' } }, STEPS[step]),
@@ -190,11 +190,11 @@ export default {
         eq.append(h('div', { class: 'k-caption' }, 'Z = Σ e^{…} = ', z));
       }
       const words = [
-        'Each bar is a scaled dot product q·k for one key. Masked keys (the future, for a causal model) are −∞.',
+        'Each bar is a masked attention score from the current model. Scaling and positional bias follow its configuration; blocked keys are −∞.',
         'Subtracting the row maximum changes nothing mathematically, but keeps every exponent ≤ 0 so e^x cannot overflow.',
         'Exponentiating makes everything positive and stretches gaps: a score 2 higher becomes e² ≈ 7.4 times larger. Masked keys become exactly 0.',
-        `Dividing by the sum Z gives weights that add up to exactly 1. The strongest key, “${ctx.label(j)}”, gets ${(d.p[j] * 100).toFixed(1)}%.`,
-        'Doing this for every query gives the head’s full attention pattern: one row per query, causal triangle included.',
+        `Dividing by the sum Z gives weights that sum to 1 up to floating-point roundoff. The strongest key, “${ctx.label(j)}”, gets ${(d.p[j] * 100).toFixed(1)}%.`,
+        'Doing this for every query gives the head’s full attention pattern: one row per query, with the selected model’s allowed-key mask preserved.',
       ];
       cap.set(words[step]);
     }
