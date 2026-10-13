@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Exercise definitions and runner
+
+Added 16 shape, derivation, debugging and coding tasks with worked equations and verified Python operation links. Coding tests run in a disposable worker with cancellation/time limits; all supplied solutions pass and unfinished starters fail.
+
 ## 2026-10-13 · Lesson source routing
 
 Fixed an earlier selected model cell overriding a lesson’s explicit Python source or maths request. Browser checks verify that lesson navigation uses its own reference while preserving the original cell selection.
