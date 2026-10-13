@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Invariants and counterexamples
+
+Added optional explanations of softmax/normalization invariants, head-basis freedom, token permutations and cached/full-forward equivalence. Executable PyTorch checks include fixed-causal-mask and rotary counterexamples, plus ten position/mask cache configurations.
+
 ## 2026-10-13 · Optional backward explanations
 
 Connected the full attention VJP, RMSNorm and implemented GELU derivatives to executable source through collapsed equation sections. Desktop/mobile checks verify source round trips and unchanged main-lesson text; derivative and equation checks pass.

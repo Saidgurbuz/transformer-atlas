@@ -14,8 +14,9 @@ import { ENTRIES as mlp } from './mlp.js';
 import { ENTRIES as head } from './head.js';
 import { ENTRIES as concepts } from './concepts.js';
 import { ENTRIES as backward } from './backward.js';
+import { ENTRIES as invariants } from './invariants.js';
 
-export const MATH = { ...embed, ...positions, ...qkv, ...attention, ...norm, ...mlp, ...head, ...concepts, ...backward };
+export const MATH = { ...embed, ...positions, ...qkv, ...attention, ...norm, ...mlp, ...head, ...concepts, ...backward, ...invariants };
 
 export function mathFor(key) { return MATH[parseKey(key).pattern] ?? MATH[key] ?? null; }
 export function mathEquation(key, cfg, { compact = false } = {}) {

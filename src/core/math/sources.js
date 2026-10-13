@@ -3,6 +3,10 @@ import { parseKey } from '../describe.js';
 
 export function equationSources(key, cfg) {
   const { pattern } = parseKey(key);
+  if (pattern === 'concept:norm-epsilon') return [{ id: 'ba2016', where: '§3', note: 'The epsilon-aware variance and radial derivative are derived for the implemented normalization. They are not a claim of exact scale invariance with ε > 0.' }, { id: 'zhang2019rms', where: '§4', note: 'RMSNorm omits centering; learned gain and epsilon affect the invariance statement.' }];
+  if (pattern === 'concept:head-basis') return [{ id: 'elhage2021', where: 'QK and OV circuits', note: 'The basis-change and rotary compatibility conditions are derived here with nn.Linear weight orientation explicit.' }];
+  if (pattern === 'concept:attention-invariants' || pattern === 'concept:permutation') return [{ id: 'vaswani2017', where: '§3.2–3.5', note: 'These properties and counterexamples are derived from the attention, mask and tokenwise-layer definitions; they are not empirical performance results.' }];
+  if (pattern === 'concept:cache-equivalence') return [{ id: 'vaswani2017', where: '§3.2.3', note: 'Causal reads support the layer-by-layer cache-validity argument; positional/configuration and numerical conditions are made explicit here.' }];
   if (pattern === 'concept:attention-backward') return [{ id: 'vaswani2017', where: '§3.2.1–3.2.3', note: 'The forward attention definition is from the paper. The complete VJP is derived here and checked against SDPA/autograd; no dropout is included.' }, { id: 'ainslie2023gqa', where: '§2.2', note: 'Shared KV heads require summing their repeated query-head gradient contributions.' }];
   if (pattern === 'concept:rmsnorm-backward') return [{ id: 'zhang2019rms', where: '§4', note: 'The epsilon-aware VJP is derived for the RMSNorm denominator used by Atlas and checked against PyTorch.' }];
   if (pattern === 'concept:gelu') return [{ id: 'hendrycks2016', where: '§2', note: 'Exact GELU and its tanh approximation are different functions. The code uses the approximation and differentiates that computation.' }];
