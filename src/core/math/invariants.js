@@ -24,6 +24,7 @@ export const ENTRIES = {
   },
   'concept:head-basis': {
     title: 'What is identifiable about an attention head?',
+    scope: 'The unrestricted basis-change argument assumes a bias-free, unrotated head without QK normalization.',
     tex: t`W_{QK}=W_Q^\top W_K,\qquad W_{OV}=W_O^{(h)}W_V`,
     compact: t`W_{QK}=W_Q^\top W_K,\quad W_{OV}=W_O^{(h)}W_V`,
     symbols: [{ tex: t`W_Q,W_K,W_V`, text: 'one head’s projections stored [head width,model width]' }, { tex: t`W_O^{(h)}`, text: 'columns of W_O consuming this head: [model width,head width]' }],

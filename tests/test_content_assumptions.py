@@ -9,6 +9,18 @@ from numpy_transformer import gelu_forward, gelu_backward, rmsnorm_forward, rmsn
 torch.set_num_threads(1)
 
 class Assumptions(unittest.TestCase):
+    def test_residual_jacobians_have_order(self):
+        a = torch.tensor([[0., .2], [-.1, 0.]], dtype=torch.float64)
+        b = torch.tensor([[0., 0.], [.3, .1]], dtype=torch.float64)
+        x = torch.tensor([1., 2.], dtype=torch.float64)
+        def layers(z):
+            y = z + a @ z
+            return y + b @ y
+        jacobian = torch.autograd.functional.jacobian(layers, x)
+        eye = torch.eye(2, dtype=torch.float64)
+        torch.testing.assert_close(jacobian, (eye + b) @ (eye + a))
+        self.assertGreater(((eye + b) @ (eye + a) - (eye + a) @ (eye + b)).norm().item(), .01)
+
     def test_epsilon_changes_radial_invariance(self):
         x = torch.tensor([-2., -.5, 1., 3.], dtype=torch.float64)
         centered = x - x.mean()

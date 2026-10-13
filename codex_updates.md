@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Jacobian conventions
+
+Made residual Jacobian composition order explicit and qualified residual-enabled and basis-change assumptions. A noncommuting two-layer PyTorch counterexample verifies the order; normalization equations and NumPy reference checks pass.
+
 ## 2026-10-13 · MLA algebra and research navigation
 
 Added a clearly scoped MLA cache/projection explanation with dense and absorbed Python paths, matching outputs and gradients. Connected related research sections through closed study links and verified all 305 links and 33 executable source regions.

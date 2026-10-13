@@ -422,15 +422,15 @@ export const ENTRIES = {
           '\\text{pre-LN:}\\quad \\xres \\mapsto \\xres + \\mathcal{F}\\big(\\LN(\\xres)\\big)',
           '\\text{post-LN:}\\quad \\xres \\mapsto \\LN\\big(\\xres + \\mathcal{F}(\\xres)\\big)',
         ],
-        note: 'Pre-LN normalises only what a sub-layer reads, so the stream is never normalised in place. Post-LN normalises the sum, so every block output is normalised. The original Transformer (Vaswani et al. 2017) is post-LN. GPT-2 (Radford et al. 2019) and LLaMA (Touvron et al. 2023) are pre-LN.',
+        note: 'These block formulas assume residuals are enabled; the residual-off ablation removes the identity path. Pre-LN normalises what a sub-layer reads, while post-LN normalises the sum. The original Transformer is post-LN; GPT-2 and LLaMA are pre-LN.',
       },
       {
         title: 'Pre-LN keeps an identity path',
         steps: [
           '\\frac{\\partial \\xres_{\\ell+1}}{\\partial \\xres_\\ell} = I + J_\\ell',
-          '\\frac{\\partial \\xres_{L}}{\\partial \\xres_{\\ell}} = \\prod_{k=\\ell}^{L-1}\\big(I + J_k\\big) = I + \\sum_{k=\\ell}^{L-1} J_k + \\cdots',
+          '\\frac{\\partial \\xres_{L}}{\\partial \\xres_{\\ell}} = (I+J_{L-1})\\cdots(I+J_\\ell) = I + \\sum_{k=\\ell}^{L-1} J_k + \\cdots',
         ],
-        note: 'J_k = ∂(x_{k+1} − x_k)/∂x_k is the Jacobian of block k’s residual increment. An explicit identity term provides a direct path, but the full Jacobian product can still amplify, attenuate or cancel gradients. Xiong et al. (2020) analyze gradient scales at initialization under their model assumptions and remove warm-up in their experiments; this does not guarantee stability for every pre-norm training recipe.',
+        note: 'J_k = ∂(x_{k+1} − x_k)/∂x_k uses output-by-input Jacobian indices: later layers multiply on the left, and a column adjoint uses the transpose. An identity term provides a direct path, but the full product can amplify, attenuate or cancel gradients. Xiong et al. analyze initialization scales under their assumptions and omit warm-up in their experiments; this is not a universal stability guarantee.',
       },
       {
         title: 'Post-LN has no bare identity',
