@@ -13,6 +13,7 @@ Patterns are trace-key patterns (`L{i}.attn.q`, `emb.tok`, `logits`) or `concept
   compact: '...',        // one line for tooltips
   symbols: [{ tex: '\\Q', text: 'queries of this head', dims: ['T', 'dh'] }],  // dims use T d H Hkv dh F V
   derivation: [{ title: 'Why …', steps: ['tex', 'tex'], note: 'one or two plain sentences' }],
+  scope: 'Optional qualification shown only in the detailed equation card.',
   live(ctx) {            // optional for tensors; omit for concept:* entries
     // ctx: {key, trace, cfg, model, ids, label(i), vocab(v), layer, head, row, col}
     //   2-D tensor [T, X]: row = token t, col = x.  3-D [B, T, X]: head = b, row = t, col = x.
@@ -22,6 +23,8 @@ Patterns are trace-key patterns (`L{i}.attn.q`, `emb.tok`, `logits`) or `concept
   },
 }
 ```
+
+Derivations can add `reference: {file, region, label}` for an executable source link. Deep topics are connected in `study.js` and remain collapsed; use [research content guidance](RESEARCH_CONTENT.md) for assumptions, evidence and verification conventions.
 
 Helpers in `src/core/math/util.js`: `at2, at3, row2, row3, dh, kvHead, attnInput, mlpInput,
 streamBefore, wrow (row of an nn.Linear weight), dotTerms, listTerms, dot, num`.

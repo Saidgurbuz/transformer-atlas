@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · v1.5.0 research-content release
+
+Completed all six content areas as optional equation/source depth and documented their assumptions and scope. Validation passes 549 parity checks, 12,695 maths checks, 34 Python tests, 36 author-code comparisons, 305 study links, 33 source regions and desktop/mobile/standalone browser interactions.
+
 ## 2026-10-13 · Rotary phase precision
 
 Computed reference rotary phases before casting sine/cosine to the input dtype, preventing bfloat16 position rounding from merging adjacent long-context tokens. Added that counterexample and exercised sliding-cache checks with an active two-token window; all 34 Python tests pass.

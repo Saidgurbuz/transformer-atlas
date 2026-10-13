@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.0 (2026-10-13)
+
+- Optional research depth in existing equation drawers, with collapsed derivations, executable source links and return navigation.
+- Qualified normalization, masking, score-scaling, Jacobian-order and pre/post-norm explanations with exact assumptions and counterexamples.
+- Complete attention VJP, shared/broadcast gradient reductions, RMSNorm and implemented GELU derivatives.
+- Softmax, normalization, basis-change, permutation and cached-decoding invariants with explicit boundaries.
+- QK/OV and MLP interpretation distinguishes algebra, direct vocabulary lenses, trained-model observations and causal hypotheses.
+- Versioned SDPA mask/dropout/GQA/precision examples; separate QK-norm, score-capping, PI/YaRN and MLA references with primary citations.
+- Checked dense/absorbed MLA outputs and gradients, YaRN author-code conventions and long-position precision; preserved concise main views.
+
 ## 1.4.0 (2026-10-13)
 
 - Sixteen derivation, shape, debugging and coding exercises with worked solutions, timed worker execution and browser-local progress.

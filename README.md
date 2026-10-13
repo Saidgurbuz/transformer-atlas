@@ -1,6 +1,6 @@
 # Transformer Atlas
 
-**Live:** https://saidgurbuz.github.io/transformer-atlas/ · version 1.4.0 ([changelog](CHANGELOG.md))
+**Live:** https://saidgurbuz.github.io/transformer-atlas/ · version 1.5.0 ([changelog](CHANGELOG.md))
 
 A full-screen, zoomable atlas of a decoder-only Transformer running a real (tiny, trained)
 model in your browser. Start from a 3D view of the whole model, click a part to zoom into it
@@ -42,6 +42,7 @@ the exact line of PyTorch that computes it. Arrow keys walk the forward pass as 
 - **Encoder–decoder computation** and **Architecture comparison**: real rectangular cross-attention and source-linked structural recipes.
 - **Transformer practice**: sixteen derivation, shape, debugging and runnable JavaScript tasks with worked reasoning and local progress.
 - [Executable lesson conventions and validation](docs/LESSONS.md) explain which models are isolated, how the equations map to Python and what each check covers.
+- **Maths → Further study** adds optional research depth: complete backward rules, invariants/counterexamples, interpretation scope, numerical contracts, QK normalization, YaRN and MLA. [Research content and validation](docs/RESEARCH_CONTENT.md) documents their assumptions and executable references.
 
 - Atlas levels: every component, animated on real numbers, with its equation and its line of code.
 - **Code ↔ forward pass** (menu): walk `reference/model.py` line by line with the live tensors.
