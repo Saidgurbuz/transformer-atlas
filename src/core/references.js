@@ -7,6 +7,8 @@
 import { h } from '../ui/dom.js';
 
 export const REFERENCES = [
+  { id: 'deepseek2024v3', title: 'DeepSeek-V3 Technical Report', authors: 'DeepSeek-AI', year: 2024, org: 'DeepSeek', type: 'paper',
+    url: 'https://arxiv.org/abs/2412.19437', views: ['attention', 'generation', 'scaling'], why: 'Multi-head Latent Attention stores a compressed KV latent and a decoupled rotary key; its reconstruction and score equations support the MLA reference.' },
   { id: 'yarn-code', title: 'YaRN authors’ rotary embedding implementation', authors: 'YaRN authors', year: null, org: 'YaRN repository', type: 'code',
     url: 'https://github.com/jquesnelle/yarn/blob/master/scaled_rope/LlamaYaRNScaledRotaryEmbedding.py', views: ['positions', 'generation'], why: 'Makes the index-ramp and sine/cosine magnitude conventions explicit beside the paper equations.' },
   { id: 'henry2020qknorm', title: 'Query-Key Normalization for Transformers', authors: 'Henry et al.', year: 2020, org: 'EMNLP Findings', type: 'paper',

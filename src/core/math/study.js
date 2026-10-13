@@ -3,15 +3,15 @@ import { parseKey } from '../describe.js';
 export function furtherStudy(key) {
   const { pattern } = parseKey(key);
   let keys = [];
-  if (/\.attn\./.test(pattern) || pattern === 'mask' || pattern === 'concept:online-attention')
+  if (/\.attn\./.test(pattern) || pattern === 'mask' || /concept:(online-attention|attention-backward|attention-invariants|head-basis|attention-circuits|attention-numerics|qk-normalization|mla)$/.test(pattern))
     keys = ['concept:attention-backward', 'concept:attention-invariants', 'concept:head-basis', 'concept:attention-circuits', 'concept:attention-numerics', 'concept:qk-normalization', 'concept:mla'];
-  if (/\.ln[12]$|^lnf$|\.resid_|\.add[12]$/.test(pattern) || /concept:(layernorm-backward|pre-vs-post)/.test(pattern))
+  if (/\.ln[12]$|^lnf$|\.resid_|\.add[12]$/.test(pattern) || /concept:(layernorm-backward|rmsnorm-backward|norm-epsilon|pre-vs-post)/.test(pattern))
     keys = ['concept:layernorm-backward', 'concept:rmsnorm-backward', 'concept:norm-epsilon', 'concept:pre-vs-post'];
-  if (/\.mlp\./.test(pattern) || /concept:(gelu|swiglu|key-value-memory)/.test(pattern))
+  if (/\.mlp\./.test(pattern) || /concept:(gelu|swiglu|key-value-memory|mlp-interpretation)/.test(pattern))
     keys = ['concept:gelu', 'concept:swiglu', 'concept:mlp-interpretation', 'concept:training-gradient'];
-  if (/emb\.pos|\.attn\.[qk]_rot|concept:(rope-relative|sinusoidal|alibi)/.test(pattern))
+  if (/emb\.pos|\.attn\.[qk]_rot|concept:(rope-relative|rope-context|sinusoidal|alibi|permutation)/.test(pattern))
     keys.push('concept:rope-relative', 'concept:rope-context', 'concept:permutation', 'concept:head-basis');
-  if (pattern === 'concept:kv-cache') keys = ['concept:cache-equivalence', 'concept:attention-numerics', 'concept:mla'];
+  if (pattern === 'concept:kv-cache' || pattern === 'concept:cache-equivalence') keys = ['concept:cache-equivalence', 'concept:attention-numerics', 'concept:rope-context', 'concept:mla'];
   if (pattern === 'concept:training-gradient') keys = ['concept:attention-backward', 'concept:layernorm-backward', 'concept:rmsnorm-backward', 'concept:gelu', 'concept:mlp-interpretation'];
   if (pattern === 'concept:tensor-layout') keys = ['concept:attention-backward', 'concept:permutation', 'concept:head-basis'];
   if (pattern === 'concept:architecture-choices' || pattern === 'concept:encoder-decoder')

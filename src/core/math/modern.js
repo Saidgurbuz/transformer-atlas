@@ -1,5 +1,18 @@
 const t = String.raw;
 export const ENTRIES = {
+  'concept:mla': {
+    title: 'MLA: latent KV storage and absorbed projections',
+    scope: 'Separate bias-free MLA algebra reference; the main model uses MHA/GQA, not MLA.',
+    tex: t`\mathrm{cache\ bytes}=BLS(d_c+d_R)b`,
+    compact: t`\mathrm{cache\ bytes}=BLS(d_c+d_R)b`,
+    symbols: [{ tex: 'B,L,S', text: 'batch size, layer count and cached key-token count' }, { tex: 'd_c,d_R', text: 'latent KV width and shared rotary-key width' }, { tex: 'b', text: 'bytes per stored scalar; excludes weights and allocation overhead' }],
+    derivation: [
+      { title: 'What is stored and what is reconstructed', steps: [t`c_j=W^{DKV}x_j,\quad k_{j,h}^C=W_h^{UK}c_j,\quad v_{j,h}^C=W_h^{UV}c_j`, t`k_j^R=\mathrm{RoPE}(W^{KR}x_j)`], note: 'Cache c and the shared rotary key, rather than all expanded headwise K/V. The example accepts already projected queries, latent vectors and rotated keys; query compression and normalization are outside its scope.', reference: { file: 'mla_reference.py', region: 'mla_dense' } },
+      { title: 'Content and position scores are separate', steps: [t`s_{ij,h}=\frac{(q_{i,h}^C)^\top W_h^{UK}c_j+(q_{i,h}^R)^\top k_j^R}{\sqrt{d_h+d_R}}`], note: 'Keeping the rotary path separate permits a fixed content projection to be absorbed into the query. Rotating the reconstructed content key would introduce a position-dependent matrix into that absorption.', reference: { file: 'mla_reference.py', region: '_probabilities' } },
+      { title: 'Absorb linear projections without reconstructing the prefix', steps: [t`\tilde q_{i,h}=(W_h^{UK})^\top q_{i,h}^C`, t`o_i=\sum_h(W_O^{(h)}W_h^{UV})\sum_j A_{ij,h}c_j`], note: 'These are derived linear rearrangements for the same MLA parameters. Dense and absorbed outputs and gradients are checked independently. No nonlinear operation is inserted between the absorbed matrices.', reference: { file: 'mla_reference.py', region: 'mla_absorbed' } },
+      { title: 'GQA comparison and the compression tradeoff', steps: [t`\mathrm{GQA\ cache\ bytes}=BLSH_{KV}(d_k+d_v)b`], note: 'GQA shares whole K/V heads; MLA learns a joint latent space. Exact rearrangement within one MLA parameterization does not mean that arbitrary MHA weights can be compressed losslessly. Savings depend on dimensions and backend; this example is not a quality or speed benchmark.', reference: { file: 'mla_reference.py', region: 'mla_cache_bytes' } },
+    ],
+  },
   'concept:rope-context': {
     title: 'Long-context RoPE: interpolation, YaRN and cache validity',
     scope: 'Separate fixed-frequency reference; context-extension methods are not active in the main model.',

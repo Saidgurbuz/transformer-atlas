@@ -5,7 +5,7 @@
   const cases = [
     ['training', ['attention-backward', 'rmsnorm-backward']],
     ['norm.0.1', ['layernorm-backward', 'norm-epsilon']],
-    ['softmax.0.0', ['attention-invariants', 'head-basis', 'attention-circuits', 'attention-numerics', 'qk-normalization']],
+    ['softmax.0.0', ['attention-invariants', 'head-basis', 'attention-circuits', 'attention-numerics', 'qk-normalization', 'mla']],
     ['positional', ['permutation', 'rope-context']], ['generation', ['cache-equivalence']],
     ['mlp.0', ['mlp-interpretation', 'gelu']],
   ];

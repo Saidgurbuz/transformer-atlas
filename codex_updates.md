@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · MLA algebra and research navigation
+
+Added a clearly scoped MLA cache/projection explanation with dense and absorbed Python paths, matching outputs and gradients. Connected related research sections through closed study links and verified all 305 links and 33 executable source regions.
+
 ## 2026-10-13 · Long-context RoPE conventions
 
 Added optional PI/YaRN frequency, temperature and cache-validity explanations, explicitly separating the paper and implementation ramps. Fixed-frequency properties and stale-key counterexamples pass; 36 configurations match the inspected authors’ index-ramp implementation.
