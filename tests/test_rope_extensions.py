@@ -47,5 +47,14 @@ class RopeExtensions(unittest.TestCase):
         with self.assertRaises(ValueError): yarn_frequencies(8, 2048, 0.)
         with self.assertRaises(ValueError): yarn_frequencies(8, 2048, 4., ramp='unknown')
 
+    def test_low_precision_inputs_do_not_round_absolute_positions_first(self):
+        x = torch.tensor([[1., 0.], [1., 0.]], dtype=torch.bfloat16)
+        positions = torch.tensor([10000, 10001])
+        theta = rope_frequencies(2)
+        y = rotate_interleaved(x, positions, theta)
+        oracle = rotate_interleaved(x.double(), positions, theta).to(x.dtype)
+        torch.testing.assert_close(y, oracle, atol=0, rtol=0)
+        self.assertFalse(torch.equal(y[0], y[1]))
+
 if __name__ == '__main__':
     unittest.main()

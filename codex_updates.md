@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Rotary phase precision
+
+Computed reference rotary phases before casting sine/cosine to the input dtype, preventing bfloat16 position rounding from merging adjacent long-context tokens. Added that counterexample and exercised sliding-cache checks with an active two-token window; all 34 Python tests pass.
+
 ## 2026-10-13 · Finite-row reference policy
 
 Made the manual SDPA/backward references reject all-masked rows created by additive −∞ bias as well as Boolean masks. Focused PyTorch checks also cover NaN score bias, keeping the documented reference policy consistent with its implementation.

@@ -41,8 +41,10 @@ def rotate_interleaved(x, positions, frequencies, amplitude=1.):
     """Fixed angles; scaled sine/cosine magnitude also scales the output norm."""
     if x.shape[-1] != 2 * frequencies.numel() or x.shape[-2] != positions.numel():
         raise ValueError('rotary width and position count must match')
-    angles = positions.to(device=x.device, dtype=x.dtype)[:, None] * frequencies.to(x)[None, :]
+    # Keep large absolute positions/frequencies in reference precision until
+    # sine/cosine evaluation; bf16 indices can otherwise merge adjacent tokens.
+    angles = positions.to(device=x.device, dtype=torch.float64)[:, None] * frequencies.to(device=x.device, dtype=torch.float64)[None, :]
     pairs = x.reshape(*x.shape[:-1], -1, 2)
-    c, s = angles.cos(), angles.sin()
+    c, s = angles.cos().to(x.dtype), angles.sin().to(x.dtype)
     result = torch.stack((pairs[..., 0] * c - pairs[..., 1] * s, pairs[..., 0] * s + pairs[..., 1] * c), -1)
     return amplitude * result.flatten(-2)

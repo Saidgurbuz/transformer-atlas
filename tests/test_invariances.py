@@ -46,7 +46,7 @@ class Invariances(unittest.TestCase):
     def test_cache_conditions(self):
         for mask in ('causal', 'sliding'):
             for pos in ('learned', 'rope', 'alibi', 'sinusoidal', 'none'):
-                model = GPT(Config(vocab_size=6, block_size=8, n_layer=2, d_model=8, n_head=2, n_kv_head=1, d_ff=16, mask=mask, pos_encoding=pos)).double().eval()
+                model = GPT(Config(vocab_size=6, block_size=8, n_layer=2, d_model=8, n_head=2, n_kv_head=1, d_ff=16, mask=mask, window=2, pos_encoding=pos)).double().eval()
                 a, b = cache_equivalence(model, torch.tensor([[1, 2, 3, 2, 4]]))
                 torch.testing.assert_close(a, b, atol=1e-11, rtol=1e-11)
         model = GPT(Config(mask='none')).eval()
