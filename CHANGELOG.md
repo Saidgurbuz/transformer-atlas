@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Live-trace FlashAttention lesson with stable online softmax, masked tiles and explicit memory/performance conventions.
+
 - Complete miniature training lesson with actual backward gradients, ignored targets, tied embeddings, SGD and AdamW.
 
 - Shape-first tensor-operation lesson with animated element movement, copying/stride explanations and executable PyTorch correspondence.

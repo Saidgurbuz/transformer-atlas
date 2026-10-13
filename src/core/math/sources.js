@@ -6,6 +6,7 @@ export function equationSources(key, cfg) {
   if (pattern === 'concept:adamw') return [{ id: 'adamw2017', where: 'Algorithm 2', note: 'The decay is decoupled from the adaptive gradient update. Parameter grouping is an explicit lesson convention.' }];
   if (pattern === 'concept:training-gradient') return [{ id: 'vaswani2017', where: '§3.4, embeddings and softmax; §3.1, shifted decoder inputs', note: 'The derivatives are derived here and independently checked against PyTorch, including ignored targets and tied embedding gradients.' }];
   if (pattern === 'concept:tensor-layout') return [{ id: 'vaswani2017', where: '§3.2.2, Multi-head attention', note: 'The head decomposition is written with the batch axis explicit. View, stride and copying rules are implementation semantics explained by the executable tensor_ops.py reference.' }];
+  if (pattern === 'concept:online-attention') return [{ id: 'dao2022flash', where: 'Algorithm 1 and §3.1', note: 'The lesson uses unnormalised U, so normalize only when displaying the output. Algorithm 1 stores normalized O; the two recurrences are equivalent.' }];
   const attention = { id: 'vaswani2017', where: '§3.2.1, Eq. (1)', note: 'Scaled dot products, softmax, and the weighted value sum. Masking is described in §3.2.3.' };
   const norm = cfg.norm === 'rmsnorm'
     ? { id: 'zhang2019rms', where: '§4, RMSNorm', note: 'Atlas adds norm_eps inside the square root; RMSNorm has a gain and no learned shift.' }

@@ -1,5 +1,12 @@
 // Concept entries ('concept:*'): derivations and cost formulas not tied to one tensor.
 export const ENTRIES = {
+  'concept:online-attention': {
+    title: 'Stable online softmax and the output accumulator',
+    tex: '\\begin{aligned}m^+&=\\max(m,\\max_{j\\in J}s_j),\\quad\\alpha=e^{m-m^+}\\\\ \\tilde p_j&=e^{s_j-m^+}\\\\ \\ell^+&=\\alpha\\ell+\\sum_{j\\in J}\\tilde p_j\\\\ U^+&=\\alpha U+\\sum_{j\\in J}\\tilde p_jV_j\\\\ o&=U/\\ell\\end{aligned}',
+    compact: 'U^+=\\alpha U+\\tilde p V_J,\\quad o=U/\\ell',
+    symbols: [{ tex: 'J', text: 'current key tile for one query' }, { tex: 'm,\\ell,U', text: 'running maximum, exponential sum and unnormalised output accumulator' }, { tex: 's_j', text: 'scaled/biased and masked score; invisible keys are −∞' }],
+    derivation: [{ title: 'Change the scale without changing the normalized output', steps: ['e^{s_j-m}=e^{s_j-m^+}e^{m^+-m}', 'e^{s_j-m^+}=\\alpha e^{s_j-m}'], note: 'Start with m = −∞, ℓ = 0 and U = 0. Skip wholly masked leading tiles. This unnormalised-U convention is algebraically equivalent to Algorithm 1, whose stored O is normalized. The lesson disables dropout and compares every prefix against dense PyTorch attention.' }],
+  },
   'concept:training-gradient': {
     title: 'Mean next-token loss and the backward pass',
     tex: '\\begin{aligned} p_{t,v}&=\\softmax(z_t)_v \\\\ \\mathcal L&=-\\frac1M\\sum_{t\\in\\mathrm{valid}}\\log p_{t,y_t} \\\\ \\frac{\\partial\\mathcal L}{\\partial z_{t,v}}&=\\begin{cases}(p_{t,v}-\\mathbf1[v=y_t])/M&t\\in\\mathrm{valid}\\\\0&\\text{otherwise}\\end{cases} \\\\ \\nabla_W\\mathcal L&=G^\\top X,\\quad \\nabla_b\\mathcal L=\\sum_t G_t \\end{aligned}',

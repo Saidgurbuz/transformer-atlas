@@ -8,6 +8,7 @@ useStyle('lessons', `
 .ls-button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--fg); }
 .ls-button:hover { border-color: var(--line-strong); color: var(--fg); }
 .ls-button:focus-visible, .ls-slot:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.ls-select { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--surface); color: var(--fg); font: 600 16px var(--font-mono); max-width: 300px; }
 .ls-panel { box-sizing: border-box; border: 1px solid var(--line); border-radius: 14px; padding: 22px; background: color-mix(in srgb, var(--surface) 90%, transparent); box-shadow: var(--shadow-1); min-width: 0; }
 .ls-title { font: 650 25px/1.2 var(--font-display); color: var(--fg); margin-bottom: 8px; }
 .ls-meta { font: 500 16px/1.45 var(--font-mono); color: var(--fg-3); }
@@ -50,7 +51,8 @@ export function flowBox(title, sub, kind, width = 180) { return h('div', { class
 /** Animate the same logical elements between layouts without animating numbers. */
 export function morphContent(container, build, stage, { track = true } = {}) {
   const before = new Map([...container.querySelectorAll('[data-identity]')].map((e) => [e.dataset.identity, e.getBoundingClientRect()]));
-  container.replaceChildren(build());
+  const content = build();
+  container.replaceChildren(...(Array.isArray(content) ? content : [content]));
   if (reducedMotion()) return;
   for (const cell of container.querySelectorAll('[data-identity]')) {
     const a = track && before.get(cell.dataset.identity), b = cell.getBoundingClientRect();

@@ -79,6 +79,8 @@ export const PATTERNS = [
     scene: () => import('./scenes/tensor-ops.js'), keys: () => ['concept:tensor-layout'], reference: { file: 'tensor_ops.py', region: 'tensor_operations' } },
   { pattern: 'training', title: T('One training step'), parent: () => 'model', extra: true, kind: 'head', blurb: 'Loss, backpropagation, gradients and optimizer updates.',
     scene: () => import('./scenes/training.js'), keys: () => ['concept:training-gradient', 'concept:adamw'], reference: { file: 'training_lesson.py', region: 'training_step' } },
+  { pattern: 'flash', title: T('FlashAttention tiles'), parent: () => 'model', extra: true, kind: 'attn', blurb: 'Exact attention via stable online softmax and key/value tiles.',
+    scene: () => import('./scenes/flash.js'), keys: () => ['concept:online-attention'], reference: { file: 'flash_attention.py', region: 'online_attention' } },
   { pattern: 'lab', title: T('Ablation lab'), parent: () => 'model', extra: true, kind: 'o', blurb: 'Switch parts off and watch the prediction change.',
     scene: () => import('./scenes/lab.js'), keys: () => [] },
   { pattern: 'encdec', title: T('Encoder–decoder'), parent: () => 'model', extra: true, kind: 'pos', blurb: 'Cross-attention and the other Transformer families.',

@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · FlashAttention lesson
+
+Added live-model tile controls, memory-role illustrations and the running max/sum/output recurrence, with numbers optional and a full-stream equivalence check. Browser checks cover five configurations, tile navigation, one-token inputs and panel bounds; screenshots were inspected in both themes.
+
 ## 2026-10-13 · Encoder–decoder reference
 
 Added a complete miniature encoder and decoder with bidirectional, causal and rectangular cross-attention, post-LayerNorm and shared embeddings. All traced tensors match PyTorch across four sequence configurations, with padding-invariance and causality checks.
