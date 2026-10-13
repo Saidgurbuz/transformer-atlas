@@ -37,6 +37,21 @@ class AttentionBackward(unittest.TestCase):
             want, = torch.autograd.grad(expanded, x, g)
             torch.testing.assert_close(shared_kv_backward(g, kv_heads), want)
 
+    def test_broadcast_input_gradients_reduce_to_input_shapes(self):
+        rng = torch.Generator().manual_seed(19)
+        q = torch.randn(2, 4, 3, 6, generator=rng, dtype=torch.float64, requires_grad=True)
+        k = torch.randn(1, 1, 5, 6, generator=rng, dtype=torch.float64, requires_grad=True)
+        v = torch.randn(1, 1, 5, 3, generator=rng, dtype=torch.float64, requires_grad=True)
+        allowed = torch.ones(3, 5, dtype=torch.bool)
+        out, cache = attention_forward(q, k, v, allowed)
+        oracle = F.scaled_dot_product_attention(q, k, v, attn_mask=allowed, dropout_p=0.)
+        g = torch.randn(out.shape, generator=rng, dtype=torch.float64)
+        expected = torch.autograd.grad(oracle, (q, k, v), g)
+        got = attention_backward(g, cache)
+        for key, wanted in zip(('q', 'k', 'v'), expected):
+            self.assertEqual(got[key].shape, wanted.shape)
+            torch.testing.assert_close(got[key], wanted, atol=1e-11, rtol=1e-11)
+
     def test_rejects_all_masked_row(self):
         x = torch.ones(1, 2, dtype=torch.float64)
         with self.assertRaises(ValueError):

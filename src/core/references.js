@@ -7,6 +7,8 @@
 import { h } from '../ui/dom.js';
 
 export const REFERENCES = [
+  { id: 'pytorch-sdpa', title: 'PyTorch 2.14 scaled_dot_product_attention documentation', authors: 'PyTorch contributors', year: null, org: 'PyTorch 2.14', type: 'documentation',
+    url: 'https://docs.pytorch.org/docs/2.14/generated/torch.nn.functional.scaled_dot_product_attention.html', views: ['attention', 'generation', 'scaling'], why: 'Versioned mask, dropout, rectangular causal alignment, GQA and numerical implementation contracts.' },
   { id: 'adamw2017', title: 'Decoupled Weight Decay Regularization', authors: 'Loshchilov, Hutter', year: 2017, org: 'ICLR 2019', type: 'paper',
     url: 'https://arxiv.org/abs/1711.05101', views: ['training'], why: 'AdamW decouples parameter decay from the adaptive gradient update; the training lesson exposes both steps.' },
   // ------------------------------------------------------------- foundations
@@ -349,7 +351,7 @@ export function ref(id) { return byId.get(id); }
 
 export function refsForView(viewId) { return REFERENCES.filter((r) => r.views.includes(viewId)); }
 
-const TYPE_LABEL = { paper: 'Paper', blog: 'Article', course: 'Course', video: 'Video', code: 'Code' };
+const TYPE_LABEL = { paper: 'Paper', blog: 'Article', course: 'Course', video: 'Video', code: 'Code', documentation: 'Documentation' };
 
 // Inline citation: "Olsson et al. 2022" linking to the source.
 export function citeLabel(r) {

@@ -52,7 +52,7 @@ export function mathCard(state, key, cell = null, { compact = false, onMath = nu
   if (sources.length) parts.push(h('div', { class: 'math-sources' }, h('div', { class: 'eyebrow' }, 'Equation sources & implementation conventions'),
     sources.map((source) => {
       const ref = REFERENCES.find((r) => r.id === source.id);
-      return h('div', { class: 'small' }, h('a', { href: ref.url, target: '_blank', rel: 'noopener' }, `${ref.authors} (${ref.year}) · ${source.where}`),
+      return h('div', { class: 'small' }, h('a', { href: ref.url, target: '_blank', rel: 'noopener' }, `${ref.authors}${ref.year ? ` (${ref.year})` : ''} · ${source.where}`),
         h('p', { class: 'muted' }, source.note));
     })));
   return h('div', { class: 'math-card' }, parts);

@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Attention implementation contracts
+
+Added optional SDPA examples for dtype tolerances, mask conventions, cached-query alignment, dropout and GQA, verified on CPU. Also verified broadcast-gradient reductions and expanded browser checks for collapsed content, source links and drawer bounds.
+
 ## 2026-10-13 · Interpretation scope
 
 Added optional QK/OV and MLP explanations that separate exact vector sums, trained-model observations and causal hypotheses. Checked the decompositions and counterexamples in PyTorch, and clarified the existing neuron lens caption without adding main-view text.

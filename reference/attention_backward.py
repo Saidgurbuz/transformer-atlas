@@ -23,8 +23,9 @@ def attention_backward(g, cache):
     da = g @ v.transpose(-2, -1)
     dz = a * (da - (a * da).sum(-1, keepdim=True))
     dz = dz.masked_fill(~allowed, 0.)
-    dq = (dz @ k) * scale
-    dk = (dz.transpose(-2, -1) @ q) * scale
+    dq = ((dz @ k) * scale).sum_to_size(q.shape)
+    dk = ((dz.transpose(-2, -1) @ q) * scale).sum_to_size(k.shape)
+    dv = dv.sum_to_size(v.shape)  # broadcast batch/head uses accumulate too
     # An additive score bias receives dz, reduced across broadcast axes if needed.
     return dict(q=dq, k=dk, v=dv, scores=dz, probabilities=da)
 

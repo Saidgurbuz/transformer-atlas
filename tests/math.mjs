@@ -65,7 +65,7 @@ for (const st of states) {
       compile(`${st.name} ${key} tooltip`, mathEquation(key, st.config, { compact: true }), false);
       for (const ref of equationSources(key, st.config)) {
         checks++;
-        if (!REFERENCES.some((r) => r.id === ref.id && r.type === 'paper')) fail(`${key}: unknown paper source ${ref.id}`);
+        if (!REFERENCES.some((r) => r.id === ref.id && ['paper', 'documentation', 'code'].includes(r.type))) fail(`${key}: unknown equation source ${ref.id}`);
       }
     }
     if (!e?.live) continue;
