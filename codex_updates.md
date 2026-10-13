@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Long-context RoPE conventions
+
+Added optional PI/YaRN frequency, temperature and cache-validity explanations, explicitly separating the paper and implementation ramps. Fixed-frequency properties and stale-key counterexamples pass; 36 configurations match the inspected authors’ index-ramp implementation.
+
 ## 2026-10-13 · QK normalization reference
 
 Added optional L2/RMS QK-normalization and smooth score-capping explanations with clearly labeled separate references and primary citations. PyTorch tests verify norm conventions, score bounds, zero-input behavior and derivatives; mobile drawer/source checks pass.

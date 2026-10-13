@@ -375,7 +375,7 @@ export function startAtlas(root) {
       if (refs.length) {
         body.append(h('div', { class: 'eyebrow' }, `Further reading · ${refs.length}`));
         body.append(h('ul', { class: 'reading-list one-col' }, refs.map((r) => h('li', null,
-          h('div', { class: 'reading-meta' }, h('span', { class: 'reading-type' }, r.type), h('span', null, /\d{4}/.test(r.org) ? r.org : `${r.org} · ${r.year}`)),
+          h('div', { class: 'reading-meta' }, h('span', { class: 'reading-type' }, r.type), h('span', null, r.year && !/\d{4}/.test(r.org) ? `${r.org} · ${r.year}` : r.org)),
           h('a', { href: r.url, target: '_blank', rel: 'noopener' }, r.title),
           h('div', { class: 'small muted' }, r.authors),
           h('p', { class: 'small' }, r.why)))));

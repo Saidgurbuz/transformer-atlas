@@ -1,5 +1,18 @@
 const t = String.raw;
 export const ENTRIES = {
+  'concept:rope-context': {
+    title: 'Long-context RoPE: interpolation, YaRN and cache validity',
+    scope: 'Separate fixed-frequency reference; context-extension methods are not active in the main model.',
+    tex: t`\omega_i'=\left(\frac{1-\gamma_i}{s}+\gamma_i\right)\omega_i`,
+    compact: t`\omega_i'=((1-\gamma_i)/s+\gamma_i)\omega_i`,
+    symbols: [{ tex: t`\omega_i`, text: 'original rotary frequency base^(−2i/dh), with 0-based pair index i' }, { tex: 's', text: 'context extension factor ≥1' }, { tex: t`\gamma_i`, text: 'blend weight: retain the original frequency at 1, interpolate at 0' }],
+    derivation: [
+      { title: 'Position interpolation and frequency changes', steps: [t`\omega_i=\mathrm{base}^{-2i/d_h},\qquad\omega_i^{\mathrm{PI}}=\omega_i/s`], note: 'PI scales all frequencies equally. Changing the base affects frequencies unequally. Neither the relative-rotation identity nor a longer sine/cosine table proves useful length generalization.', reference: { file: 'rope_extensions.py', region: 'rope_frequencies' } },
+      { title: 'The paper ramp and implementation ramp differ', steps: [t`r_i=L_0\omega_i/(2\pi),\qquad\gamma_i=\mathrm{clip}((r_i-\alpha)/(\beta-\alpha),0,1)`], note: 'This is the rotation-count ramp. The authors’ code instead ramps linearly in pair index between correction boundaries. The reference supports both explicitly and validates its index branch against the authors’ implementation.', reference: { file: 'rope_extensions.py', region: 'yarn_frequencies' } },
+      { title: 'YaRN also changes score temperature', steps: [t`m=\sqrt{1/t}=1+0.1\ln s`, t`\langle mR_iq,mR_jk\rangle=m^2\langle q,R_{j-i}k\rangle`], note: 'The amplitude rule is an empirical recommendation for LLaMA-family models, not a mathematical necessity. A pure rotation preserves norms; multiplying it by m scales norms and logits.', reference: { file: 'rope_extensions.py', region: 'rotate_interleaved' } },
+      { title: 'Cache compatibility and evaluation', steps: [], note: 'Changing frequencies invalidates already-rotated cached keys unless they are recomputed or stored unrotated. Keep positions absolute. Validate task performance and long-context behavior separately from algebra; this reference does not fine-tune a model or guarantee an extended context.' },
+    ],
+  },
   'concept:qk-normalization': {
     title: 'QK normalization and score soft-capping',
     scope: 'Separate numerical reference; these variants are not active in the main model.',

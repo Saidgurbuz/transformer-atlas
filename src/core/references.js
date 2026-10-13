@@ -7,6 +7,8 @@
 import { h } from '../ui/dom.js';
 
 export const REFERENCES = [
+  { id: 'yarn-code', title: 'YaRN authors’ rotary embedding implementation', authors: 'YaRN authors', year: null, org: 'YaRN repository', type: 'code',
+    url: 'https://github.com/jquesnelle/yarn/blob/master/scaled_rope/LlamaYaRNScaledRotaryEmbedding.py', views: ['positions', 'generation'], why: 'Makes the index-ramp and sine/cosine magnitude conventions explicit beside the paper equations.' },
   { id: 'henry2020qknorm', title: 'Query-Key Normalization for Transformers', authors: 'Henry et al.', year: 2020, org: 'EMNLP Findings', type: 'paper',
     url: 'https://aclanthology.org/2020.findings-emnlp.379/', views: ['attention', 'multihead'], why: 'L2 normalization over each Q/K head and a learned score gain, evaluated on low-resource translation.' },
   { id: 'gemma2025', title: 'Gemma 3 Technical Report', authors: 'Gemma Team', year: 2025, org: 'Google', type: 'paper',
@@ -364,7 +366,7 @@ export function citeLabel(r) {
   if (/et al\./.test(r.authors)) who = names[0];
   else if (names.length === 2) who = `${names[0]} & ${names[1]}`;
   else if (names.length > 2) who = `${names[0]} et al.`;
-  return `${who} ${r.year}`;
+  return r.year ? `${who} ${r.year}` : who;
 }
 
 export function cite(id, text) {
@@ -380,7 +382,7 @@ export function readingList(viewId, { title = 'Further reading', ids = null } = 
   return h('div', { class: 'card reading' },
     h('div', { class: 'card-head' }, h('h4', null, title), h('span', { class: 'muted small' }, `${items.length} sources`)),
     h('ul', { class: 'reading-list' }, items.map((r) => h('li', null,
-      h('div', { class: 'reading-meta' }, h('span', { class: 'reading-type' }, TYPE_LABEL[r.type] || r.type), h('span', null, /\d{4}/.test(r.org) ? r.org : `${r.org} · ${r.year}`)),
+      h('div', { class: 'reading-meta' }, h('span', { class: 'reading-type' }, TYPE_LABEL[r.type] || r.type), h('span', null, r.year && !/\d{4}/.test(r.org) ? `${r.org} · ${r.year}` : r.org)),
       h('a', { href: r.url, target: '_blank', rel: 'noopener' }, r.title),
       h('div', { class: 'small muted' }, r.authors),
       h('p', { class: 'small' }, r.why)))));
