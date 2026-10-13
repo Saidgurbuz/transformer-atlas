@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Sixteen derivation, shape, debugging and coding exercises with worked solutions, timed worker execution and browser-local progress.
+
 - Architecture recipe comparison with explicit conventions, optional unique parameter counts and primary-paper links.
 
 - Executable encoder–decoder lesson with rectangular cross-attention and source/target padding examples.

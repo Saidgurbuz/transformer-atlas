@@ -89,6 +89,8 @@ export const PATTERNS = [
     scene: () => import('./scenes/encoder-decoder.js'), keys: () => ['concept:encoder-decoder'], reference: { file: 'encoder_decoder.py', region: 'TinyEncoderDecoder' } },
   { pattern: 'architectures', title: T('Architecture comparison'), parent: () => 'model', extra: true, kind: 'norm', blurb: '2017, GPT-2 and Llama-style structural choices and code.',
     scene: () => import('./scenes/architectures.js'), keys: () => ['concept:architecture-choices'], reference: { file: 'training_lesson.py', region: 'architecture_profiles' } },
+  { pattern: 'exercises', title: T('Transformer practice'), parent: () => 'model', extra: true, kind: 'head', blurb: 'Derive, debug and run small coding exercises with feedback.',
+    scene: () => import('./scenes/exercises.js'), keys: () => ['concept:training-gradient'] },
   { pattern: 'vision', title: T('Vision tokens'), parent: () => 'tokens', extra: true, kind: 'embed', blurb: 'How images become tokens: ViT patches to VLMs.',
     scene: () => import('./scenes/vision.js'), keys: () => [] },
 

@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Practice interface
+
+Added one-task-at-a-time practice with worked reasoning, editable JavaScript, per-test feedback and local progress. Desktop/mobile and standalone browser checks cover every exercise, wrong answers, syntax errors, infinite loops and cancellation without changing the main model.
+
 ## 2026-10-13 · Exercise definitions and runner
 
 Added 16 shape, derivation, debugging and coding tasks with worked equations and verified Python operation links. Coding tests run in a disposable worker with cancellation/time limits; all supplied solutions pass and unfinished starters fail.
