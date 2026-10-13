@@ -23,6 +23,7 @@ export function mathCard(state, key, cell = null, { compact = false, onMath = nu
     h('div', { class: 'math-title' }, e.title),
     tex(mathEquation(key, state.config), { display: true }),
   ];
+  if (e.scope && !compact) parts.push(h('p', { class: 'small muted' }, e.scope));
   if (e.symbols?.length) {
     parts.push(h('div', { class: 'math-symbols' }, e.symbols.map((s) => h('div', { class: 'math-sym' },
       tex(s.tex), h('span', null, s.text), h('span', { class: 'mono small muted' }, dimsText(s.dims, state.config, T))))));

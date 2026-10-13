@@ -7,6 +7,10 @@
 import { h } from '../ui/dom.js';
 
 export const REFERENCES = [
+  { id: 'henry2020qknorm', title: 'Query-Key Normalization for Transformers', authors: 'Henry et al.', year: 2020, org: 'EMNLP Findings', type: 'paper',
+    url: 'https://aclanthology.org/2020.findings-emnlp.379/', views: ['attention', 'multihead'], why: 'L2 normalization over each Q/K head and a learned score gain, evaluated on low-resource translation.' },
+  { id: 'gemma2025', title: 'Gemma 3 Technical Report', authors: 'Gemma Team', year: 2025, org: 'Google', type: 'paper',
+    url: 'https://arxiv.org/abs/2503.19786', views: ['attention', 'positions', 'residual'], why: 'QK normalization, combined RMSNorm placement and local/global attention illustrate recipe-specific architectural choices.' },
   { id: 'pytorch-sdpa', title: 'PyTorch 2.14 scaled_dot_product_attention documentation', authors: 'PyTorch contributors', year: null, org: 'PyTorch 2.14', type: 'documentation',
     url: 'https://docs.pytorch.org/docs/2.14/generated/torch.nn.functional.scaled_dot_product_attention.html', views: ['attention', 'generation', 'scaling'], why: 'Versioned mask, dropout, rectangular causal alignment, GQA and numerical implementation contracts.' },
   { id: 'adamw2017', title: 'Decoupled Weight Decay Regularization', authors: 'Loshchilov, Hutter', year: 2017, org: 'ICLR 2019', type: 'paper',

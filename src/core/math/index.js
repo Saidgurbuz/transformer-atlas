@@ -17,8 +17,9 @@ import { ENTRIES as backward } from './backward.js';
 import { ENTRIES as invariants } from './invariants.js';
 import { ENTRIES as interpretation } from './interpretation.js';
 import { ENTRIES as numerics } from './numerics.js';
+import { ENTRIES as modern } from './modern.js';
 
-export const MATH = { ...embed, ...positions, ...qkv, ...attention, ...norm, ...mlp, ...head, ...concepts, ...backward, ...invariants, ...interpretation, ...numerics };
+export const MATH = { ...embed, ...positions, ...qkv, ...attention, ...norm, ...mlp, ...head, ...concepts, ...backward, ...invariants, ...interpretation, ...numerics, ...modern };
 
 export function mathFor(key) { return MATH[parseKey(key).pattern] ?? MATH[key] ?? null; }
 export function mathEquation(key, cfg, { compact = false } = {}) {

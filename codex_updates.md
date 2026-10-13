@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · QK normalization reference
+
+Added optional L2/RMS QK-normalization and smooth score-capping explanations with clearly labeled separate references and primary citations. PyTorch tests verify norm conventions, score bounds, zero-input behavior and derivatives; mobile drawer/source checks pass.
+
 ## 2026-10-13 · Attention implementation contracts
 
 Added optional SDPA examples for dtype tolerances, mask conventions, cached-query alignment, dropout and GQA, verified on CPU. Also verified broadcast-gradient reductions and expanded browser checks for collapsed content, source links and drawer bounds.
