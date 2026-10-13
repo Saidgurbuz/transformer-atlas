@@ -10,7 +10,10 @@ def manual_attention(q, k, v, allowed, bias=None):
     scores = q @ k.transpose(-2, -1) / math.sqrt(q.shape[-1])
     if bias is not None:
         scores = scores + bias
-    return scores.masked_fill(~allowed, float('-inf')).softmax(-1) @ v
+    scores = scores.masked_fill(~allowed, float('-inf'))
+    if torch.isnan(scores).any() or torch.isposinf(scores).any() or not torch.isfinite(scores).any(-1).all():
+        raise ValueError('scores need a finite visible key per row and no NaN/+inf')
+    return scores.softmax(-1) @ v
 
 def compare_sdpa(q, k, v, allowed, bias=None):
     """Use explicit masks; rectangular is_causal=True has upper-left alignment."""

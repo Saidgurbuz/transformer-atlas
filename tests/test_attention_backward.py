@@ -56,6 +56,8 @@ class AttentionBackward(unittest.TestCase):
         x = torch.ones(1, 2, dtype=torch.float64)
         with self.assertRaises(ValueError):
             attention_forward(x, x, x, torch.zeros(1, 1, dtype=torch.bool))
+        with self.assertRaises(ValueError):
+            attention_forward(x, x, x, torch.ones(1, 1, dtype=torch.bool), bias=torch.full((1, 1), float('-inf')))
 
 if __name__ == '__main__':
     unittest.main()

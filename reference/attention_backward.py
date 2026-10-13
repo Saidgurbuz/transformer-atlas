@@ -13,7 +13,10 @@ def attention_forward(q, k, v, allowed, scale=None, bias=None):
     z = (q @ k.transpose(-2, -1)) * scale
     if bias is not None:
         z = z + bias
-    a = z.masked_fill(~allowed, float('-inf')).softmax(-1)
+    masked = z.masked_fill(~allowed, float('-inf'))
+    if torch.isnan(masked).any() or torch.isposinf(masked).any() or not torch.isfinite(masked).any(-1).all():
+        raise ValueError('scores need a finite visible key per row and no NaN/+inf')
+    a = masked.softmax(-1)
     return a @ v, (q, k, v, allowed, scale, a)
 
 def attention_backward(g, cache):

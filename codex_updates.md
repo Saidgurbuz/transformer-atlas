@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Finite-row reference policy
+
+Made the manual SDPA/backward references reject all-masked rows created by additive −∞ bias as well as Boolean masks. Focused PyTorch checks also cover NaN score bias, keeping the documented reference policy consistent with its implementation.
+
 ## 2026-10-13 · Jacobian conventions
 
 Made residual Jacobian composition order explicit and qualified residual-enabled and basis-change assumptions. A noncommuting two-layer PyTorch counterexample verifies the order; normalization equations and NumPy reference checks pass.

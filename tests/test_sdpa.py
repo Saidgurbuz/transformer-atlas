@@ -44,6 +44,9 @@ class SDPA(unittest.TestCase):
         x = torch.ones(1, 1, 1, 2, dtype=torch.float64)
         mask = torch.zeros(1, 1, dtype=torch.bool)
         with self.assertRaises(ValueError): manual_attention(x, x, x, mask)
+        visible = torch.ones_like(mask)
+        with self.assertRaises(ValueError): manual_attention(x, x, x, visible, torch.full((1, 1), float('-inf')))
+        with self.assertRaises(ValueError): manual_attention(x, x, x, visible, torch.full((1, 1), float('nan')))
         # Observed for this CPU SDPA path; do not assume arbitrary kernels share a policy.
         y = F.scaled_dot_product_attention(x, x, x, attn_mask=mask, dropout_p=0.)
         torch.testing.assert_close(y, torch.zeros_like(y))
