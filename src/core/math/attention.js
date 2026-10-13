@@ -44,7 +44,7 @@ export const ENTRIES = {
         '\\operatorname{Var}(q\\cdot k) = \\sum_{c=1}^{d_h} \\operatorname{Var}(q_c k_c) = d_h',
         '\\operatorname{Var}\\!\\left(\\tfrac{q\\cdot k}{\\sqrt{d_h}}\\right) = 1',
       ],
-      note: 'Without the factor, scores grow like √d_h, softmax saturates to one-hot, and its gradients vanish.',
+      note: 'This variance argument assumes independent, zero-mean, unit-variance coordinates and independent Q/K. Larger score differences can concentrate softmax and reduce its Jacobian entries; saturation is not inevitable. Learned projections, correlations and normalization can change the score statistics.',
     }],
     live({ trace, cfg, layer, head, row, col }) {
       const s = at3(trace[`L${layer}.attn.scores`], head, row, col);
@@ -58,7 +58,7 @@ export const ENTRIES = {
     tex: '\\begin{aligned} Z &= \\alpha \\Q\\K^{\\top} + B,\\quad \\alpha=1/\\sqrt{d_h}\\text{ (or 1 if unscaled)} \\\\ \\hat S_{ij} &= \\begin{cases} Z_{ij} & \\Mk_{ij} = 1 \\\\ -\\infty & \\Mk_{ij} = 0 \\end{cases} \\end{aligned}',
     compact: '\\hat S_{ij} = -\\infty \\text{ where } \\Mk_{ij}=0',
     symbols: [{ tex: '\\Mk', text: 'Boolean mask: 1 where query i may see key j (causal: j ≤ i)', dims: ['T', 'T'] }, { tex: 'B', text: 'ALiBi bias when enabled, otherwise zero', dims: ['T', 'T'] }],
-    derivation: [{ title: 'Why −∞', steps: ['e^{-\\infty} = 0 \\;\\Rightarrow\\; \\Aw_{ij} = 0 \\text{ exactly, and } \\partial \\Aw_{ij} / \\partial \\hat S_{ij} = 0'], note: 'Masked keys get exactly zero weight and zero gradient.' }],
+    derivation: [{ title: 'Why −∞', steps: ['e^{-\\infty} = 0 \\;\\Rightarrow\\; \\Aw_{ij} = 0 \\text{ exactly, and } \\partial \\Aw_{ij} / \\partial \\hat S_{ij} = 0'], note: 'A blocked score entry has zero probability and zero gradient through masked_fill, provided the row has a visible key. The same key/value vector may still receive gradients from other queries or heads where it is visible.' }],
     live({ trace, cfg, layer, head, row, col }) {
       const pre = trace[`L${layer}.attn.${cfg.pos_encoding === 'alibi' ? 'biased' : cfg.attn_scale ? 'scaled' : 'scores'}`];
       const allowed = trace.mask.data[row * trace.mask.shape[1] + col] === 1;

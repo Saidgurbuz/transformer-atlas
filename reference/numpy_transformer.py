@@ -174,7 +174,7 @@ def layernorm_forward(x, gamma, beta, eps):
     centered = x - mu                                     # (T, d)
     var = np.mean(centered ** 2, axis=-1, keepdims=True)  # (T, 1)  biased: divide by d, not d - 1
     inv_std = 1.0 / np.sqrt(var + eps)                    # (T, 1)
-    xhat = centered * inv_std                             # (T, d)  zero mean, unit variance
+    xhat = centered * inv_std                             # (T, d)  zero mean; variance = var / (var + eps)
     y = xhat * gamma                                      # (T, d)
     if beta is not None:
         y = y + beta
@@ -192,8 +192,8 @@ def layernorm_backward(dy, cache):
         d xhat_j / d x_k  = (delta_jk - 1/d - xhat_j xhat_k / d) / s
     Contracting with dxhat_j = dy_j gamma_j gives
         dx = (1/s) (dxhat - mean(dxhat) - xhat * mean(dxhat * xhat)).
-    The two mean terms remove the gradient components that would shift the mean or rescale the
-    variance, which normalisation makes irrelevant.
+    The common-shift direction is removed exactly. With eps > 0, the radial direction
+    is attenuated by eps / (var + eps) rather than removed exactly.
     """
     xhat, inv_std, gamma = cache
     dgamma = (dy * xhat).sum(axis=0)                      # (d,)  summed over the T tokens
@@ -208,7 +208,7 @@ def rmsnorm_forward(x, gamma, eps):
     """y = x / rms(x) * gamma, with rms = sqrt(mean(x^2) + eps). No mean subtraction, no bias.
     x: (T, d) -> y: (T, d)"""
     rms = np.sqrt(np.mean(x ** 2, axis=-1, keepdims=True) + eps)   # (T, 1)
-    u = x / rms                                            # (T, d)  unit RMS per token
+    u = x / rms                                            # (T, d)  mean square = mean(x^2) / (mean(x^2) + eps)
     y = u * gamma                                          # (T, d)
     return y, (u, rms, gamma)
 

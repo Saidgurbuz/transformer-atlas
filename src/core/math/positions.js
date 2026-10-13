@@ -282,7 +282,7 @@ export const ENTRIES = {
   },
 
   'concept:rope-relative': {
-    title: 'RoPE: scores depend only on relative position',
+    title: 'RoPE: relative positional rotation',
     tex: '\\begin{aligned} \\langle R_{m}\\,q,\\; R_{n}\\,k\\rangle &= \\langle q,\\; R_{n-m}\\,k\\rangle \\\\ R_{t} &= \\operatorname{diag}\\big(R(t\\theta_0),\\ldots,R(t\\theta_{d_h/2-1})\\big) \\\\ R(\\varphi) &= \\begin{pmatrix}\\cos\\varphi & -\\sin\\varphi\\\\ \\sin\\varphi & \\cos\\varphi\\end{pmatrix} \\end{aligned}',
     compact: '\\langle R_m q,\\, R_n k\\rangle = \\langle q,\\, R_{n-m} k\\rangle',
     symbols: [

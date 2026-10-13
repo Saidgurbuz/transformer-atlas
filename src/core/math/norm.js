@@ -194,7 +194,7 @@ export const ENTRIES = {
           '\\frac{\\partial x^{\\text{mid}}}{\\partial \\xres} = J_{\\mathrm{LN}}\\Big(I + \\frac{\\partial a}{\\partial \\xres}\\Big)',
           '\\frac{\\partial \\LN(s)}{\\partial s} = \\frac{\\operatorname{diag}(\\gamma)}{\\sqrt{\\sigma_t^2+\\varepsilon}}\\Big(I - \\frac{\\mathbf{1}\\mathbf{1}^{\\top}}{d} - \\frac{\\hat s\\,\\hat s^{\\top}}{d}\\Big)',
         ],
-        note: 'With s^(1) = x + a, the identity term is multiplied by this Jacobian: each feature is rescaled by γ/√(σ²+ε), and the mean and the normalised direction are projected out. See concept:pre-vs-post.',
+        note: 'With s^(1) = x + a, the identity term is multiplied by this Jacobian: each feature is rescaled by γ/√(σ²+ε), the common-shift direction is removed, and the radial direction is attenuated. With ε > 0 the radial component is not exactly removed. See concept:pre-vs-post.',
       },
     ],
     live({ trace, cfg, model, layer, row, col }) {
@@ -257,7 +257,7 @@ export const ENTRIES = {
           '\\frac{\\partial x^{\\text{out}}}{\\partial x^{\\text{mid}}} = J_{\\mathrm{LN}}\\Big(I + \\frac{\\partial m}{\\partial x^{\\text{mid}}}\\Big)',
           '\\frac{\\partial \\LN(s)}{\\partial s} = \\frac{\\operatorname{diag}(\\gamma)}{\\sqrt{\\sigma_t^2+\\varepsilon}}\\Big(I - \\frac{\\mathbf{1}\\mathbf{1}^{\\top}}{d} - \\frac{\\hat s\\,\\hat s^{\\top}}{d}\\Big)',
         ],
-        note: 'With s^(2) = x^mid + m, the identity term is multiplied by this Jacobian: each feature is rescaled by γ/√(σ²+ε), and the mean and the normalised direction are projected out. See concept:pre-vs-post.',
+        note: 'With s^(2) = x^mid + m, the identity term is multiplied by this Jacobian: each feature is rescaled by γ/√(σ²+ε), the common-shift direction is removed, and the radial direction is attenuated. With ε > 0 the radial component is not exactly removed. See concept:pre-vs-post.',
       },
     ],
     live({ trace, cfg, model, layer, row, col }) {
@@ -429,7 +429,7 @@ export const ENTRIES = {
           '\\frac{\\partial \\xres_{\\ell+1}}{\\partial \\xres_\\ell} = I + J_\\ell',
           '\\frac{\\partial \\xres_{L}}{\\partial \\xres_{\\ell}} = \\prod_{k=\\ell}^{L-1}\\big(I + J_k\\big) = I + \\sum_{k=\\ell}^{L-1} J_k + \\cdots',
         ],
-        note: 'J_k = ∂(x_{k+1} − x_k)/∂x_k is the Jacobian of block k’s residual increment. The identity term is always present, so the gradient reaches layer ℓ even when the J_k are small. Consistent with Xiong et al. (2020), who show with mean-field analysis that Pre-LN gradients are well-behaved at initialisation, so warm-up can be dropped. The identity path is an intuitive picture, not their argument.',
+        note: 'J_k = ∂(x_{k+1} − x_k)/∂x_k is the Jacobian of block k’s residual increment. An explicit identity term provides a direct path, but the full Jacobian product can still amplify, attenuate or cancel gradients. Xiong et al. (2020) analyze gradient scales at initialization under their model assumptions and remove warm-up in their experiments; this does not guarantee stability for every pre-norm training recipe.',
       },
       {
         title: 'Post-LN has no bare identity',
@@ -437,12 +437,12 @@ export const ENTRIES = {
           '\\frac{\\partial x^{\\text{out}}}{\\partial \\xres} = J_{\\mathrm{LN}_2}\\,\\big(I+J_{\\MLP}\\big)\\,J_{\\mathrm{LN}_1}\\,\\big(I+J_{\\Attn}\\big)',
           'J_{\\mathrm{LN}} = \\frac{\\operatorname{diag}(\\gamma)}{\\sqrt{\\sigma_t^2+\\varepsilon}}\\Big(I - \\frac{\\mathbf{1}\\mathbf{1}^{\\top}}{d} - \\frac{\\hat x\\,\\hat x^{\\top}}{d}\\Big)',
         ],
-        note: 'Each norm rescales the identity per feature by γ/√(σ_t²+ε) and projects out the mean and the normalised direction, so no bare identity survives a block. Xiong et al. (2020) show that the gradients near the output are large at initialisation in Post-LN, which is why it needs warm-up.',
+        note: 'The identity branch passes through each norm Jacobian. Common shifts are removed; radial changes are attenuated rather than exactly removed when ε > 0. Xiong et al. (2020) find large expected gradients near the output at initialization under their assumptions, explaining the benefit of warm-up in their post-LN experiments.',
       },
       {
         title: 'The final norm',
         steps: ['\\text{logits} = \\LN_f(\\xres_L)\\,\\WU^{\\top}'],
-        note: 'The pre-LN stream grows with depth and is never normalised in place, so the model needs a final LN_f before the unembedding. A post-LN block already ends with a norm, so it needs none.',
+        note: 'GPT-2-style pre-LN recipes normalize the final residual stream before unembedding. The original post-LN recipe already normalizes each block output and omits this extra final norm. These are architecture conventions; other recipes can combine norms differently.',
       },
     ],
   },

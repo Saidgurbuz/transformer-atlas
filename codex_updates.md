@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Explanation assumptions
+
+Corrected normalization, masked-gradient, score-scaling and pre/post-norm explanations so exact identities and recipe-specific findings are distinguished. Small PyTorch counterexamples verify the epsilon and gradient qualifications; the full equation suite passes.
+
 ## 2026-10-13 · v1.4.0 validation and documentation
 
 Documented the executable lesson conventions and prepared v1.4.0 after all routes passed in both themes. Validation passed 549 existing parity checks, 667 new PyTorch lesson comparisons, 12,582 maths checks, Python/NumPy references, cell/source round trips and standalone/desktop/mobile interaction checks.
