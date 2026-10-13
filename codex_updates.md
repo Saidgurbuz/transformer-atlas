@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Training theme updates
+
+Made gradient heatmap colors repaint immediately when the theme changes, with listener cleanup on exit. The training browser check now exercises live theme switching alongside optimizer/profile controls.
+
 ## 2026-10-13 · Practice interface
 
 Added one-task-at-a-time practice with worked reasoning, editable JavaScript, per-test feedback and local progress. Desktop/mobile and standalone browser checks cover every exercise, wrong answers, syntax errors, infinite loops and cancellation without changing the main model.

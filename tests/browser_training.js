@@ -32,5 +32,8 @@
   const p = document.getElementById('training-parameter'); p.value = 'blocks.0.attn.q_proj.weight'; p.dispatchEvent(new Event('change'));
   await new Promise(r => setTimeout(r, 900));
   for (const card of document.querySelectorAll('.tr-card')) assert([...card.children].every(e => e.getBoundingClientRect().bottom <= card.getBoundingClientRect().bottom), 'training cards fit their content');
+  const colors = [document.querySelector('.tr-grad i').style.background];
+  for (let i = 0; i < 3; i++) { document.querySelector('.atlas-tools [aria-label="Theme"]').click(); colors.push(document.querySelector('.tr-grad i').style.background); }
+  assert(new Set(colors).size > 1, 'gradient colors follow live theme changes');
   return { checks, before: document.querySelector('[data-training-result]').dataset.before };
 })()

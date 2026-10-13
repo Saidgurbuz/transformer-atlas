@@ -1,4 +1,4 @@
-import { h, fmt, diverging, reducedMotion } from '../../ui/index.js';
+import { h, fmt, diverging, reducedMotion, onThemeChange } from '../../ui/index.js';
 import { MINI_VOCAB, MINI_IDS, MINI_TARGETS, trainingLesson } from '../../lessons/training.js';
 import { useStyle, MOTION } from '../kit.js';
 import { lessonFrame, lessonButton, flowBox, equation, sourceLink } from './_lesson.js';
@@ -116,6 +116,7 @@ export default {
     }
     ctx.setSteps(STEPS, (i) => { step = i; paint(); });
     paint();
-    return { pause() { animations.forEach((a) => a.cancel()); }, destroy() { animations.forEach((a) => a.cancel()); f.destroy(); } };
+    const offTheme = onThemeChange(paint);
+    return { pause() { animations.forEach((a) => a.cancel()); }, destroy() { offTheme(); animations.forEach((a) => a.cancel()); f.destroy(); } };
   },
 };
