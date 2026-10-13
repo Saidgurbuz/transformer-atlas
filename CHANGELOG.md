@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Complete miniature training lesson with actual backward gradients, ignored targets, tied embeddings, SGD and AdamW.
+
 - Shape-first tensor-operation lesson with animated element movement, copying/stride explanations and executable PyTorch correspondence.
 
 ## 1.3.0 (2026-10-13)

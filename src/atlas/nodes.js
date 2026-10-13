@@ -77,6 +77,8 @@ export const PATTERNS = [
     scene: () => import('./scenes/scaling.js'), keys: () => [] },
   { pattern: 'tensor-ops', title: T('Tensor operations'), parent: () => 'model', extra: true, kind: 'q', blurb: 'Shapes, strides, views, concatenation and einsum.',
     scene: () => import('./scenes/tensor-ops.js'), keys: () => ['concept:tensor-layout'], reference: { file: 'tensor_ops.py', region: 'tensor_operations' } },
+  { pattern: 'training', title: T('One training step'), parent: () => 'model', extra: true, kind: 'head', blurb: 'Loss, backpropagation, gradients and optimizer updates.',
+    scene: () => import('./scenes/training.js'), keys: () => ['concept:training-gradient', 'concept:adamw'], reference: { file: 'training_lesson.py', region: 'training_step' } },
   { pattern: 'lab', title: T('Ablation lab'), parent: () => 'model', extra: true, kind: 'o', blurb: 'Switch parts off and watch the prediction change.',
     scene: () => import('./scenes/lab.js'), keys: () => [] },
   { pattern: 'encdec', title: T('Encoder–decoder'), parent: () => 'model', extra: true, kind: 'pos', blurb: 'Cross-attention and the other Transformer families.',

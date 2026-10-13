@@ -36,6 +36,9 @@ the exact line of PyTorch that computes it. Arrow keys walk the forward pass as 
 
 ## Interview prep
 
+- **Tensor operations**: shapes, strides, storage sharing and copying, with offsets optional.
+- **One training step**: isolated GPT/Llama-style mini models with real gradients and optimizer updates checked against PyTorch.
+
 - Atlas levels: every component, animated on real numbers, with its equation and its line of code.
 - **Code ↔ forward pass** (menu): walk `reference/model.py` line by line with the live tensors.
 - **Interview cheat sheet** (menu): live shapes, formula sheet, flashcards and a quiz.

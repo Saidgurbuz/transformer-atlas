@@ -7,6 +7,8 @@
 import { h } from '../ui/dom.js';
 
 export const REFERENCES = [
+  { id: 'adamw2017', title: 'Decoupled Weight Decay Regularization', authors: 'Loshchilov, Hutter', year: 2017, org: 'ICLR 2019', type: 'paper',
+    url: 'https://arxiv.org/abs/1711.05101', views: ['training'], why: 'AdamW decouples parameter decay from the adaptive gradient update; the training lesson exposes both steps.' },
   // ------------------------------------------------------------- foundations
   { id: 'vaswani2017', title: 'Attention Is All You Need', authors: 'Vaswani et al.', year: 2017, org: 'Google', type: 'paper',
     url: 'https://arxiv.org/abs/1706.03762', views: ['overview', 'attention', 'multihead', 'positions', 'encdec', 'cheatsheet'],
