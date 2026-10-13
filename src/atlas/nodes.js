@@ -75,6 +75,8 @@ export const PATTERNS = [
     scene: () => import('./scenes/cheatsheet.js'), keys: () => [] },
   { pattern: 'scaling', title: T('Params, FLOPs & memory'), parent: () => 'model', extra: true, kind: 'mlp', blurb: 'What real models cost.',
     scene: () => import('./scenes/scaling.js'), keys: () => [] },
+  { pattern: 'tensor-ops', title: T('Tensor operations'), parent: () => 'model', extra: true, kind: 'q', blurb: 'Shapes, strides, views, concatenation and einsum.',
+    scene: () => import('./scenes/tensor-ops.js'), keys: () => ['concept:tensor-layout'], reference: { file: 'tensor_ops.py', region: 'tensor_operations' } },
   { pattern: 'lab', title: T('Ablation lab'), parent: () => 'model', extra: true, kind: 'o', blurb: 'Switch parts off and watch the prediction change.',
     scene: () => import('./scenes/lab.js'), keys: () => [] },
   { pattern: 'encdec', title: T('Encoder–decoder'), parent: () => 'model', extra: true, kind: 'pos', blurb: 'Cross-attention and the other Transformer families.',
@@ -120,6 +122,7 @@ export function nodeInfo(id, cfg) {
     parent: def.parent ? def.parent(params) : null,
     keys: def.keys ? def.keys(params, cfg) : [],
     extra: !!def.extra,
+    reference: def.reference ?? null,
   };
 }
 

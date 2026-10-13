@@ -13,7 +13,7 @@ import * as engine from '../engine/index.js';
 import { notesFor, topicsFor } from '../core/notes.js';
 import { VERSION } from '../version.js';
 import { REFERENCES, cite } from '../core/references.js';
-import { keysForLine, sourceForKey } from '../core/codemap.js';
+import { keysForLine, sourceForKey, referenceSource } from '../core/codemap.js';
 import { normalizeCell, cellValue, cellLabel } from '../core/cells.js';
 import { cellControls } from '../core/cellview.js';
 
@@ -71,6 +71,7 @@ export function startAtlas(root) {
       up: () => up(),
       showMath: (key, cell) => openRight('maths', { key, cell }),
       showCode: (keys) => openRight('code', typeof keys === 'string' ? { key: keys } : { keys }),
+      showReference: (file, region) => openRight('code', { reference: { file, region } }),
       inspect: (key, cell) => openRight('inspect', { key, cell }),
       label: (i) => store.state.tokenizer.label(store.state.ids[i]),
       /** Declare in-scene steps; story mode walks them before leaving the scene. */
@@ -310,7 +311,7 @@ export function startAtlas(root) {
   // ------------------------------------------------------------ drawers
   let rightMode = null, rightArg = {}, rightCleanup = null;
   function openRight(mode, arg = {}) {
-    if (rightDrawer.classList.contains('open') && rightMode === mode && !arg.key && !arg.keys) { closeRight(); return; }
+    if (rightDrawer.classList.contains('open') && rightMode === mode && !arg.key && !arg.keys && !arg.reference) { closeRight(); return; }
     if (['code', 'maths', 'inspect'].includes(mode) && !arg.key && !arg.keys && store.state.cellFocus) arg = { ...store.state.cellFocus };
     if (arg.key && arg.cell) store.focusCell(arg.key, arg.cell);
     rightMode = mode; rightArg = arg;
@@ -376,6 +377,14 @@ export function startAtlas(root) {
           h('p', { class: 'small' }, r.why)))));
       }
     } else if (rightMode === 'code') {
+      const ref = rightArg.reference ?? (!rightArg.key && !rightArg.keys ? top?.info.reference : null);
+      if (ref) {
+        const source = referenceSource(ref.file), range = source?.regions[ref.region];
+        if (!source || !range) { body.append(h('p', { class: 'muted' }, 'This reference region is unavailable.')); return; }
+        body.append(h('p', { class: 'small muted' }, `reference/${ref.file} · executable PyTorch counterpart, checked against this lesson’s JavaScript implementation.`));
+        body.append(codeView({ lines: source.lines, ...range, maxHeight: 4000 }).el);
+        return;
+      }
       const keys = rightArg.keys || (rightArg.key ? [rightArg.key] : top?.info.keys || []);
       const lines = keys.map((k) => lineForKey(k, st.config)).filter(Boolean);
       const key = keys.length === 1 && st.trace[keys[0]] ? keys[0] : null;

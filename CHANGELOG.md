@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Shape-first tensor-operation lesson with animated element movement, copying/stride explanations and executable PyTorch correspondence.
+
 ## 1.3.0 (2026-10-13)
 
 - Exact cell ↔ Python source navigation, active-branch links, helper implementations, and consistent GQA/KV coordinates.

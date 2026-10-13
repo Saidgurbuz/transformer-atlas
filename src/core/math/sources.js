@@ -3,6 +3,7 @@ import { parseKey } from '../describe.js';
 
 export function equationSources(key, cfg) {
   const { pattern } = parseKey(key);
+  if (pattern === 'concept:tensor-layout') return [{ id: 'vaswani2017', where: '§3.2.2, Multi-head attention', note: 'The head decomposition is written with the batch axis explicit. View, stride and copying rules are implementation semantics explained by the executable tensor_ops.py reference.' }];
   const attention = { id: 'vaswani2017', where: '§3.2.1, Eq. (1)', note: 'Scaled dot products, softmax, and the weighted value sum. Masking is described in §3.2.3.' };
   const norm = cfg.norm === 'rmsnorm'
     ? { id: 'zhang2019rms', where: '§4, RMSNorm', note: 'Atlas adds norm_eps inside the square root; RMSNorm has a gain and no learned shift.' }

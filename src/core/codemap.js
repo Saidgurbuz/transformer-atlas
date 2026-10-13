@@ -1,12 +1,13 @@
 // Parses reference/model.py (bundled as a string by tools/gen_codemap.mjs) into
 // lines and finds the line that produces each trace key.
 import { MODEL_PY } from '../generated/model_py.js';
+import { REFERENCE_PY } from '../generated/reference_py.js';
 import { parseKey } from './describe.js';
 
 const MARK = /\s*#?\s*@trace\s+(\S+)\s*$/;
 
-function build() {
-  const lines = MODEL_PY.split('\n').map((raw, i) => {
+function build(source = MODEL_PY) {
+  const lines = source.split('\n').map((raw, i) => {
     const m = raw.match(/#.*@trace\s+(\S+)/);
     let text = raw;
     if (m) {
@@ -39,6 +40,8 @@ const MAP = build();
 
 export const codeLines = MAP.lines;
 export const codeRegions = MAP.regions;   // e.g. codeRegions.Attention -> {from, to}
+const REFERENCES = Object.fromEntries(Object.entries(REFERENCE_PY).map(([file, source]) => [file, build(source)]));
+export function referenceSource(file) { return file === 'model.py' ? MAP : REFERENCES[file] ?? null; }
 
 // Lines (1-based) whose marker matches this trace key. Some keys appear on two
 // alternative lines (e.g. emb.pos for learned vs sinusoidal); the config picks one.

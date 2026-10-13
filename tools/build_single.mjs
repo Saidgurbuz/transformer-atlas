@@ -7,11 +7,14 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
 import { MODEL_PY } from '../src/generated/model_py.js';
+import { REFERENCE_PY } from '../src/generated/reference_py.js';
+import { REFERENCE_FILES } from '../src/core/reference-files.js';
 
 const require = createRequire(import.meta.url);
 const esbuild = require('./node_modules/esbuild');
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 if (MODEL_PY !== readFileSync(join(root, 'reference/model.py'), 'utf8')) throw new Error('Embedded model.py is stale; run node tools/gen_codemap.mjs before building.');
+if (JSON.stringify(Object.keys(REFERENCE_PY)) !== JSON.stringify(REFERENCE_FILES) || REFERENCE_FILES.some((file) => REFERENCE_PY[file] !== readFileSync(join(root, 'reference', file), 'utf8'))) throw new Error('Embedded lesson references are stale; run node tools/gen_codemap.mjs.');
 
 const result = await esbuild.build({
   entryPoints: [join(root, 'src/main.js')],

@@ -114,6 +114,11 @@ tools/smoke.sh --view stepper --preset llama --reduced-motion --eval-file tests/
 
 ## Extend it
 
+**Tensor operations:** the More menu includes a shape-first lesson for head splitting,
+transpose, reshape/copying, concatenation, einsum and singleton axes. Offset labels are optional.
+Run `node tests/tensor-ops.mjs` for PyTorch layout parity and
+`tools/smoke.sh --view tensor-ops --eval-file tests/browser_tensor_ops.js` for interaction checks.
+
 See [the reference model's coverage](docs/MODEL_REFERENCE.md) for what lives in `model.py`,
 what belongs to the training/tokenizer tools, and the cache and architecture conventions.
 
