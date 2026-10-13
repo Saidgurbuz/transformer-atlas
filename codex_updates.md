@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Attention backward reference
+
+Added a readable manual attention VJP and KV-sharing gradient reduction, including rectangular attention, additive score bias and masked edges. Independent SDPA/autograd comparisons verify the complete Q/K/V chain and contiguous head-group accumulation.
+
 ## 2026-10-13 · Explanation assumptions
 
 Corrected normalization, masked-gradient, score-scaling and pre/post-norm explanations so exact identities and recipe-specific findings are distinguished. Small PyTorch counterexamples verify the epsilon and gradient qualifications; the full equation suite passes.
