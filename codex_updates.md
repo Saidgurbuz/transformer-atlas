@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · v1.4.0 validation and documentation
+
+Documented the executable lesson conventions and prepared v1.4.0 after all routes passed in both themes. Validation passed 549 existing parity checks, 667 new PyTorch lesson comparisons, 12,582 maths checks, Python/NumPy references, cell/source round trips and standalone/desktop/mobile interaction checks.
+
 ## 2026-10-13 · Training theme updates
 
 Made gradient heatmap colors repaint immediately when the theme changes, with listener cleanup on exit. The training browser check now exercises live theme switching alongside optimizer/profile controls.

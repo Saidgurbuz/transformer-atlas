@@ -1,18 +1,15 @@
 # Changelog
 
-## Unreleased
+## 1.4.0 (2026-10-13)
 
 - Sixteen derivation, shape, debugging and coding exercises with worked solutions, timed worker execution and browser-local progress.
-
 - Architecture recipe comparison with explicit conventions, optional unique parameter counts and primary-paper links.
-
 - Executable encoder–decoder lesson with rectangular cross-attention and source/target padding examples.
-
 - Live-trace FlashAttention lesson with stable online softmax, masked tiles and explicit memory/performance conventions.
-
 - Complete miniature training lesson with actual backward gradients, ignored targets, tied embeddings, SGD and AdamW.
-
 - Shape-first tensor-operation lesson with animated element movement, copying/stride explanations and executable PyTorch correspondence.
+
+- Corrected the remaining softmax display mask equation, preserved lesson source routing after cell selection, and made training gradient colors follow theme switches.
 
 ## 1.3.0 (2026-10-13)
 
