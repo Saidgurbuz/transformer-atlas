@@ -1,5 +1,12 @@
 // Concept entries ('concept:*'): derivations and cost formulas not tied to one tensor.
 export const ENTRIES = {
+  'concept:architecture-choices': {
+    title: 'Norm placement, GQA groups and gated feed-forward layers',
+    tex: '\\begin{aligned}y_{\\mathrm{pre}}&=x+f(N(x))\\\\ y_{\\mathrm{post}}&=N(x+f(x))\\\\ h_{\\mathrm{KV}}&=\\lfloor h/(H/H_{\\mathrm{KV}})\\rfloor\\\\ \\mathrm{FFN}_{\\mathrm{gated}}(x)&=(\\mathrm{SiLU}(xW_g^\\top)\\odot xW_u^\\top)W_d^\\top\\end{aligned}',
+    compact: 'y_{\\mathrm{pre}}=x+f(N(x)),\\quad y_{\\mathrm{post}}=N(x+f(x))',
+    symbols: [{ tex: 'N', text: 'LayerNorm or RMSNorm as selected by the architecture recipe' }, { tex: 'H,H_{\\mathrm{KV}}', text: 'query and KV head counts; the latter divides the former' }],
+    derivation: [{ title: 'Count the actual unique parameters', steps: ['P=\\sum_{\\theta\\in\\mathrm{unique\\ parameters}}|\\theta|'], note: 'The comparison uses complete miniature models, with sizes disclosed on each card. Shared embedding/output matrices are counted once. Different FFN and vocabulary sizes make these counts illustrative rather than a controlled efficiency experiment. GQA is not used by every Llama version; the lesson combines original LLaMA choices with later GQA.' }],
+  },
   'concept:encoder-decoder': {
     title: 'Cross-attention and the complete post-norm decoder',
     tex: '\\begin{aligned}D_1&=\\LN(D+\\mathrm{MaskedAttn}(D,D,D))\\\\ Q&=D_1W_Q^\\top,\\quad K=EW_K^\\top,\\quad V=EW_V^\\top\\\\ A&=\\softmax(\\mathrm{mask}(QK^\\top/\\sqrt{d_h}))\\in\\R^{T\\times S}\\\\ D_2&=\\LN(D_1+\\mathrm{CrossAttn}(D_1,E,E))\\\\ D_3&=\\LN(D_2+\\mathrm{FFN}(D_2))\\end{aligned}',

@@ -3,6 +3,7 @@ import { parseKey } from '../describe.js';
 
 export function equationSources(key, cfg) {
   const { pattern } = parseKey(key);
+  if (pattern === 'concept:architecture-choices') return [{ id: 'radford2019', where: '§2.3', note: 'Pre-LayerNorm and an additional final norm in GPT-2.' }, { id: 'touvron2023', where: '§2.2', note: 'RMSNorm, SwiGLU and rotary positions.' }, { id: 'ainslie2023gqa', where: '§2.2', note: 'Contiguous groups of queries share KV heads.' }];
   if (pattern === 'concept:encoder-decoder') return [{ id: 'vaswani2017', where: '§3.1, §3.2.3, §3.3–3.5', note: 'The encoder–decoder lesson follows the original post-norm topology, √d embedding scaling and tied vocabulary weights. This differs from the main configurable decoder engine.' }];
   if (pattern === 'concept:adamw') return [{ id: 'adamw2017', where: 'Algorithm 2', note: 'The decay is decoupled from the adaptive gradient update. Parameter grouping is an explicit lesson convention.' }];
   if (pattern === 'concept:training-gradient') return [{ id: 'vaswani2017', where: '§3.4, embeddings and softmax; §3.1, shifted decoder inputs', note: 'The derivatives are derived here and independently checked against PyTorch, including ignored targets and tied embedding gradients.' }];

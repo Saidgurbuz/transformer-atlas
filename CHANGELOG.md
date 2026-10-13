@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Architecture recipe comparison with explicit conventions, optional unique parameter counts and primary-paper links.
+
 - Executable encoder–decoder lesson with rectangular cross-attention and source/target padding examples.
 
 - Live-trace FlashAttention lesson with stable online softmax, masked tiles and explicit memory/performance conventions.
