@@ -458,7 +458,7 @@ export default {
       const lensNodes = lens[0].map(({ v, c, z }) => h('div', { class: 'ns-lens', title: `ℓ = ${dec3(z)}` }, h('b', null, lab(v)), h('span', null, `${dec2(c)} ≈ ${dec2(a0)} × ${dec3(z)}`)));
       return [kick, main([`\\ell_n = \\WU\\,\\Wdown_{:,n}`, `c_{n,v} = a_n\\,\\ell_{n,v}`]),
         h('div', { class: 'ns-live' }, h('div', { html: texHTML(`n^\\star = ${f}, \\quad a_{${f}} = ${num(a0, 2)}`) }), ...lensNodes),
-        note('Approximation: the lens ignores later layers and the final norm.')];
+        note('Direct projection; later layers and normalization are excluded.')];
     }
 
     /** One caption per step. */
@@ -472,7 +472,7 @@ export default {
         `Each unit has one activation <b>a</b> for this token. The top ${KK} by |a| are shown; together they carry <b>${Math.round(share * 100)}%</b> of Σ|a| over all <b>${F}</b> units.`,
         'Unit <b>n</b> writes its activation times one fixed direction, the column <b>W_down[:, n]</b>. A negative activation writes the opposite direction.',
         `${list[0].toUpperCase()}${list.slice(1)} add up to the traced <b>mlp.out[t]</b>, to rounding error.`,
-        `Each row lists the ${LENS} tokens that unit raises most: its write, projected through the unembedding and scaled by <b>a</b>. A negative activation flips the sign, so it raises the tokens its direction lowers.`,
+        `Each row shows ${LENS} direct vocabulary projections of the scaled write, before later layers and normalization. Negative activations reverse this linear projection.`,
       ];
     }
 

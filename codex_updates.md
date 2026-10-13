@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Interpretation scope
+
+Added optional QK/OV and MLP explanations that separate exact vector sums, trained-model observations and causal hypotheses. Checked the decompositions and counterexamples in PyTorch, and clarified the existing neuron lens caption without adding main-view text.
+
 ## 2026-10-13 · Invariants and counterexamples
 
 Added optional explanations of softmax/normalization invariants, head-basis freedom, token permutations and cached/full-forward equivalence. Executable PyTorch checks include fixed-causal-mask and rotary counterexamples, plus ten position/mask cache configurations.

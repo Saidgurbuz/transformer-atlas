@@ -180,7 +180,7 @@ export const ENTRIES = {
         note: 'GELU scales its input by how likely a standard normal is to lie below it: a soft version of the ReLU threshold at 0 (Hendrycks and Gimpel, 2016).',
       },
       {
-        title: 'Derivative',
+        title: 'Derivative of exact GELU',
         steps: ['\\frac{d}{dx}\\GELU(x) = \\Phi(x) + x\\,\\varphi(x), \\qquad \\varphi(x) = \\frac{e^{-x^{2}/2}}{\\sqrt{2\\pi}}'],
         note: 'The slope is 1/2 at zero, tends to 1 for large positive x and to 0 for large negative x. It is slightly negative for x below about -0.75, where GELU dips to its minimum of about -0.17. Backpropagation multiplies the upstream gradient by this slope.',
       },
