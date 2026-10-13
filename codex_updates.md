@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Encoder–decoder reference
+
+Added a complete miniature encoder and decoder with bidirectional, causal and rectangular cross-attention, post-LayerNorm and shared embeddings. All traced tensors match PyTorch across four sequence configurations, with padding-invariance and causality checks.
+
 ## 2026-10-13 · Online attention reference
 
 Added stable tiled softmax with an unnormalised output accumulator and per-tile state. Dense PyTorch checks cover every prefix, extreme logits and masked tiles; this CPU teaching recurrence makes no GPU speed claims.
