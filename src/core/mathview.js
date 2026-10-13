@@ -1,8 +1,10 @@
 // Renders math catalogue entries: the full card (equation, symbols with live
 // shapes, derivations, numbers plugged in) and the compact hover version.
 import { h, tex, texHTML, num, fmt } from '../ui/index.js';
-import { mathFor, runLive } from './math/index.js';
+import { mathFor, mathEquation, runLive } from './math/index.js';
 import { dimValues } from './describe.js';
+import { equationSources } from './math/sources.js';
+import { REFERENCES } from './references.js';
 
 function dimsText(dims, cfg, T) {
   if (!dims?.length) return '';
@@ -18,7 +20,7 @@ export function mathCard(state, key, cell = null, { compact = false } = {}) {
   const live = cell ? runLive(state, key, cell) : null;
   const parts = [
     h('div', { class: 'math-title' }, e.title),
-    tex(e.tex, { display: true }),
+    tex(mathEquation(key, state.config), { display: true }),
   ];
   if (e.symbols?.length) {
     parts.push(h('div', { class: 'math-symbols' }, e.symbols.map((s) => h('div', { class: 'math-sym' },
@@ -39,6 +41,13 @@ export function mathCard(state, key, cell = null, { compact = false } = {}) {
         d.steps.map((s) => tex(s, { display: true })), d.note && h('p', { class: 'small muted' }, d.note)));
     }
   }
+  const sources = equationSources(key, state.config);
+  if (sources.length) parts.push(h('div', { class: 'math-sources' }, h('div', { class: 'eyebrow' }, 'Equation sources & implementation conventions'),
+    sources.map((source) => {
+      const ref = REFERENCES.find((r) => r.id === source.id);
+      return h('div', { class: 'small' }, h('a', { href: ref.url, target: '_blank', rel: 'noopener' }, `${ref.authors} (${ref.year}) · ${source.where}`),
+        h('p', { class: 'muted' }, source.note));
+    })));
   return h('div', { class: 'math-card' }, parts);
 }
 
@@ -46,7 +55,7 @@ export function mathCard(state, key, cell = null, { compact = false } = {}) {
 export function mathTipHTML(state, key, cell) {
   const e = mathFor(key);
   if (!e) return '';
-  let html = `<div class="tip-math">${texHTML(e.compact || e.tex)}</div>`;
+  let html = `<div class="tip-math">${texHTML(mathEquation(key, state.config, { compact: true }))}</div>`;
   const live = cell ? runLive(state, key, cell) : null;
   if (live?.tex) html += `<div class="tip-math">${texHTML(live.tex)}</div>`;
   return html;

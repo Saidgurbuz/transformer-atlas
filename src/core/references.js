@@ -1,5 +1,5 @@
-// Curated reading list. Every entry is checked by tools/ (link resolves, title,
-// authors and year match) before it ships. `views` lists the pages where the
+// Curated reading list. Paper locations used by equation cards are recorded in
+// math/sources.js; metadata and relevance require editorial verification. `views` lists the pages where the
 // entry appears in "Further reading"; `why` says what it adds for that topic.
 //
 // Views render it with readingList(viewId) and cite inline with cite(id).

@@ -381,7 +381,7 @@ export default {
       } else {
         matWrap.append(h('div', { class: 'k-label', style: { color: 'var(--c-attn)' }, html: texHTML(mLab) }));
         matHm = heatmap({ data: hatched(D.full), rows: T, cols: T, mode: 'diverging', range: D.rangeS, kind: 'attn', cell: cellPx, showValues: false,
-          highlight: { rows: [t] }, traceKey: sKey, ariaLabel: 'attention scores S', onClick: (r) => ctx.store.select({ token: r }),
+          highlight: { rows: [t] }, traceKey: sKey, band: D.hd, ariaLabel: 'attention scores S', onClick: (r) => ctx.store.select({ token: r }),
           tooltip: (r, c) => {
             const k = r * T + c, v = curFull ? curFull[k] : NaN;
             return `[${r}, ${c}] = <b>${fmt(v, 4)}</b>${D.maskFull && D.maskFull[k] !== 1 ? ' · hidden by the mask' : ''}`;

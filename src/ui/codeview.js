@@ -2,6 +2,7 @@
 // lines and clickable `@trace` chips (the bridge from code to tensors).
 import { h } from './dom.js';
 import { kindVar } from './colors.js';
+import { reducedMotion } from './anim.js';
 
 const KW = new Set(['def', 'class', 'return', 'if', 'elif', 'else', 'for', 'in', 'not', 'and', 'or', 'is', 'None', 'True',
   'False', 'import', 'from', 'as', 'with', 'lambda', 'assert', 'raise', 'try', 'except', 'pass', 'while', 'yield', 'super']);
@@ -30,34 +31,54 @@ export function highlightPython(src) {
  *            kindOf: (key) => kind, onTraceClick: (key, line) => ..., onLineClick, maxHeight })
  * `text` should already have its @trace marker stripped (see core/codemap.js).
  */
-export function codeView({ lines, from = 1, to = Infinity, highlight = [], dimOthers = false, kindOf, onTraceClick, onLineClick, maxHeight }) {
+export function codeView({ lines, from = 1, to = Infinity, highlight = [], dimOthers = false, kindOf, onTraceClick, onLineClick, maxHeight, keyForPattern, isTraceActive, followResize = false }) {
   const el = h('div', { class: 'code', style: maxHeight ? { '--code-h': `${maxHeight}px` } : null });
-  const rows = new Map();
+  const rows = new Map(), traceButtons = [];
   for (const ln of lines) {
     if (ln.n < from || ln.n > to) continue;
-    const chips = (ln.keys || []).map((k) => h('button', {
+    const chips = (ln.keys || []).map((pattern) => {
+      const k = keyForPattern?.(pattern) ?? pattern;
+      const active = isTraceActive?.(k, ln.n) !== false;
+      const chip = h('button', {
       type: 'button', class: 'trace-chip', style: { '--kind': kindVar(kindOf?.(k) || 'norm') },
-      title: `Inspect ${k}`, onClick: (e) => { e.stopPropagation(); onTraceClick?.(k, ln.n); },
-    }, k));
+      disabled: !active, dataset: { traceKey: k },
+      title: active ? `Open the live tensor ${k}` : `${k}: this branch is inactive in the current configuration`,
+      onClick: (e) => { e.stopPropagation(); onTraceClick?.(keyForPattern?.(pattern) ?? pattern, ln.n); },
+    }, k);
+      traceButtons.push({ chip, pattern, line: ln.n });
+      return chip;
+    });
     const row = h('div', { class: 'ln', dataset: { line: ln.n }, onClick: onLineClick ? () => onLineClick(ln.n) : null },
-      h('span', { class: 'no' }, ln.n), h('span', { class: 'src', html: highlightPython(ln.text) || ' ' }), h('span', null, chips));
+      h(onLineClick ? 'button' : 'span', { class: 'no', ...(onLineClick ? { type: 'button', 'aria-label': `Open model.py line ${ln.n}` } : {}) }, ln.n), h('span', { class: 'src', html: highlightPython(ln.text) || ' ' }), h('span', { class: 'trace-chips' }, chips));
     rows.set(ln.n, row);
     el.append(row);
   }
+  let highlighted = new Set();
+  function scrollHighlight(behavior = reducedMotion() ? 'auto' : 'smooth') {
+    const first = rows.get(Math.min(...highlighted));
+    if (!first || !el.clientHeight) return;
+    const rect = el.getBoundingClientRect(), scale = rect.height / el.offsetHeight || 1;
+    const top = (first.getBoundingClientRect().top - rect.top) / scale + el.scrollTop - el.clientHeight / 3;
+    el.scrollTo({ top: Math.max(0, top), behavior });
+  }
   function setHighlight(hl, { scroll = true } = {}) {
     const set = new Set(hl instanceof Set ? hl : [].concat(hl));
+    highlighted = set;
     for (const [n, row] of rows) {
       row.classList.toggle('hl', set.has(n));
       row.classList.toggle('dim', dimOthers && set.size > 0 && !set.has(n));
     }
-    if (scroll && set.size) {
-      const first = rows.get(Math.min(...set));
-      if (first) {
-        const top = first.offsetTop - el.clientHeight / 3;
-        el.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
-      }
-    }
+    if (scroll && set.size) scrollHighlight();
   }
   setHighlight(highlight, { scroll: false });
-  return { el, setHighlight, rows };
+  function setTraceContext() {
+    for (const { chip, pattern, line } of traceButtons) {
+      const key = keyForPattern?.(pattern) ?? pattern, active = isTraceActive?.(key, line) !== false;
+      chip.textContent = key; chip.dataset.traceKey = key; chip.disabled = !active;
+      chip.title = active ? `Open the live tensor ${key}` : `${key}: this branch is inactive in the current configuration`;
+    }
+  }
+  const observer = followResize ? new ResizeObserver(() => scrollHighlight('auto')) : null;
+  observer?.observe(el);
+  return { el, setHighlight, setTraceContext, rows, destroy() { observer?.disconnect(); } };
 }

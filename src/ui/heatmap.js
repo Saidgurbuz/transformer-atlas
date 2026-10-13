@@ -33,6 +33,8 @@ const DEFAULTS = {
   onClick: null,
   ariaLabel: 'heatmap',
   traceKey: null,         // enables the global right-click menu (show code, inspect)
+  band: 0,               // original head index when displaying a 3-D slice
+  cellOf: null,          // map a displayed subset back to its original tensor coordinates
 };
 
 export function heatmap(options) {
@@ -74,8 +76,8 @@ export function heatmap(options) {
     layout = computeLayout();
     const { labelW, labelH, cw, ch, W, H } = layout;
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(W * dpr);
-    canvas.height = Math.round(H * dpr);
+    if (canvas.width !== Math.round(W * dpr)) canvas.width = Math.round(W * dpr);
+    if (canvas.height !== Math.round(H * dpr)) canvas.height = Math.round(H * dpr);
     canvas.style.width = `${W}px`;
     canvas.style.aspectRatio = `${W} / ${H}`;
     const ctx = canvas.getContext('2d');
@@ -172,8 +174,18 @@ export function heatmap(options) {
     return { r, c, v: o.data[r * o.cols + c] };
   }
 
+  function publishCell(cell) {
+    if (cell && o.traceKey) {
+      let c = o.cellOf ? o.cellOf(cell.r, cell.c) : { r: cell.r, x: cell.c, band: o.band };
+      if (!c) { delete canvas.dataset.cell; return; }
+      if (typeof c === 'string') { const [r, x, band = o.band] = c.split(',').map(Number); c = { r, x, band }; }
+      canvas.dataset.cell = `${c.r},${c.x},${c.band ?? o.band}`;
+    } else delete canvas.dataset.cell;
+  }
+
   canvas.addEventListener('pointermove', (ev) => {
     const cell = cellAt(ev);
+    publishCell(cell);
     if (!cell) { if (hover) { hover = null; render(); hideTip(); o.onLeave?.(); } return; }
     if (!hover || hover.r !== cell.r || hover.c !== cell.c) {
       hover = cell;
@@ -185,8 +197,9 @@ export function heatmap(options) {
     const html = o.tooltip ? o.tooltip(cell.r, cell.c, cell.v) : `[${cell.r}${rl}, ${cell.c}${cl}] = <b>${fmt(cell.v, 4)}</b>`;
     if (html) showTip(ev.clientX, ev.clientY, html);
   });
-  canvas.addEventListener('pointerleave', () => { hover = null; hideTip(); render(); o.onLeave?.(); });
-  canvas.addEventListener('click', (ev) => { const cell = cellAt(ev); if (cell) o.onClick?.(cell.r, cell.c, cell.v); });
+  canvas.addEventListener('pointerleave', () => { hover = null; publishCell(null); hideTip(); render(); o.onLeave?.(); });
+  canvas.addEventListener('contextmenu', (ev) => publishCell(cellAt(ev)));
+  canvas.addEventListener('click', (ev) => { const cell = cellAt(ev); publishCell(cell); if (cell) o.onClick?.(cell.r, cell.c, cell.v); });
   if (o.onClick) canvas.style.cursor = 'pointer';
 
   const offTheme = onThemeChange(render);
@@ -197,6 +210,7 @@ export function heatmap(options) {
     canvas,
     update(patch) {
       o = { ...o, ...patch };
+      publishCell(null);
       if (o.traceKey) canvas.dataset.trace = o.traceKey; else delete canvas.dataset.trace;
       render();
     },

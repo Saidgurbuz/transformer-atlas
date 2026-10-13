@@ -33,6 +33,11 @@ find "$SITE" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
 cp -r index.html styles src "$SITE/"
 cp dist/transformer-atlas.html "$SITE/transformer-atlas.html"
 touch "$SITE/.nojekyll"          # serve files that start with _ (Jekyll would drop them)
+node --input-type=module - "$SITE/deployment.json" "$(git rev-parse HEAD)" <<'JS'
+import { writeFileSync } from 'node:fs';
+import { VERSION } from './src/version.js';
+writeFileSync(process.argv[2], JSON.stringify({ version: VERSION, sourceCommit: process.argv[3] }) + '\n');
+JS
 
 cd "$SITE"
 git add -A

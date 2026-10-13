@@ -68,3 +68,22 @@ export function lineForKey(key, cfg) {
 export function codeContext(line, before = 2, after = 2) {
   return MAP.lines.slice(Math.max(0, line - 1 - before), Math.min(MAP.lines.length, line + after));
 }
+
+/** Only return tensors produced by THIS branch under the current configuration. */
+export function keysForLine(line, cfg, layer = 0, trace = null) {
+  return (codeLines[line - 1]?.keys || []).map((k) => k.replace('{i}', String(layer)))
+    .filter((key) => lineForKey(key, cfg) === line && (!trace || trace[key]));
+}
+
+/** The marked operation plus the helper implementation that explains its internals. */
+export function sourceForKey(key, cfg) {
+  const line = lineForKey(key, cfg), { pattern } = parseKey(key);
+  let helper = null;
+  if (/^(L\{i\}\.ln[12]|lnf)$/.test(pattern) || /^L\{i\}\.resid_(mid|out)$/.test(pattern) && cfg.norm_placement === 'post') {
+    helper = cfg.norm === 'rmsnorm' ? 'RMSNorm' : 'LayerNorm';
+  } else if (/\.attn\.[qk]_rot$/.test(pattern)) helper = 'apply_rope';
+  else if (pattern === 'mask') helper = 'build_mask';
+  else if (pattern === 'alibi') helper = 'alibi_bias';
+  else if (pattern === 'emb.pos' && cfg.pos_encoding === 'sinusoidal') helper = 'sinusoidal_table';
+  return { line, helper, region: helper ? codeRegions[helper] : null };
+}

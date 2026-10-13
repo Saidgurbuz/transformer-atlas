@@ -145,7 +145,7 @@ function matrix(data, rows, cols, { p, range, kind, trace, cellOf, force = false
   }
   const hm = heatmap({
     data, rows, cols, mode: 'diverging', range, cell: p, cellH: p, minCell: 1, maxCell: 64, showValues: false,
-    tooltip: () => '', traceKey: trace || null, ariaLabel: trace || 'matrix',
+    tooltip: () => '', traceKey: trace || null, cellOf, ariaLabel: trace || 'matrix',
     // the hovered cell is named on the canvas, so the atlas hover card and the right-click maths read its numbers
     onHover: (r, c) => { if (cellOf) hm.canvas.dataset.cell = cellOf(r, c); },
     onLeave: () => { delete hm.canvas.dataset.cell; },

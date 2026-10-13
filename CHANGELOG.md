@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0 (2026-10-13)
+
+- Exact cell ↔ Python source navigation, active-branch links, helper implementations, and consistent GQA/KV coordinates.
+- Configuration-specific equations, corrected Boolean masking, deeper cache equations, and paper locations beside the maths.
+- Reference PyTorch cached decoding, device/dtype-aware position tables, safer sampling and configuration validation.
+- Wrapped source and symbol layouts, working browser Back/Forward, reusable stepper timelines, and inspector cleanup.
+- Fixed standalone bundling, embedded-source freshness checks, and smoke tests that fail on errors, route mismatches, or overflow.
+
+
 ## 1.2.0 (2026-10-12)
 
 - **A new 3D overview**, chosen over an independent alternative in a blind design review and

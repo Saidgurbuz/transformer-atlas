@@ -1,4 +1,4 @@
-import { codeLines, codeRegions } from '../core/codemap.js';
+import { codeLines, codeRegions, keysForLine } from '../core/codemap.js';
 // The zoom hierarchy. A node id is dot-separated so it can live in the URL hash:
 //   model · embedding · block.2 · attention.2 · head.2.1 · softmax.2.1 · mlp.2 ...
 // Each pattern names its parameters (:l layer, :h head, :n which norm/residual).
@@ -8,14 +8,14 @@ import { codeLines, codeRegions } from '../core/codemap.js';
 const T = (s) => () => s;
 
 // ?root=<name> previews an alternative top-level scene (scenes/model-<name>.js), e.g. ?root=b.
-function rootVariant() {
+function rootScene() {
   const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('root');
-  return v && /^[a-z0-9]{1,12}$/.test(v) ? `./scenes/model-${v}.js` : './scenes/model.js';
+  return v === 'b' ? import('./scenes/model-b.js') : import('./scenes/model.js');
 }
 
 export const PATTERNS = [
   { pattern: 'model', title: T('Transformer'), parent: null, kind: 'resid', blurb: 'The whole decoder-only model, input to prediction.',
-    scene: () => import(rootVariant()), keys: () => ['emb.out', 'logits', 'probs'] },
+    scene: rootScene, keys: () => ['emb.out', 'logits', 'probs'] },
 
   { pattern: 'tokens', title: T('Tokens'), parent: () => 'model', kind: 'embed', blurb: 'Text becomes a sequence of integer ids.',
     scene: () => import('./scenes/tokens.js'), keys: () => [] },
@@ -64,7 +64,7 @@ export const PATTERNS = [
   { pattern: 'sampling', title: T('Sampling'), parent: () => 'lm-head', kind: 'head', blurb: 'Temperature, top-k and top-p turn scores into a choice.',
     scene: () => import('./scenes/sampling.js'), keys: () => ['probs'] },
   { pattern: 'generation', title: T('Generation & KV cache'), parent: () => 'model', kind: 'v', blurb: 'One token at a time, reusing cached keys and values.',
-    scene: () => import('./scenes/generation.js'), keys: () => ['logits'] },
+    scene: () => import('./scenes/generation.js'), keys: () => ['logits', 'concept:kv-cache'] },
 
   // Extras: reachable from the menu (and from related scenes)
   { pattern: 'tower', title: T('All tensors (v0.1)'), parent: () => 'model', extra: true, kind: 'resid', blurb: 'Every traced tensor as a 3D tower.',
@@ -172,7 +172,7 @@ export function nodeForKey(key, sel = { head: 0 }) {
     if (key === 'emb.tok') return 'token-embedding';
     if (key === 'emb.pos' || key === 'alibi') return 'positional';
     if (key === 'emb.out') return 'embedding';
-    if (key === 'mask') return `mask.0.${hh}`;
+    if (key === 'mask') return `mask.${sel.layer ?? 0}.${hh}`;
     if (key === 'lnf') return 'final-norm';
     return 'lm-head';
   }
@@ -226,8 +226,10 @@ export function nodeForLine(n, cfg, { layer = 0, head = 0 } = {}) {
   const l = Math.min(layer, cfg.n_layer - 1), hh = Math.min(head, cfg.n_head - 1);
   const pre = cfg.norm_placement === 'pre';
   if (ln.keys.length) {
-    const key = ln.keys[0].replace('{i}', String(l));
-    return nodeForKey(key, { head: hh });
+    const key = keysForLine(n, cfg, l)[0];
+    if (!key) return null;
+    const target = nodeForKey(key, { head: hh, layer: l });
+    return validFor(target, cfg) ? target : null;
   }
   const region = Object.entries(codeRegions).find(([, r]) => n >= r.from && n <= r.to)?.[0];
   const raw = ln.raw;
@@ -252,7 +254,7 @@ export function nodeForLine(n, cfg, { layer = 0, head = 0 } = {}) {
       return `block.${l}`;
     case 'GPT': {
       const gen = codeRegions.GPT && raw && codeLines.slice(0, n).map((x) => x.raw).reverse().find((r) => /^\s+def /.test(r));
-      if (gen && /def generate/.test(gen)) return /softmax|top_k|top_p|multinomial|temperature|sorted|scatter|kth/.test(raw) ? 'sampling' : 'generation';
+      if (gen && /def (create_cache|decode_step|generate)/.test(gen)) return /def generate/.test(gen) && /softmax|top_k|top_p|multinomial|temperature|sorted|scatter|kth/.test(raw) ? 'sampling' : 'generation';
       if (/wte|vocab_size, cfg.d_model\)/.test(raw) && !/lm_head/.test(raw)) return 'token-embedding';
       if (/wpe|pos_encoding|rope|alibi/.test(raw)) return 'positional';
       if (/build_mask/.test(raw)) return `mask.${l}.${hh}`;

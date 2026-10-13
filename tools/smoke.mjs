@@ -44,7 +44,7 @@ const base = opt('url', null) ?? (opt('file', null) ? `file://${join(ROOT, opt('
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist'] });
 
 async function check(view, { theme = 'light', width = 1440, height = 900, out = null, evalJs = null, full = false, wait = 900 } = {}) {
-  const ctx = await browser.newContext({ viewport: { width, height }, colorScheme: theme, deviceScaleFactor: 1 });
+  const ctx = await browser.newContext({ viewport: { width, height }, colorScheme: theme, deviceScaleFactor: 1, reducedMotion: flag('reduced-motion') ? 'reduce' : 'no-preference' });
   const page = await ctx.newPage();
   const errors = [], warnings = [];
   page.on('console', (m) => {
@@ -57,47 +57,64 @@ async function check(view, { theme = 'light', width = 1440, height = 900, out = 
   const params = [opt('preset', null) && `preset=${opt('preset')}`, opt('query', null)].filter(Boolean);
   const q = params.length ? `?${params.join('&')}` : '';
   await page.goto(`${base}${q}#${view}`, { waitUntil: 'load' });
+  try {
+    await page.waitForFunction(() => window.__te?.atlas.stack().at(-1)?.el || document.querySelector('.atlas-error'), { timeout: 30000 });
+    await page.waitForFunction(() => !document.querySelector('.atlas-layer:not(.hidden)')?.getAnimations().some((a) => a.playState === 'running'), { timeout: 10000 });
+  } catch (e) { errors.push(`readiness: ${e.message}`); }
   await page.waitForTimeout(wait);
+  const initialRoute = await page.evaluate(() => window.__te?.atlas.stack().at(-1)?.id);
+  if (initialRoute !== view) errors.push(`route mismatch: requested ${view}, loaded ${initialRoute}`);
+  let evalResult;
+  if (evalJs) {
+    try { evalResult = await page.evaluate(`(async () => (${evalJs}))()`); } catch (e) { errors.push(`eval error: ${e.message}`); }
+    await page.waitForTimeout(400);
+  }
   const info = await page.evaluate(() => ({
     title: document.title,
+    route: window.__te?.atlas.stack().at(-1)?.id,
+    mathErrors: document.querySelectorAll('.katex-error').length,
+    drawerOverflow: (() => { const d = document.querySelector('.atlas-drawer.right.open .atlas-drawer-body'); return d ? d.scrollWidth > d.clientWidth + 1 : false; })(),
     overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
     viewOverflow: (() => { const m = document.querySelector('.main'); return m ? m.scrollWidth > m.clientWidth + 1 : false; })(),
     stub: !!document.querySelector('.placeholder-view, .atlas-layer:not(.hidden) .k-auto'),
     failed: !!document.querySelector('#view-root > .callout.warn, .atlas-error'),
     textLength: (document.querySelector('.atlas-layer:not(.hidden)') || document.querySelector('#view-root'))?.innerText.length ?? 0,
   }));
-  let evalResult;
-  if (evalJs) {
-    try { evalResult = await page.evaluate(`(async () => (${evalJs}))()`); } catch (e) { evalResult = `eval error: ${e.message}`; }
-    await page.waitForTimeout(400);
-  }
   if (out) await page.screenshot({ path: out, fullPage: full });
   await ctx.close();
   return { view, theme, width, ...info, errors, warnings: warnings.length, evalResult, screenshot: out };
 }
 
 try {
+  const bad = (r) => r.errors.length || r.failed || r.stub || r.mathErrors || r.overflowX || r.viewOverflow || r.drawerOverflow;
   if (flag('all')) {
-    const { PATTERNS } = await import('../src/atlas/nodes.js');
+    const { PATTERNS, validFor } = await import('../src/atlas/nodes.js');
+    const { PRESETS } = await import('../src/presets/index.js');
+    const preset = opt('preset', PRESETS[0].id);
+    const config = (await import(`../src/presets/${preset}.js`)).default.config;
     // --shard i/n: every n-th view starting at i, so a sweep can run as n parallel jobs
     const [si, sn] = opt('shard', '0/1').split('/').map(Number);
-    const VIEWS = PATTERNS.map((p) => ({ id: p.pattern.replace(':l', '0').replace(':h', '0').replace(':n', '1') })).filter((_, i) => i % sn === si);
+    const VIEWS = PATTERNS.map((p) => ({ id: p.pattern.replace(':l', '0').replace(':h', '0').replace(':n', '1') })).filter((v) => validFor(v.id, config)).filter((_, i) => i % sn === si);
     const rows = [];
     const shots = opt('shots', null);    // --shots dir: also save <view>-<theme>.png there
     for (const v of VIEWS) for (const theme of opt('themes', 'light,dark').split(',')) {
       const r = await check(v.id, { theme, wait: Number(opt('wait', 700)), out: shots ? join(shots, `${v.id}-${theme}.png`) : null });
       rows.push(r);
-      console.log(`${(r.errors.length || r.failed ? 'FAIL' : r.stub ? 'stub' : 'ok').padEnd(5)} ${v.id.padEnd(11)} ${theme.padEnd(5)} errors=${r.errors.length} overflow=${r.overflowX || r.viewOverflow} ${r.errors.slice(0, 2).join(' | ').slice(0, 200)}`);
+      if (bad(r)) process.exitCode = 1;
+      console.log(`${(bad(r) ? 'FAIL' : 'ok').padEnd(5)} ${v.id.padEnd(11)} ${theme.padEnd(5)} errors=${r.errors.length} overflow=${r.overflowX || r.viewOverflow} ${r.errors.slice(0, 2).join(' | ').slice(0, 200)}`);
     }
     if (flag('mobile')) for (const v of VIEWS) {
       const r = await check(v.id, { width: 400, height: 860, wait: 700 });
-      console.log(`${(r.errors.length || r.failed ? 'FAIL' : 'ok').padEnd(5)} ${v.id.padEnd(11)} 400px errors=${r.errors.length} overflow=${r.overflowX}`);
+      if (bad(r)) process.exitCode = 1;
+      console.log(`${(bad(r) ? 'FAIL' : 'ok').padEnd(5)} ${v.id.padEnd(11)} 400px errors=${r.errors.length} overflow=${r.overflowX}`);
     }
   } else {
-    const r = await check(opt('view', 'overview'), {
+    const evalFile = opt('eval-file', null);
+    const r = await check(opt('view', 'model'), {
       theme: opt('theme', 'light'), width: Number(opt('width', 1440)), height: Number(opt('height', 900)),
-      out: opt('out', null), evalJs: opt('eval', null), full: flag('full'), wait: Number(opt('wait', 900)),
+      out: opt('out', null), evalJs: evalFile ? await readFile(evalFile, 'utf8') : opt('eval', null), full: flag('full'), wait: Number(opt('wait', 900)),
     });
+    if (bad(r)) process.exitCode = 1;
     console.log(JSON.stringify(r, null, 2));
   }
 } finally {

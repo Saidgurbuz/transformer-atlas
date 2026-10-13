@@ -13,6 +13,7 @@ import {
   DEFAULT_CONFIG, DEFAULT_VOCAB, noGrad,
 } from '../engine/index.js';
 import { PRESETS, loadPresetData } from '../presets/index.js';
+import { normalizeCell, selectionForCell } from './cells.js';
 
 const listeners = new Map();
 
@@ -40,6 +41,7 @@ export const store = {
     trace: null,
     logits: null,
     sel: { layer: 0, head: 0, token: 0 },
+    cellFocus: null,
   },
 
   on(event, fn) {
@@ -162,6 +164,8 @@ export const store = {
       head: Math.min(st.sel.head, st.config.n_head - 1),
       token: Math.min(st.sel.token ?? T - 1, T - 1),
     };
+    if (st.cellFocus) st.cellFocus = st.trace[st.cellFocus.key]
+      ? { key: st.cellFocus.key, cell: normalizeCell(st, st.cellFocus.key, st.cellFocus.cell) } : null;
     emit('trace', st);
   },
 
@@ -183,15 +187,33 @@ export const store = {
 
   // ---------------------------------------------------------------- selection
 
-  select(patch) {
-    Object.assign(this.state.sel, patch);
+  select(patch, { keepFocus = false } = {}) {
+    const st = this.state;
+    const limits = { layer: st.config.n_layer, head: st.config.n_head, token: st.ids.length };
+    const next = { ...st.sel };
+    for (const k of Object.keys(limits)) if (patch[k] != null && Number.isFinite(Number(patch[k]))) {
+      next[k] = Math.max(0, Math.min(limits[k] - 1, Math.trunc(Number(patch[k]))));
+    }
+    if (Object.keys(limits).every((k) => next[k] === st.sel[k])) return;
+    Object.assign(st.sel, next);
+    if (!keepFocus) st.cellFocus = null;
     emit('select', this.state.sel);
+  },
+
+  focusCell(key, cell = null) {
+    const st = this.state;
+    if (!st.trace?.[key]) return null;
+    const focus = { key, cell: normalizeCell(st, key, cell) };
+    if (st.cellFocus?.key === key && JSON.stringify(st.cellFocus.cell) === JSON.stringify(focus.cell)) return st.cellFocus;
+    st.cellFocus = focus;
+    this.select(selectionForCell(st, key, focus.cell), { keepFocus: true });
+    emit('focus', focus);
+    return focus;
   },
 
   inspect(key) { emit('inspect', key); },
 
   init() {
-    this.state.model = this.randomModel(this.state.config);
     this.state.config.vocab_size = this.state.tokenizer.size;
     this.state.model = this.randomModel(this.state.config);
     this.setText(this.state.text);

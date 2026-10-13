@@ -1,7 +1,9 @@
 // Panels shared by the app chrome: tensor inspector, model settings, notices, theme.
 import { store } from './store.js';
 import { infoFor, shapePairs } from './describe.js';
-import { lineForKey, codeLines } from './codemap.js';
+import { lineForKey, codeLines, sourceForKey } from './codemap.js';
+import { normalizeCell } from './cells.js';
+import { cellControls } from './cellview.js';
 import { mathCard } from './mathview.js';
 import { PRESETS } from '../presets/index.js';
 import { CONFIG_CHOICES, countParams, dHead } from '../engine/index.js';
@@ -12,12 +14,16 @@ import {
 // ------------------------------------------------------------- inspector
 
 /** Fill `body` with everything about one traced tensor. onZoom(key) is optional. */
-export function renderInspector(body, key, { slice = 0, onSlice, onZoom } = {}) {
+export function renderInspector(body, key, { slice = 0, cell = null, onCell, onSlice, onZoom, onCode, onStepper } = {}) {
   const st = store.state, t = st.trace?.[key];
   const info = infoFor(key);
   clear(body);
   if (!t) { body.append(h('p', { class: 'muted' }, `${key} is not produced by the current configuration.`)); return; }
   const T = st.ids.length;
+  cell = normalizeCell(st, key, cell ?? (st.cellFocus?.key === key ? st.cellFocus.cell : null));
+  if (cell) slice = cell.band;
+  let hm;
+  body.append(cellControls(st, key, cell, (c) => { store.focusCell(key, c); onCell?.(c); }));
   body.append(
     h('div', { class: 'row' }, kindTag(info.kind, key), shapeBadge(shapePairs(key, st.config, T))),
     info.what && h('p', null, info.what));
@@ -34,11 +40,12 @@ export function renderInspector(body, key, { slice = 0, onSlice, onZoom } = {}) 
   if (t.shape.length >= 2) {
     const labels = st.ids.map((id) => st.tokenizer.label(id));
     const isProb = /probs$/.test(key) || key === 'mask';
-    const hm = heatmap({
+    hm = heatmap({
       data, rows, cols, maxWidth: 400, mode: isProb ? 'sequential' : 'diverging', kind: isProb ? info.kind : null, traceKey: key,
+      band: slice, highlight: cell ? { cells: [[cell.r, cell.x]] } : null,
       rowLabels: rows === T ? labels : null,
       colLabels: cols === T ? labels : cols === st.config.vocab_size ? st.tokenizer.vocab.map((c) => (c === ' ' ? '␣' : c)) : null,
-      onClick: (r) => { if (rows === T) store.select({ token: r }); },
+      onClick: (r, x) => { const c = { r, x, band: slice }; store.focusCell(key, c); onCell?.(c); },
     });
     body.append(h('div', { class: 'scroll-x' }, hm.el));
     let n = 0, sum = 0, sq = 0, mn = Infinity, mx = -Infinity;
@@ -47,15 +54,21 @@ export function renderInspector(body, key, { slice = 0, onSlice, onZoom } = {}) 
     body.append(h('dl', { class: 'kv' }, ...[['mean', fmt(mean, 4)], ['std', fmt(std, 4)], ['min', fmt(mn, 4)], ['max', fmt(mx, 4)], ['finite values', String(n)]]
       .flatMap(([a, b]) => [h('dt', null, a), h('dd', null, b)])));
   }
-  const cellRow = t.shape.length === 3 ? { band: slice, r: Math.min(st.sel.token, t.shape[1] - 1), x: 0 } : t.shape.length === 2 ? { band: 0, r: Math.min(st.sel.token, t.shape[0] - 1), x: 0 } : null;
-  const mc = mathCard(st, key, cellRow);
+  const mc = mathCard(st, key, cell);
   if (mc) body.append(mc);
   const line = lineForKey(key, st.config);
   if (line) {
     body.append(h('div', { class: 'eyebrow' }, `reference/model.py · line ${line}`));
     body.append(codeView({ lines: codeLines, from: line - 3, to: line + 2, highlight: [line] }).el);
+    const source = sourceForKey(key, st.config);
+    if (source.region) body.append(h('details', null, h('summary', null, `Inside ${source.helper}`),
+      codeView({ lines: codeLines, ...source.region }).el));
   }
+  body.append(h('div', { class: 'row' },
+    onCode && button('Show in full source', () => onCode(key, cell)),
+    onStepper && button('Follow in code stepper', () => onStepper(key, cell))));
   if (onZoom) body.append(h('div', { class: 'row' }, button('Zoom to this tensor', () => onZoom(key), { variant: 'primary' })));
+  return () => hm?.destroy();
 }
 
 // -------------------------------------------------------------- settings

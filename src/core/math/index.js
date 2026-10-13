@@ -3,6 +3,8 @@
 // one cell from upstream tensors and returns {tex, result, expected, note}; tests/math.mjs
 // checks that every equation compiles and every live result equals the traced value.
 import { parseKey } from '../describe.js';
+import { normalizeCell } from '../cells.js';
+import { configuredEquation } from './configured.js';
 import { ENTRIES as attention } from './attention.js';
 import { ENTRIES as embed } from './embed.js';
 import { ENTRIES as positions } from './positions.js';
@@ -15,6 +17,10 @@ import { ENTRIES as concepts } from './concepts.js';
 export const MATH = { ...embed, ...positions, ...qkv, ...attention, ...norm, ...mlp, ...head, ...concepts };
 
 export function mathFor(key) { return MATH[parseKey(key).pattern] ?? MATH[key] ?? null; }
+export function mathEquation(key, cfg, { compact = false } = {}) {
+  const entry = mathFor(key);
+  return entry ? configuredEquation(key, cfg, entry, compact) : '';
+}
 
 /**
  * Build the context a live() function receives for one cell of a traced tensor.
@@ -23,6 +29,7 @@ export function mathFor(key) { return MATH[parseKey(key).pattern] ?? MATH[key] ?
 export function liveContext(state, key, cell) {
   const { layer } = parseKey(key);
   const t = state.trace[key];
+  cell = normalizeCell(state, key, cell);
   const three = t.shape.length === 3;
   return {
     key, trace: state.trace, cfg: state.config, model: state.model, ids: state.ids,
@@ -30,8 +37,8 @@ export function liveContext(state, key, cell) {
     vocab: (v) => state.tokenizer.label(v),
     layer: layer ?? 0,
     head: three ? cell.band : state.sel.head,
-    row: cell.r,
-    col: cell.x,
+    row: cell?.r ?? 0,
+    col: cell?.x ?? 0,
   };
 }
 

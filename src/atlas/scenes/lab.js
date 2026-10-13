@@ -751,7 +751,7 @@ export default {
         const A = d.probsA, B = d.probsB, buf = Float64Array.from(A);
         const tip = (r, c, v) => `query “${labAt(bs, r)}” at ${r} → key “${labAt(bs, c)}” at ${c}: <b>${fmt(v, 2)}</b>`;
         const onClick = (r) => ctx.store.select({ token: r });
-        hmA = heatmap({ data: A, rows: T, cols: T, mode: 'sequential', kind: 'attn', range: [0, 1], maxWidth: PAT_W, digits: 2, highlight: { rows: [q] }, traceKey: `L${d.shown}.attn.probs`, tooltip: tip, onClick, ariaLabel: 'Model attention pattern' });
+        hmA = heatmap({ data: A, rows: T, cols: T, mode: 'sequential', kind: 'attn', range: [0, 1], maxWidth: PAT_W, digits: 2, highlight: { rows: [q] }, traceKey: `L${d.shown}.attn.probs`, band: d.head, tooltip: tip, onClick, ariaLabel: 'Model attention pattern' });
         hmB = heatmap({ data: buf, rows: T, cols: T, mode: 'sequential', kind: 'attn', range: [0, 1], maxWidth: PAT_W, digits: 2, highlight: { rows: [q] }, tooltip: tip, onClick, ariaLabel: 'Copy attention pattern' });
         const legend = 'rows are queries, columns are keys';
         panelPattern.replaceChildren(h('div', { class: 'lb-pat' },

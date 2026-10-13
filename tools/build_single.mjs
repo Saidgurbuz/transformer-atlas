@@ -6,10 +6,12 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createRequire } from 'node:module';
+import { MODEL_PY } from '../src/generated/model_py.js';
 
 const require = createRequire(import.meta.url);
 const esbuild = require('./node_modules/esbuild');
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+if (MODEL_PY !== readFileSync(join(root, 'reference/model.py'), 'utf8')) throw new Error('Embedded model.py is stale; run node tools/gen_codemap.mjs before building.');
 
 const result = await esbuild.build({
   entryPoints: [join(root, 'src/main.js')],

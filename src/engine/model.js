@@ -52,6 +52,9 @@ export function validateConfig(cfg) {
   if (cfg.n_head % cfg.n_kv_head) errs.push('n_head must be a multiple of n_kv_head');
   if (cfg.d_model % 2 && cfg.pos_encoding === 'sinusoidal') errs.push('sinusoidal encoding needs an even d_model');
   for (const [k, opts] of Object.entries(CONFIG_CHOICES)) if (!opts.includes(cfg[k])) errs.push(`${k} must be one of ${opts.join(', ')}`);
+  if (!Number.isInteger(cfg.prefix_len) || cfg.prefix_len < 0) errs.push('prefix_len must be a non-negative integer');
+  for (const k of ['rope_base', 'norm_eps']) if (!Number.isFinite(cfg[k]) || cfg[k] <= 0) errs.push(`${k} must be finite and positive`);
+  for (const k of ['tie_weights', 'bias', 'residual', 'attn_scale']) if (typeof cfg[k] !== 'boolean') errs.push(`${k} must be a boolean`);
   return errs;
 }
 

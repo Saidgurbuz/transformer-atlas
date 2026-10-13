@@ -280,7 +280,7 @@ function verdict(ok, text) {
 function heat(S, o, { trace = null, band = 0 } = {}) {
   let canvas = null;
   const hm = heatmap({
-    ...o, traceKey: trace,
+    ...o, traceKey: trace, band,
     onHover: (r, c, v) => { if (canvas) canvas.dataset.cell = `${r},${c},${band}`; o.onHover?.(r, c, v); },
     onLeave: () => { if (canvas) delete canvas.dataset.cell; o.onLeave?.(); },
   });

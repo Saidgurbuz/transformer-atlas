@@ -5,7 +5,9 @@
 import { h, fmt, heatmap, codeView, segmented, kindVar, texHTML } from '../../ui/index.js';
 import { useStyle } from '../kit.js';
 import { infoFor, shapePairs, parseKey } from '../../core/describe.js';
-import { codeLines, lineForKey } from '../../core/codemap.js';
+import { codeLines, lineForKey, keysForLine, sourceForKey } from '../../core/codemap.js';
+import { normalizeCell } from '../../core/cells.js';
+import { cellControls } from '../../core/cellview.js';
 import { mathCard } from '../../core/mathview.js';
 import { nodeForKey, nodeInfo } from '../nodes.js';
 
@@ -46,16 +48,18 @@ function groupOf(key) {
 
 export default {
   mount(el, ctx) {
+    let steps = [], idx = 0, timer = null, hm = null, slice = 0;
+    const layerOf = (key) => parseKey(key ?? '').layer;
     const root = h('div', { class: 'sp-root', tabindex: '0', dataset: { ownKeys: '1' } });
     el.append(root);
     const codeHead = h('div', { class: 'sp-code-head' }, h('span', null, 'reference/model.py'), h('span', { class: 'sp-line' }));
-    const cv = codeView({ lines: codeLines, maxHeight: 99999, kindOf: (k) => infoFor(k).kind,
-      onTraceClick: (k) => { const key = k.replace('{i}', String(layerOf(steps[idx]) ?? 0)); const n = steps.indexOf(key); if (n >= 0) go(n); },
+    const cv = codeView({ lines: codeLines, maxHeight: 99999, followResize: true, kindOf: (k) => infoFor(k).kind,
+      keyForPattern: (k) => k.replace('{i}', String(layerOf(steps[idx]) ?? ctx.state.sel.layer)),
+      isTraceActive: (k, n) => keysForLine(n, ctx.cfg, layerOf(steps[idx]) ?? ctx.state.sel.layer, ctx.state.trace).includes(k),
+      onTraceClick: (key) => { const n = steps.indexOf(key); if (n >= 0) { stop(); ctx.store.focusCell(key); go(n); } },
       // clicking a line jumps to the tensor it computes (same layer as now); right-click zooms the atlas there
       onLineClick: (line) => {
-        const pat = codeLines[line - 1]?.keys[0];
-        if (!pat) return;
-        const key = pat.replace('{i}', String(layerOf(steps[idx]) ?? 0));
+        const key = keysForLine(line, ctx.cfg, layerOf(steps[idx]) ?? ctx.state.sel.layer, ctx.state.trace)[0];
         const n = steps.indexOf(key);
         if (n >= 0) { stop(); go(n); }
       } });
@@ -74,8 +78,7 @@ export default {
     root.append(h('div', { class: 'sp-bar' }, h('div', { class: 'sp-controls' }, prev, play, next, speedSeg.el, counter,
       h('span', { class: 'muted small', style: { marginLeft: 'auto' } }, '← → step · Space plays · click a line or a cell to jump · right-click a line to zoom the model there')), timeline));
 
-    let steps = [], idx = 0, timer = null, hm = null, slice = 0;
-    const layerOf = (key) => parseKey(key ?? '').layer;
+    let timelineButtons = [];
 
     function collect() {
       const tr = ctx.state.trace;
@@ -99,6 +102,7 @@ export default {
           return h('button', { type: 'button', class: ['sp-cell', n === idx && 'cur', n < idx && 'done'], title: `${k} · ${infoFor(k).title}`,
             style: { background: kindVar(infoFor(k).kind) }, onClick: () => { stop(); go(n); } });
         })))));
+      timelineButtons = [...timeline.querySelectorAll('.sp-cell')];
       timeline.querySelector('.sp-cell.cur')?.scrollIntoView({ block: 'nearest', inline: 'center' });
     }
 
@@ -106,7 +110,11 @@ export default {
       const st = ctx.state, key = steps[idx];
       if (!key) return;
       const t = st.trace[key], info = infoFor(key), T = st.ids.length;
+      hm?.destroy(); hm = null;
+      const cell = normalizeCell(st, key, st.cellFocus?.key === key ? st.cellFocus.cell : null);
+      if (cell) slice = cell.band;
       const line = lineForKey(key, st.config);
+      cv.setTraceContext();
       cv.setHighlight(line ? [line] : []);
       codeHead.lastChild.textContent = line ? `line ${line}` : 'no line (derived)';
       counter.textContent = `${idx + 1} / ${steps.length}`;
@@ -123,27 +131,29 @@ export default {
 
       // the tensor
       const card = h('div', { class: 'sp-card', dataset: { trace: key } });
+      card.append(cellControls(st, key, cell, (c) => ctx.store.focusCell(key, c)));
       card.append(h('div', { class: 'sp-row' },
         h('span', { class: 'shape' }, t.shape.length ? shapePairs(key, st.config, T).map(([s, n]) => `${s}=${n}`).join(' × ') : 'scalar'),
         nodeTitle && h('button', { class: 'btn', type: 'button', onClick: () => ctx.go(node, card) }, `Zoom to “${nodeTitle}”`),
-        h('button', { class: 'btn ghost', type: 'button', onClick: () => ctx.inspect(key) }, 'Every value')));
+        h('button', { class: 'btn ghost', type: 'button', onClick: () => ctx.inspect(key, cell) }, 'Every value'),
+        h('button', { class: 'btn ghost', type: 'button', onClick: () => ctx.showCode(key) }, 'Full source')));
       if (t.shape.length >= 2) {
         let data = t.data, rows = t.shape[0], cols = t.shape[1];
         if (t.shape.length === 3) {
           slice = Math.min(slice, t.shape[0] - 1);
           card.append(h('div', { class: 'sp-row' }, h('span', { class: 'eyebrow' }, 'head'),
-            segmented({ options: Array.from({ length: t.shape[0] }, (_, i) => ({ value: i, label: `h${i}` })), value: slice, ariaLabel: 'Head', onChange: (v) => { slice = v; render(); } }).el));
+            segmented({ options: Array.from({ length: t.shape[0] }, (_, i) => ({ value: i, label: `h${i}` })), value: slice, ariaLabel: 'Head', onChange: (v) => ctx.store.focusCell(key, { ...cell, band: v }) }).el));
           [, rows, cols] = t.shape;
           data = t.data.subarray(slice * rows * cols, (slice + 1) * rows * cols);
         }
         const labels = st.ids.map((id) => st.tokenizer.label(id));
         const prob = /probs$/.test(key) || key === 'mask';
-        hm?.destroy();
         hm = heatmap({ data, rows, cols, maxWidth: 560, mode: prob ? 'sequential' : 'diverging', kind: prob ? info.kind : null, traceKey: key,
+          band: slice,
           rowLabels: rows === T ? labels : null,
           colLabels: cols === T ? labels : cols === st.config.vocab_size ? st.tokenizer.vocab.map((c) => (c === ' ' ? '␣' : c)) : null,
-          highlight: rows === T ? { rows: [Math.min(st.sel.token, T - 1)] } : null,
-          onClick: (r) => { if (rows === T) ctx.store.select({ token: r }); } });
+          highlight: cell ? { cells: [[cell.r, cell.x]] } : null,
+          onClick: (r, x) => ctx.store.focusCell(key, { r, x, band: slice }) });
         card.append(h('div', { class: 'scroll-x' }, hm.el));
         let n = 0, sum = 0, sq = 0, mn = Infinity, mx = -Infinity;
         for (const v of data) if (Number.isFinite(v)) { n++; sum += v; sq += v * v; mn = Math.min(mn, v); mx = Math.max(mx, v); }
@@ -155,11 +165,12 @@ export default {
       side.append(card);
 
       // the maths, with the selected token's numbers
-      const r = t.shape.length === 3 ? { band: slice, r: Math.min(st.sel.token, t.shape[1] - 1), x: 0 } : t.shape.length === 2 ? { band: 0, r: Math.min(st.sel.token, t.shape[0] - 1), x: 0 } : null;
-      const mc = mathCard(st, key, r, { compact: true });
+      const mc = mathCard(st, key, cell, { compact: true });
       if (mc) side.append(h('div', { class: 'sp-card' }, mc));
-
-      renderTimeline();
+      const source = sourceForKey(key, st.config);
+      if (source.region) side.append(h('details', { class: 'sp-card' }, h('summary', null, `Inside ${source.helper}`), codeView({ lines: codeLines, ...source.region }).el));
+      timelineButtons.forEach((b, n) => { b.classList.toggle('cur', n === idx); b.classList.toggle('done', n < idx); });
+      timelineButtons[idx]?.scrollIntoView({ block: 'nearest', inline: 'center' });
     }
 
     function go(n) {
@@ -175,20 +186,22 @@ export default {
     function stop() { clearInterval(timer); timer = null; play.textContent = '▶ Play'; }
 
     root.addEventListener('keydown', (e) => {
+      if (e.target.closest('input, select, textarea') || e.key === ' ' && e.target.closest('button')) return;
       if (e.key === 'ArrowRight') { e.preventDefault(); stop(); go(idx + 1); }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); stop(); go(idx - 1); }
       else if (e.key === ' ') { e.preventDefault(); timer ? stop() : start(); }
     });
     el.addEventListener('atlas:interrupt', stop);
 
-    const rebuild = () => { const key = steps[idx]; collect(); if (key && steps.includes(key)) idx = steps.indexOf(key); render(); };
-    const offs = [ctx.on('trace', rebuild), ctx.on('select', render)];
+    const rebuild = () => { const key = steps[idx]; collect(); if (key && steps.includes(key)) idx = steps.indexOf(key); renderTimeline(); render(); };
+    const offs = [ctx.on('trace', rebuild), ctx.on('select', render), ctx.on('focus', (focus) => { const n = steps.indexOf(focus.key); if (n >= 0) { stop(); go(n); } })];
     collect();
+    renderTimeline();
     render();
     requestAnimationFrame(() => root.focus({ preventScroll: true }));
     return {
       pause: stop,
-      destroy() { stop(); hm?.destroy(); offs.forEach((f) => f()); root.remove(); },
+      destroy() { stop(); hm?.destroy(); cv.destroy(); offs.forEach((f) => f()); root.remove(); },
     };
   },
 };

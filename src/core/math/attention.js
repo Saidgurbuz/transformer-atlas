@@ -55,10 +55,10 @@ export const ENTRIES = {
 
   'L{i}.attn.masked': {
     title: 'Masked scores',
-    tex: '\\hat S_{ij} = \\begin{cases} \\tilde S_{ij} & \\Mk_{ij} = 1 \\\\ -\\infty & \\Mk_{ij} = 0 \\end{cases}',
+    tex: '\\begin{aligned} Z &= \\alpha \\Q\\K^{\\top} + B,\\quad \\alpha=1/\\sqrt{d_h}\\text{ (or 1 if unscaled)} \\\\ \\hat S_{ij} &= \\begin{cases} Z_{ij} & \\Mk_{ij} = 1 \\\\ -\\infty & \\Mk_{ij} = 0 \\end{cases} \\end{aligned}',
     compact: '\\hat S_{ij} = -\\infty \\text{ where } \\Mk_{ij}=0',
-    symbols: [{ tex: '\\Mk', text: 'mask: 1 where query i may see key j (causal: j ≤ i)', dims: ['T', 'T'] }],
-    derivation: [{ title: 'Why −∞', steps: ['e^{-\\infty} = 0 \;\\Rightarrow\; \\Aw_{ij} = 0 \\text{ exactly, and } \\partial \\Aw_{ij} / \\partial \\hat S_{ij} = 0'], note: 'Masked keys get exactly zero weight and zero gradient.' }],
+    symbols: [{ tex: '\\Mk', text: 'Boolean mask: 1 where query i may see key j (causal: j ≤ i)', dims: ['T', 'T'] }, { tex: 'B', text: 'ALiBi bias when enabled, otherwise zero', dims: ['T', 'T'] }],
+    derivation: [{ title: 'Why −∞', steps: ['e^{-\\infty} = 0 \\;\\Rightarrow\\; \\Aw_{ij} = 0 \\text{ exactly, and } \\partial \\Aw_{ij} / \\partial \\hat S_{ij} = 0'], note: 'Masked keys get exactly zero weight and zero gradient.' }],
     live({ trace, cfg, layer, head, row, col }) {
       const pre = trace[`L${layer}.attn.${cfg.pos_encoding === 'alibi' ? 'biased' : cfg.attn_scale ? 'scaled' : 'scores'}`];
       const allowed = trace.mask.data[row * trace.mask.shape[1] + col] === 1;
@@ -69,10 +69,10 @@ export const ENTRIES = {
 
   'L{i}.attn.probs': {
     title: 'Attention weights (softmax)',
-    tex: '\\Aw = \\softmax\\!\\left(\\frac{\\Q\\K^{\\top}}{\\sqrt{d_h}} + \\Mk\\right), \\qquad \\Aw_{ij} = \\frac{e^{\\hat S_{ij}}}{\\sum_{k} e^{\\hat S_{ik}}}',
+    tex: '\\begin{aligned} \\Aw &= \\softmax(\\hat S) \\\\ \\Aw_{ij} &= \\frac{e^{\\hat S_{ij}}}{\\sum_{k} e^{\\hat S_{ik}}} \\end{aligned}',
     compact: '\\Aw_{ij} = \\frac{e^{\\hat S_{ij}}}{\\sum_k e^{\\hat S_{ik}}}',
     symbols: [
-      { tex: '\\hat S', text: 'masked, scaled scores', dims: ['T', 'T'] },
+      { tex: '\\hat S', text: 'scores after optional scaling, optional ALiBi, and masking', dims: ['T', 'T'] },
       { tex: '\\Aw_{ij}', text: 'share of query i’s attention on key j; each row sums to 1', dims: [] },
     ],
     derivation: [

@@ -5,7 +5,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import katex from '../src/vendor/katex/katex.mjs';
 import { MACROS } from '../src/ui/tex.js';
-import { liveContext } from '../src/core/math/index.js';
+import { liveContext, mathEquation } from '../src/core/math/index.js';
+import { equationSources } from '../src/core/math/sources.js';
+import { REFERENCES } from '../src/core/references.js';
 
 // --only src/core/math/<topic>.js checks one topic file in isolation
 const onlyArg = process.argv.indexOf('--only');
@@ -58,6 +60,14 @@ for (const st of states) {
   st.trace = infer(st.model, st.ids).trace;
   for (const key of Object.keys(st.trace)) {
     const e = MATH[parseKey(key).pattern] ?? MATH[key];
+    if (e) {
+      compile(`${st.name} ${key} configured`, mathEquation(key, st.config));
+      compile(`${st.name} ${key} tooltip`, mathEquation(key, st.config, { compact: true }), false);
+      for (const ref of equationSources(key, st.config)) {
+        checks++;
+        if (!REFERENCES.some((r) => r.id === ref.id && r.type === 'paper')) fail(`${key}: unknown paper source ${ref.id}`);
+      }
+    }
     if (!e?.live) continue;
     const t = st.trace[key];
     if (t.shape.length < 2) continue;

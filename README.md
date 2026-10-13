@@ -1,6 +1,6 @@
 # Transformer Atlas
 
-**Live:** https://saidgurbuz.github.io/transformer-atlas/ · version 1.0.0 ([changelog](CHANGELOG.md))
+**Live:** https://saidgurbuz.github.io/transformer-atlas/ · version 1.3.0 ([changelog](CHANGELOG.md))
 
 A full-screen, zoomable atlas of a decoder-only Transformer running a real (tiny, trained)
 model in your browser. Start from a 3D view of the whole model, click a part to zoom into it
@@ -10,9 +10,13 @@ the exact line of PyTorch that computes it. Arrow keys walk the forward pass as 
 
 - **One focus per screen:** every node of the hierarchy (`src/atlas/nodes.js`) is a scene
   (`src/atlas/scenes/*.js`) that answers one question, in steps.
-- **Verified everywhere:** the numbers come from a JS engine proven equal to the PyTorch
-  reference; every equation compiles and its live instantiation is checked against the traced
-  value (`tests/math.mjs`).
+- **Numerically checked:** fixture traces and gradients match the PyTorch reference within
+  the tested tolerances. Catalogue equations compile, and their live cell calculations are
+  checked against traced values (`tests/math.mjs`); browser checks cover navigation and layout.
+- **Cell ↔ code:** select an exact head, row and column in the inspector or code stepper,
+  follow it into the Python source, and return to the same value. Inactive code branches are
+  disabled, and norm/RoPE/mask helpers can be expanded. Equation cards link to specific papers
+  and disclose implementation conventions.
 - **v0.1** (git tag) is the earlier tensor-tower explorer; it is still available from the menu
   as "All tensors (v0.1)".
 
@@ -97,14 +101,21 @@ node tests/parity.mjs                          # JS engine vs PyTorch (traces, g
 node tests/presets.mjs                         # shipped weights reproduce PyTorch logits
 node tests/bpe.mjs                             # JS BPE tokenizer == the Python one (204 texts)
 node tests/math.mjs                            # every equation compiles; live numbers match the trace
+node tests/codemap.mjs                         # active branches, exact cell coordinates, embedded source freshness
+node tools/gen_codemap.mjs --check              # fail if the browser's Python source is stale
+.venv/bin/python tests/test_model_reference.py # current PyTorch source, batched KV cache, sampling and validation
 .venv/bin/python tests/test_numpy_reference.py # NumPy forward + manual backward vs PyTorch
 tools/smoke.sh --all                           # every atlas node in headless Chromium, light + dark
 tools/smoke.sh --view head.1.2 --out shot.png  # one node + screenshot
 tools/smoke.sh --view tokens --preset tinystories --out shot.png   # any node, any model
 tools/smoke.sh --all --themes light --shard 0/3 --shots dir        # a third of a sweep, with screenshots
+tools/smoke.sh --view stepper --preset llama --reduced-motion --eval-file tests/browser_cells.js
 ```
 
 ## Extend it
+
+See [the reference model's coverage](docs/MODEL_REFERENCE.md) for what lives in `model.py`,
+what belongs to the training/tokenizer tools, and the cache and architecture conventions.
 
 **Add a level:** add a pattern to `src/atlas/nodes.js` (title, parent, kind, blurb, trace keys)
 and write `src/atlas/scenes/<name>.js` (copy `softmax.js`; rules and API in

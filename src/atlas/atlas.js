@@ -13,6 +13,9 @@ import * as engine from '../engine/index.js';
 import { notesFor, topicsFor } from '../core/notes.js';
 import { VERSION } from '../version.js';
 import { REFERENCES, cite } from '../core/references.js';
+import { keysForLine, sourceForKey } from '../core/codemap.js';
+import { normalizeCell, cellValue, cellLabel } from '../core/cells.js';
+import { cellControls } from '../core/cellview.js';
 
 const DUR = 760;
 const EASE = 'cubic-bezier(.65,0,.35,1)';
@@ -67,8 +70,8 @@ export function startAtlas(root) {
       go: (target, origin) => go(target, { origin }),
       up: () => up(),
       showMath: (key, cell) => openRight('maths', { key, cell }),
-      showCode: (keys) => openRight('code', { keys }),
-      inspect: (key) => openRight('inspect', { key }),
+      showCode: (keys) => openRight('code', typeof keys === 'string' ? { key: keys } : { keys }),
+      inspect: (key, cell) => openRight('inspect', { key, cell }),
       label: (i) => store.state.tokenizer.label(store.state.ids[i]),
       /** Declare in-scene steps; story mode walks them before leaving the scene. */
       setSteps(labels, onStep) { layer.steps = { labels, onStep, index: 0 }; renderStory(); },
@@ -79,6 +82,10 @@ export function startAtlas(root) {
 
   async function mountLayer(id) {
     const info = nodeInfo(id, cfg());
+    const selection = {};
+    if (info.params.l != null) selection.layer = Number(info.params.l);
+    if (info.params.h != null) selection.head = Number(info.params.h);
+    store.select(selection, { keepFocus: true });
     const el = h('section', { class: 'atlas-layer', 'aria-label': info.title, dataset: { id } });
     stageEl.append(el);
     const layer = { id, info, el, inst: null, offs: [], steps: null };
@@ -163,6 +170,8 @@ export function startAtlas(root) {
     if (!resolve(id) || !validFor(id, cfg())) id = 'model';
     const cur = stack[stack.length - 1];
     if (cur?.id === id) return;
+    const focus = store.state.cellFocus;
+    if (focus && id !== 'stepper' && !nodeInfo(id, cfg()).keys.includes(focus.key) && nodeForKey(focus.key, store.state.sel) !== id) store.state.cellFocus = null;
     const path = pathTo(id, cfg());
     const curPath = stack.map((l) => l.id);
     let common = 0;
@@ -207,7 +216,10 @@ export function startAtlas(root) {
       stack = keep;
     }
     const top = stack[stack.length - 1];
-    if (push) history.replaceState(null, '', `#${id}`);
+    if (location.hash !== `#${id}`) {
+      if (push && cur) history.pushState(null, '', `#${id}`);
+      else history.replaceState(null, '', `#${id}`);
+    }
     document.title = top.id === 'model' ? 'Transformer Atlas' : `${top.info.title} · Transformer Atlas`;
     renderCrumbs();
     renderStory();
@@ -296,17 +308,20 @@ export function startAtlas(root) {
   }
 
   // ------------------------------------------------------------ drawers
-  let rightMode = null, rightArg = {};
+  let rightMode = null, rightArg = {}, rightCleanup = null;
   function openRight(mode, arg = {}) {
     if (rightDrawer.classList.contains('open') && rightMode === mode && !arg.key && !arg.keys) { closeRight(); return; }
+    if (['code', 'maths', 'inspect'].includes(mode) && !arg.key && !arg.keys && store.state.cellFocus) arg = { ...store.state.cellFocus };
+    if (arg.key && arg.cell) store.focusCell(arg.key, arg.cell);
     rightMode = mode; rightArg = arg;
     app.classList.add('right-open');
     rightDrawer.classList.add('open');
     rightDrawer.setAttribute('aria-hidden', 'false');
     renderRight();
   }
-  function closeRight() { rightDrawer.classList.remove('open'); app.classList.remove('right-open'); rightDrawer.setAttribute('aria-hidden', 'true'); rightMode = null; }
+  function closeRight() { rightCleanup?.(); rightCleanup = null; rightDrawer.classList.remove('open'); app.classList.remove('right-open'); rightDrawer.setAttribute('aria-hidden', 'true'); rightMode = null; }
   function renderRight() {
+    rightCleanup?.(); rightCleanup = null;
     const top = stack[stack.length - 1];
     const body = h('div', { class: 'atlas-drawer-body' });
     const titles = { code: 'Code', maths: 'Maths', model: 'Model, weights & input', inspect: 'Tensor', notes: 'Notes & sources' };
@@ -314,16 +329,29 @@ export function startAtlas(root) {
       h('button', { type: 'button', class: 'atlas-tool', 'aria-label': 'Close', onClick: closeRight }, '✕')), body);
     const st = store.state;
     if (rightMode === 'model') renderSettings(body);
-    else if (rightMode === 'inspect') renderInspector(body, rightArg.key, { slice: store.state.sel.head, onSlice: (v) => { store.select({ head: v }); renderRight(); }, onZoom: (k) => { closeRight(); go(nodeForKey(k, store.state.sel)); } });
+    else if (rightMode === 'inspect') {
+      const key = rightArg.key;
+      const cell = normalizeCell(st, key, st.cellFocus?.key === key ? st.cellFocus.cell : rightArg.cell);
+      rightCleanup = renderInspector(body, key, { cell,
+        onSlice: (band) => store.focusCell(key, { ...cell, band }),
+        onCode: (k, c) => openRight('code', { key: k, cell: c }),
+        onStepper: (k, c) => { store.focusCell(k, c); st.focusKey = k; closeRight(); go('stepper'); },
+        onZoom: (k) => { closeRight(); go(nodeForKey(k, st.sel)); } });
+    }
     else if (rightMode === 'maths') {
       const keys = rightArg.key ? [rightArg.key] : (top?.info.keys || []);
-      const present = keys.filter((k) => st.trace[k] && mathFor(k));
+      const present = keys.filter((k) => (st.trace[k] || k.startsWith('concept:')) && mathFor(k));
       if (!present.length) body.append(h('p', { class: 'muted' }, 'No equations for this view yet.'));
       for (const k of present) {
-        const t = st.trace[k];
-        const cell = rightArg.cell ?? (t.shape.length >= 2 ? { band: t.shape.length === 3 ? st.sel.head % t.shape[0] : 0, r: Math.min(st.sel.token, (t.shape.length === 3 ? t.shape[1] : t.shape[0]) - 1), x: 0 } : null);
+        const cell = normalizeCell(st, k, st.cellFocus?.key === k ? st.cellFocus.cell : rightArg.cell);
         const c = mathCard(st, k, cell);
-        if (c) body.append(h('div', { class: 'eyebrow' }, k), c);
+        if (c) {
+          const controls = cellControls(st, k, cell, (next) => store.focusCell(k, next));
+          if (controls) body.append(controls);
+          body.append(c);
+          if (st.trace[k]) body.append(h('div', { class: 'row' }, ui.button('Show the code', () => openRight('code', { key: k, cell })),
+            ui.button('Inspect every value', () => openRight('inspect', { key: k, cell }))));
+        }
       }
     } else if (rightMode === 'notes') {
       const id = top?.id || 'model';
@@ -350,11 +378,23 @@ export function startAtlas(root) {
     } else if (rightMode === 'code') {
       const keys = rightArg.keys || (rightArg.key ? [rightArg.key] : top?.info.keys || []);
       const lines = keys.map((k) => lineForKey(k, st.config)).filter(Boolean);
+      const key = keys.length === 1 && st.trace[keys[0]] ? keys[0] : null;
+      const cell = key ? normalizeCell(st, key, st.cellFocus?.key === key ? st.cellFocus.cell : rightArg.cell) : null;
+      if (key) {
+        body.append(cellControls(st, key, cell, (c) => store.focusCell(key, c)),
+          h('div', { class: 'row' }, ui.button('Inspect this cell', () => openRight('inspect', { key, cell })),
+            ui.button('Show the maths', () => openRight('maths', { key, cell })),
+            ui.button('Follow in code stepper', () => { store.focusCell(key, cell); st.focusKey = key; closeRight(); go('stepper'); })));
+        const source = sourceForKey(key, st.config);
+        if (source.region) body.append(h('details', null, h('summary', null, `Inside ${source.helper}`), codeView({ lines: codeLines, ...source.region }).el));
+      }
       body.append(h('p', { class: 'small muted' }, lines.length
         ? 'reference/model.py · highlighted: the lines behind this view. Click any line (or select a few) to zoom to the part of the model it computes.'
         : 'reference/model.py · click any line (or select a few) to zoom to the part of the model it computes.'));
       const cv = codeView({ lines: codeLines, highlight: lines, maxHeight: 4000, kindOf: (k) => infoFor(k).kind,
-        onTraceClick: (k) => { const key = k.replace('{i}', String(lineCtx().layer)); go(nodeForKey(key, store.state.sel)); },
+        keyForPattern: (k) => k.replace('{i}', String(lineCtx().layer)),
+        isTraceActive: (k, n) => keysForLine(n, st.config, lineCtx().layer, st.trace).includes(k),
+        onTraceClick: (k) => { const c = normalizeCell(st, k, st.cellFocus?.key === k ? st.cellFocus.cell : null); store.focusCell(k, c); openRight('inspect', { key: k, cell: c }); },
         onLineClick: (n) => { if (!window.getSelection()?.toString()) zoomToLine(n, cv.rows.get(n)); } });
       cv.el.classList.add('code-nav');
       wireCodeNav(cv);
@@ -372,9 +412,13 @@ export function startAtlas(root) {
   // ---------------------------------------------------- code -> architecture
   function lineCtx() {
     const top = stack[stack.length - 1], p = top?.info.params || {};
-    return { layer: Number(p.l ?? store.state.sel.layer) || 0, head: Number(p.h ?? store.state.sel.head) || 0 };
+    const key = rightMode === 'code' ? rightArg.key ?? (rightArg.keys?.length === 1 ? rightArg.keys[0] : null) : null;
+    const layer = key && /^L(\d+)\./.exec(key)?.[1];
+    return { layer: Number(layer ?? p.l ?? store.state.sel.layer) || 0, head: Number(p.h ?? store.state.sel.head) || 0 };
   }
   function zoomToLine(n, fromEl) {
+    const key = keysForLine(n, cfg(), lineCtx().layer, store.state.trace)[0];
+    if (key) store.focusCell(key, store.state.cellFocus?.key === key ? store.state.cellFocus.cell : null);
     const target = nodeForLine(n, cfg(), lineCtx());
     if (!target) { store.notice('This line is plumbing; it does not compute a part of the model.'); return; }
     if (target === stack[stack.length - 1]?.id) { pulseStage(); return; }
@@ -419,7 +463,7 @@ export function startAtlas(root) {
       e.preventDefault();
       e.stopPropagation();
       const n = Number(row.dataset.line), target = nodeForLine(n, cfg(), lineCtx());
-      const key = codeLines[n - 1]?.keys[0]?.replace('{i}', String(lineCtx().layer));
+      const key = keysForLine(n, cfg(), lineCtx().layer, store.state.trace)[0];
       openContextMenu(e.clientX, e.clientY, [
         target && { label: `Zoom to “${nodeInfo(target, cfg())?.title}”`, run: () => zoomToLine(n, row) },
         key && store.state.trace[key] && mathFor(key) && { label: 'Show the maths', run: () => openRight('maths', { key }) },
@@ -481,10 +525,10 @@ export function startAtlas(root) {
     const st = store.state;
     let html = '';
     if (traceEl) {
-      const key = traceEl.dataset.trace, info = infoFor(key), cell = cellOf(e.target), t = st.trace[key];
+      const key = traceEl.dataset.trace, info = infoFor(key), rawCell = cellOf(e.target), cell = rawCell && normalizeCell(st, key, rawCell), t = st.trace[key];
       let val = '';
       if (cell && t) {
-        const v = t.shape.length === 3 ? t.data[(cell.band * t.shape[1] + cell.r) * t.shape[2] + cell.x] : t.data[cell.r * t.shape[1] + cell.x];
+        const v = cellValue(st, key, cell);
         val = `<div class="hv-val">${t.shape.length === 3 ? `head ${cell.band} · ` : ''}[${cell.r}, ${cell.x}] = <b>${fmt(v, 4)}</b></div>`;
       }
       html = `<div class="hv-title"><span style="color:${kindVar(info.kind)}">●</span> ${info.label || info.title}</div>${val}${mathTipHTML(st, key, cell)}`;
@@ -503,6 +547,8 @@ export function startAtlas(root) {
   });
   stageEl.addEventListener('pointerleave', hideHover);
   stageEl.addEventListener('click', (e) => {
+    const traceEl = e.target.closest?.('[data-trace]'), cell = cellOf(e.target);
+    if (traceEl && cell) store.focusCell(traceEl.dataset.trace, cell);
     const nodeEl = e.target.closest?.('[data-node]');
     if (nodeEl && !e.defaultPrevented) { e.preventDefault(); go(nodeEl.dataset.node, { origin: nodeEl }); }
   });
@@ -512,7 +558,7 @@ export function startAtlas(root) {
     if (codeRow) {
       e.preventDefault();
       const n = Number(codeRow.dataset.line), target = nodeForLine(n, cfg(), lineCtx());
-      const key = codeLines[n - 1]?.keys[0]?.replace('{i}', String(lineCtx().layer));
+      const key = keysForLine(n, cfg(), lineCtx().layer, store.state.trace)[0];
       openContextMenu(e.clientX, e.clientY, [
         target && { label: `Zoom to “${nodeInfo(target, cfg())?.title}” in the model`, run: () => zoomToLine(n, codeRow) },
         key && store.state.trace[key] && mathFor(key) && { label: 'Show the maths', run: () => openRight('maths', { key }) },
@@ -527,11 +573,13 @@ export function startAtlas(root) {
     const items = [];
     let title = top?.info.title;
     if (traceEl) {
-      const key = traceEl.dataset.trace, cell = cellOf(e.target), line = lineForKey(key, cfg());
+      const key = traceEl.dataset.trace, cell = normalizeCell(store.state, key, cellOf(e.target)), line = lineForKey(key, cfg());
+      store.focusCell(key, cell);
       title = `${key} · ${infoFor(key).title}`;
       if (mathFor(key)) items.push({ label: 'Show the maths', hint: cell ? 'Equation with this cell’s numbers' : 'Equation, symbols, derivation', run: () => openRight('maths', { key, cell }) });
-      items.push({ label: `Show the code${line ? ` · model.py:${line}` : ''}`, hint: 'The line that computes this tensor', run: () => openRight('code', { keys: [key] }) });
-      items.push({ label: 'Inspect every value', run: () => openRight('inspect', { key }) });
+      items.push({ label: `Show the code${line ? ` · model.py:${line}` : ''}`, hint: cellLabel(store.state, key, cell), run: () => openRight('code', { key, cell }) });
+      items.push({ label: 'Inspect every value', run: () => openRight('inspect', { key, cell }) });
+      items.push({ label: 'Follow this cell in code stepper', run: () => { store.state.focusKey = key; closeRight(); go('stepper'); } });
       const target = nodeForKey(key, store.state.sel);
       if (target !== top?.id) items.push({ label: `Zoom to “${nodeInfo(target, cfg())?.title}”`, run: () => go(target, { origin: traceEl }) });
     }
@@ -557,8 +605,8 @@ export function startAtlas(root) {
   });
 
   window.addEventListener('hashchange', () => {
-    const id = location.hash.replace(/^#/, '');
-    if (id && id !== (requested ?? stack[stack.length - 1]?.id)) go(id, { push: false });
+    const id = location.hash.replace(/^#/, '') || 'model';
+    if (id !== (requested ?? stack[stack.length - 1]?.id)) go(id, { push: false });
   });
 
   // when the model changes shape, nodes may disappear (e.g. layer 5 of a 2-layer model)
@@ -573,6 +621,10 @@ export function startAtlas(root) {
     if (leftDrawer.classList.contains('open')) renderMenu();
   });
   store.on('trace', () => { if (rightDrawer.classList.contains('open') && rightMode !== 'model') renderRight(); });
+  store.on('focus', (focus) => {
+    if (rightArg.key === focus?.key) rightArg.cell = focus.cell;
+    if (rightDrawer.classList.contains('open') && ['inspect', 'code', 'maths'].includes(rightMode)) renderRight();
+  });
 
   const start = location.hash.replace(/^#/, '') || 'model';
   go(start);
