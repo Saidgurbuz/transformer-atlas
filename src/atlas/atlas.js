@@ -312,7 +312,8 @@ export function startAtlas(root) {
   let rightMode = null, rightArg = {}, rightCleanup = null;
   function openRight(mode, arg = {}) {
     if (rightDrawer.classList.contains('open') && rightMode === mode && !arg.key && !arg.keys && !arg.reference) { closeRight(); return; }
-    if (['code', 'maths', 'inspect'].includes(mode) && !arg.key && !arg.keys && store.state.cellFocus) arg = { ...store.state.cellFocus };
+    const referenceView = stack[stack.length - 1]?.info.reference;
+    if (['code', 'maths', 'inspect'].includes(mode) && !arg.key && !arg.keys && !arg.reference && !referenceView && store.state.cellFocus) arg = { ...store.state.cellFocus };
     if (arg.key && arg.cell) store.focusCell(arg.key, arg.cell);
     rightMode = mode; rightArg = arg;
     app.classList.add('right-open');

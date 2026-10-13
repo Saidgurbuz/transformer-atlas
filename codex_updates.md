@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Lesson source routing
+
+Fixed an earlier selected model cell overriding a lesson’s explicit Python source or maths request. Browser checks verify that lesson navigation uses its own reference while preserving the original cell selection.
+
 ## 2026-10-13 · Architecture comparison
 
 Added a source-linked comparison of 2017, GPT-2 and Llama/GQA recipes, with actual miniature parameter counts hidden by default. Norm placement, positional/head choices and gated FFNs are explained separately; browser checks cover every step and card bounds.
