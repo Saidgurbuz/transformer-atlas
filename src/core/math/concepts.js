@@ -1,5 +1,12 @@
 // Concept entries ('concept:*'): derivations and cost formulas not tied to one tensor.
 export const ENTRIES = {
+  'concept:encoder-decoder': {
+    title: 'Cross-attention and the complete post-norm decoder',
+    tex: '\\begin{aligned}D_1&=\\LN(D+\\mathrm{MaskedAttn}(D,D,D))\\\\ Q&=D_1W_Q^\\top,\\quad K=EW_K^\\top,\\quad V=EW_V^\\top\\\\ A&=\\softmax(\\mathrm{mask}(QK^\\top/\\sqrt{d_h}))\\in\\R^{T\\times S}\\\\ D_2&=\\LN(D_1+\\mathrm{CrossAttn}(D_1,E,E))\\\\ D_3&=\\LN(D_2+\\mathrm{FFN}(D_2))\\end{aligned}',
+    compact: 'A=\\softmax(\\mathrm{mask}(QK^\\top/\\sqrt{d_h}))\\in\\R^{T\\times S}',
+    symbols: [{ tex: 'E,D', text: 'encoder memory and decoder input; batch/head axes omitted' }, { tex: 'S,T', text: 'source and target lengths, which may differ' }],
+    derivation: [{ title: 'Three distinct decoder sub-layers', steps: ['D\\to D_1\\to D_2\\to D_3'], note: 'Self-attention masks future target keys. Cross-attention reads all non-padding source positions. The separate lesson uses one encoder/decoder block, shared vocabulary weights, √d-scaled embeddings, sinusoidal positions, ReLU and post-LayerNorm, without dropout. Its random weights are not a translation model.' }],
+  },
   'concept:online-attention': {
     title: 'Stable online softmax and the output accumulator',
     tex: '\\begin{aligned}m^+&=\\max(m,\\max_{j\\in J}s_j),\\quad\\alpha=e^{m-m^+}\\\\ \\tilde p_j&=e^{s_j-m^+}\\\\ \\ell^+&=\\alpha\\ell+\\sum_{j\\in J}\\tilde p_j\\\\ U^+&=\\alpha U+\\sum_{j\\in J}\\tilde p_jV_j\\\\ o&=U/\\ell\\end{aligned}',

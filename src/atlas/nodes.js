@@ -85,6 +85,8 @@ export const PATTERNS = [
     scene: () => import('./scenes/lab.js'), keys: () => [] },
   { pattern: 'encdec', title: T('Encoder–decoder'), parent: () => 'model', extra: true, kind: 'pos', blurb: 'Cross-attention and the other Transformer families.',
     scene: () => import('./scenes/encdec.js'), keys: () => [] },
+  { pattern: 'encoder-decoder', title: T('Encoder–decoder computation'), parent: () => 'model', extra: true, kind: 'attn', blurb: 'Run bidirectional, causal and rectangular cross-attention.',
+    scene: () => import('./scenes/encoder-decoder.js'), keys: () => ['concept:encoder-decoder'], reference: { file: 'encoder_decoder.py', region: 'TinyEncoderDecoder' } },
   { pattern: 'vision', title: T('Vision tokens'), parent: () => 'tokens', extra: true, kind: 'embed', blurb: 'How images become tokens: ViT patches to VLMs.',
     scene: () => import('./scenes/vision.js'), keys: () => [] },
 

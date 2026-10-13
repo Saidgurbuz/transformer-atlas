@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Executable encoder–decoder lesson with rectangular cross-attention and source/target padding examples.
+
 - Live-trace FlashAttention lesson with stable online softmax, masked tiles and explicit memory/performance conventions.
 
 - Complete miniature training lesson with actual backward gradients, ignored targets, tied embeddings, SGD and AdamW.

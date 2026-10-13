@@ -3,6 +3,7 @@ import { parseKey } from '../describe.js';
 
 export function equationSources(key, cfg) {
   const { pattern } = parseKey(key);
+  if (pattern === 'concept:encoder-decoder') return [{ id: 'vaswani2017', where: '§3.1, §3.2.3, §3.3–3.5', note: 'The encoder–decoder lesson follows the original post-norm topology, √d embedding scaling and tied vocabulary weights. This differs from the main configurable decoder engine.' }];
   if (pattern === 'concept:adamw') return [{ id: 'adamw2017', where: 'Algorithm 2', note: 'The decay is decoupled from the adaptive gradient update. Parameter grouping is an explicit lesson convention.' }];
   if (pattern === 'concept:training-gradient') return [{ id: 'vaswani2017', where: '§3.4, embeddings and softmax; §3.1, shifted decoder inputs', note: 'The derivatives are derived here and independently checked against PyTorch, including ignored targets and tied embedding gradients.' }];
   if (pattern === 'concept:tensor-layout') return [{ id: 'vaswani2017', where: '§3.2.2, Multi-head attention', note: 'The head decomposition is written with the batch axis explicit. View, stride and copying rules are implementation semantics explained by the executable tensor_ops.py reference.' }];

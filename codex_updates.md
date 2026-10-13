@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Encoder–decoder lesson
+
+Added real source/target attention matrices and residual states through all three decoder sub-layers, with selectable heads, queries and padding examples. Numerical/PyTorch source correspondence and desktop/mobile bounds were verified without modifying the main model.
+
 ## 2026-10-13 · FlashAttention lesson
 
 Added live-model tile controls, memory-role illustrations and the running max/sum/output recurrence, with numbers optional and a full-stream equivalence check. Browser checks cover five configurations, tile navigation, one-token inputs and panel bounds; screenshots were inspected in both themes.
