@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-13 · Online attention reference
+
+Added stable tiled softmax with an unnormalised output accumulator and per-tile state. Dense PyTorch checks cover every prefix, extreme logits and masked tiles; this CPU teaching recurrence makes no GPU speed claims.
+
 ## 2026-10-13 · Training lesson
 
 Added a five-step backward-pass lesson with shifted targets, actual per-parameter gradients and consecutive optimizer updates, in the existing Atlas palette and motion. The mini model is isolated from the main model, and browser checks cover both profiles, both optimizers, source correspondence and card bounds.
