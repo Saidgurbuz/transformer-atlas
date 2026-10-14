@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Linked walkthrough screenshots
+
+Added an actual 3D overview and a compact gallery covering attention, code/equations, backpropagation and FlashAttention, with each preview opening its live view. Visually reviewed all five captures and verified documentation links plus GitHub-rendered desktop/mobile layouts.
+
 ## 2026-10-14 · Hosted page setup
 
 Unified hosted and standalone page initialization and reused the Atlas mark as the favicon, preserving local/offline isolation. Build checks, eight navigation assertions in each app variant and all 31 existing cell/source browser checks pass.

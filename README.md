@@ -19,9 +19,9 @@ Transformer Atlas is an interactive guide to the computations inside a Transform
 
 Use it to learn the architecture, demonstrate it in a class, or revisit implementation details for research and technical interviews. Start with the 3D architecture overview, zoom into animated views of individual operations, and open deeper explanations as needed.
 
-[![An attention walkthrough with token connections and head patterns in Transformer Atlas](docs/assets/attention-preview.png)](https://saidgurbuz.github.io/transformer-atlas/?preset=tinystories#attention.0)
+[![The complete Transformer Atlas 3D overview, with embeddings, four decoder layers and a live next-token prediction](docs/assets/model-overview.png)](https://saidgurbuz.github.io/transformer-atlas/?preset=tinystories#model)
 
-*Follow a token's attention connections and compare heads on the live model. Click the preview to explore it.*
+*From input tokens to the next-token prediction. Click the overview to explore the model, then zoom into any component.*
 
 ## Start exploring
 
@@ -40,6 +40,19 @@ In the overview, **Shift-click an input token** or right-click → **Focus token
 - **Equations with context.** Read symbol definitions, configuration-specific formulas, expandable derivations, implementation conventions and references to the relevant papers or official documentation.
 - **Generation and controlled experiments.** Follow token-by-token decoding and KV-cache reuse, adjust sampling, or use the ablation lab to inspect how changing components affects predictions.
 - **Depth you can choose.** Guided scenes introduce the operation; detail drawers, executable references and study tools support implementation-level and research-level questions. Light and dark themes and reduced-motion support are included.
+
+## A closer look
+
+Follow attention connections, connect code to live tensors and equations, trace gradients, or work through tiled attention. Each preview opens its corresponding view in the Atlas.
+
+<p>
+  <a href="https://saidgurbuz.github.io/transformer-atlas/?preset=tinystories#attention.0"><img src="docs/assets/attention-preview.png" width="48%" align="top" alt="Attention: token connections and individual head patterns"></a>
+  <a href="https://saidgurbuz.github.io/transformer-atlas/?preset=tinystories#stepper"><img src="docs/assets/code-equations.png" width="48%" align="top" alt="Code walkthrough: PyTorch source beside a live tensor and its equation"></a>
+</p>
+<p>
+  <a href="https://saidgurbuz.github.io/transformer-atlas/?preset=tinystories#training"><img src="docs/assets/backpropagation.png" width="48%" align="top" alt="Training: next-token loss, backward computation and parameter gradients"></a>
+  <a href="https://saidgurbuz.github.io/transformer-atlas/?preset=tinystories#flash"><img src="docs/assets/flashattention.png" width="48%" align="top" alt="FlashAttention: tiled softmax and an output checked against dense attention"></a>
+</p>
 
 ## Lessons and study tools
 
