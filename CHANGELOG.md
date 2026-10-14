@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.1 (2026-10-14)
+
+- Filled citation gaps for existing embedding, optimizer, soft-capping and interpretation explanations with four primary papers and official tensor-view documentation.
+- Made focused reading lists reachable from the six existing lesson pages, and connected relevant papers to their equation cards.
+- Preserved main explanations and visuals; checked bibliography integrity, existing maths and desktop/mobile/standalone citation navigation.
+
 ## 1.5.0 (2026-10-13)
 
 - Optional research depth in existing equation drawers, with collapsed derivations, executable source links and return navigation.

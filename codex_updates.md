@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · v1.5.1 citation update
+
+Published five directly relevant sources and repaired citation access in existing detail drawers, preserving main content and visuals. Verified paper passages, source integrity, 12,695 maths checks and 122 desktop/mobile/standalone browser assertions.
+
 ## 2026-10-14 · Reachable lesson sources
 
 Connected the six existing lesson routes to focused reading lists, and cited official tensor-view semantics and the online-softmax recurrence beside their equations. Desktop and mobile/standalone checks pass 122 citation, navigation and layout assertions; main lesson text is unchanged.
