@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Live continuation after input edits
+
+Input edits now select the final retained token before emitting the new trace, while model/settings refreshes preserve exploratory selections. State regressions and 33 browser prediction checks pass, along with all 31 existing cell/source navigation checks.
+
 ## 2026-10-14 · Embedding continuation dots
 
 Replaced preview omission sentences with aligned continuation dots, keeping row counts in hover/accessibility labels. Browser checks and screenshot inspection confirm the matrix remains readable and within bounds.

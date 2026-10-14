@@ -56,7 +56,7 @@ export const store = {
 
   // ----------------------------------------------------------------- text
 
-  setText(text, { quiet = false } = {}) {
+  setText(text, { quiet = false, preserveSelection = false } = {}) {
     const st = this.state;
     const { ids, dropped } = st.tokenizer.encode(text);
     // BPE presets have no padding token; keep at least one real token
@@ -65,6 +65,9 @@ export const store = {
     st.ids = ids.slice(0, st.config.block_size);
     if (ids.length > st.config.block_size && !quiet) this.notice(`Input cut to the ${st.config.block_size}-token context window.`);
     if (!st.ids.length) st.ids = [0];
+    // New input resumes continuation at its end. Refreshing the model keeps an
+    // exploratory token selected, with recompute() clamping it if necessary.
+    if (!preserveSelection) st.sel.token = st.ids.length - 1;
     this.recompute();
   },
 
@@ -88,7 +91,7 @@ export const store = {
       st.model = this.randomModel(next);
     }
     emit('config', next);
-    this.setText(st.text);
+    this.setText(st.text, { preserveSelection: true });
     return [];
   },
 
@@ -111,7 +114,7 @@ export const store = {
     st.weights = 'random';
     st.preset = null;
     st.model = this.randomModel(st.config);
-    this.setText(st.text);
+    this.setText(st.text, { preserveSelection: true });
   },
 
   // Swap in an externally built model (same tokenizer).
@@ -121,7 +124,7 @@ export const store = {
     st.config = { ...model.config };
     st.weights = label;
     emit('config', st.config);
-    this.setText(st.text);
+    this.setText(st.text, { preserveSelection: true });
   },
 
   async loadPreset(id) {
@@ -217,7 +220,6 @@ export const store = {
     this.state.config.vocab_size = this.state.tokenizer.size;
     this.state.model = this.randomModel(this.state.config);
     this.setText(this.state.text);
-    this.state.sel.token = this.state.ids.length - 1;
   },
 };
 

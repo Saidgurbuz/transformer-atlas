@@ -110,6 +110,7 @@ node tests/presets.mjs                         # shipped weights reproduce PyTor
 node tests/bpe.mjs                             # JS BPE tokenizer == the Python one (204 texts)
 node tests/math.mjs                            # every equation compiles; live numbers match the trace
 node tests/codemap.mjs                         # active branches, exact cell coordinates, embedded source freshness
+node tests/store-selection.mjs                 # input follows its last token; model refreshes preserve selection
 node tools/gen_codemap.mjs --check              # fail if the browser's Python source is stale
 .venv/bin/python tests/test_model_reference.py # current PyTorch source, batched KV cache, sampling and validation
 .venv/bin/python tests/test_numpy_reference.py # NumPy forward + manual backward vs PyTorch
