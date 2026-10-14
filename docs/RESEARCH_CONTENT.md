@@ -2,6 +2,8 @@
 
 The main Atlas scenes retain their existing controls and illustrations. Open **Maths → Further study** to reach the new explanations; derivations and implementation links start collapsed. Code links include a return action to the explanation. Numerical examples are executable Python references, rather than extra numeric grids on the main stage.
 
+Further-study links are curated for each equation and the active model configuration. The section is omitted when no relevant next step is listed; navigating to another view updates the Maths drawer to that view's equations.
+
 | Material | Reach from | Reference / verification |
 | --- | --- | --- |
 | Complete attention backward chain, shared gradients and implemented activation derivatives | Training, attention, norms and MLP equations | `attention_backward.py`, `numpy_transformer.py`; SDPA/autograd and numerical-gradient checks |

@@ -3,13 +3,20 @@
   const assert = (ok, msg) => { if (!ok) throw new Error(msg); checks++; };
   const settle = () => new Promise(r => setTimeout(r, 100));
   const cases = [
-    ['training', ['attention-backward', 'rmsnorm-backward']],
-    ['norm.0.1', ['layernorm-backward', 'norm-epsilon']],
-    ['softmax.0.0', ['attention-invariants', 'head-basis', 'attention-circuits', 'attention-numerics', 'qk-normalization', 'mla']],
-    ['positional', ['permutation', 'rope-context']], ['generation', ['cache-equivalence']],
-    ['mlp.0', ['mlp-interpretation', 'gelu']],
+    ['training', ['attention-backward', 'layernorm-backward'], 'tinystories'],
+    ['norm.0.1', ['layernorm-backward', 'norm-epsilon'], 'tinystories'],
+    ['softmax.0.0', ['attention-invariants', 'online-attention', 'attention-backward'], 'tinystories'],
+    ['scores.0.0', ['head-basis', 'qk-normalization'], 'tinystories'],
+    ['mask.0.0', ['attention-numerics', 'permutation'], 'tinystories'],
+    ['positional', ['permutation'], 'tinystories'],
+    ['positional', ['rope-relative', 'rope-context'], 'llama'],
+    ['norm.0.1', ['rmsnorm-backward'], 'llama'],
+    ['generation', ['cache-equivalence', 'mla'], 'llama'],
+    ['mlp.0', ['mlp-interpretation', 'swiglu'], 'llama'],
+    ['mlp.0', ['mlp-interpretation', 'gelu'], 'tinystories'],
   ];
-  for (const [route, concepts] of cases) {
+  for (const [route, concepts, preset] of cases) {
+    await window.__te.store.loadPreset(preset);
     await window.__te.atlas.go(route); await settle();
     for (const id of concepts) {
       document.querySelector('.atlas-tools [aria-label="Maths for this view"]').click(); await settle();
@@ -32,8 +39,26 @@
       document.querySelector('.atlas-drawer.right.open [aria-label="Close"]').click();
     }
   }
-  await window.__te.atlas.go('training');
-  document.querySelector('.atlas-tools [aria-label="Maths for this view"]').click(); await settle();
+  // A drilled-down explanation must not follow us into an unrelated view.
+  const tool = () => document.querySelector('.atlas-tools [aria-label="Maths for this view"]');
+  await window.__te.atlas.go('softmax.0.0'); tool().click(); await settle();
+  const invariant = document.querySelector('[data-math-concept="concept:attention-invariants"]');
+  invariant.closest('details').open = true; invariant.click(); await settle();
+  await window.__te.atlas.go('positional'); await settle();
+  assert(document.querySelector('.math-title')?.textContent === 'Positional encoding', 'open maths follows the new view');
+  assert(!document.querySelector('[data-math-concept="concept:online-attention"]'), 'previous softmax topics disappear');
+  assert(!document.querySelector('[data-math-concept="concept:rope-context"]'), 'learned positions omit rotary extensions');
+  await window.__te.atlas.go('tokens'); await settle();
+  assert(!document.querySelector('.math-study'), 'views without equations have no further study section');
+  await window.__te.atlas.go('norm.0.1'); await settle();
+  window.__te.store.setConfig({ norm: 'rmsnorm' }); await settle();
+  assert(!!document.querySelector('[data-math-concept="concept:rmsnorm-backward"]'), 'open links follow a norm configuration change');
+  assert(!document.querySelector('[data-math-concept="concept:layernorm-backward"]'), 'inactive norm derivative is absent');
+  await window.__te.atlas.go('mlp.0'); await settle();
+  window.__te.store.setConfig({ activation: 'relu' }); await settle();
+  assert(!document.querySelector('[data-math-concept="concept:gelu"], [data-math-concept="concept:swiglu"]'), 'ReLU omits unrelated activation formulas');
+  document.querySelector('.atlas-drawer.right.open [aria-label="Close"]').click();
+  await window.__te.atlas.go('training'); tool().click(); await settle();
   const link = document.querySelector('[data-math-concept="concept:attention-backward"]'); link.closest('details').open = true; link.click();
   return { checks };
 })()

@@ -224,6 +224,8 @@ export function startAtlas(root) {
     document.title = top.id === 'model' ? 'Transformer Atlas' : `${top.info.title} · Transformer Atlas`;
     renderCrumbs();
     renderStory();
+    // An equation opened for a previous scene must not pin the next scene's maths.
+    if (rightMode === 'maths') rightArg = store.state.cellFocus ? { ...store.state.cellFocus } : {};
     if (rightDrawer.classList.contains('open')) renderRight();
     hint.classList.add('fade');
     window.dispatchEvent(new CustomEvent('atlas:view', { detail: { id: top.id, title: top.info.title } }));
@@ -326,6 +328,7 @@ export function startAtlas(root) {
   function renderRight() {
     rightCleanup?.(); rightCleanup = null;
     const top = stack[stack.length - 1];
+    const view = top ? nodeInfo(top.id, cfg()) : null;
     const body = h('div', { class: 'atlas-drawer-body' });
     const titles = { code: 'Code', maths: 'Maths', model: 'Model, weights & input', inspect: 'Tensor', notes: 'Notes & sources' };
     rightDrawer.replaceChildren(h('div', { class: 'atlas-drawer-head' }, h('h3', null, titles[rightMode]),
@@ -342,7 +345,7 @@ export function startAtlas(root) {
         onZoom: (k) => { closeRight(); go(nodeForKey(k, st.sel)); } });
     }
     else if (rightMode === 'maths') {
-      const keys = rightArg.key ? [rightArg.key] : (top?.info.keys || []);
+      const keys = rightArg.key ? [rightArg.key] : (view?.keys || []);
       const present = keys.filter((k) => (st.trace[k] || k.startsWith('concept:')) && mathFor(k));
       if (!present.length) body.append(h('p', { class: 'muted' }, 'No equations for this view yet.'));
       for (const k of present) {
@@ -382,7 +385,7 @@ export function startAtlas(root) {
           h('p', { class: 'small' }, r.why)))));
       }
     } else if (rightMode === 'code') {
-      const ref = rightArg.reference ?? (!rightArg.key && !rightArg.keys ? top?.info.reference : null);
+      const ref = rightArg.reference ?? (!rightArg.key && !rightArg.keys ? view?.reference : null);
       if (ref) {
         const source = referenceSource(ref.file), range = source?.regions[ref.region];
         if (!source || !range) { body.append(h('p', { class: 'muted' }, 'This reference region is unavailable.')); return; }
@@ -392,7 +395,7 @@ export function startAtlas(root) {
         body.append(codeView({ lines: source.lines, ...range, maxHeight: 4000 }).el);
         return;
       }
-      const keys = rightArg.keys || (rightArg.key ? [rightArg.key] : top?.info.keys || []);
+      const keys = rightArg.keys || (rightArg.key ? [rightArg.key] : view?.keys || []);
       const lines = keys.map((k) => lineForKey(k, st.config)).filter(Boolean);
       const key = keys.length === 1 && st.trace[keys[0]] ? keys[0] : null;
       const cell = key ? normalizeCell(st, key, st.cellFocus?.key === key ? st.cellFocus.cell : rightArg.cell) : null;

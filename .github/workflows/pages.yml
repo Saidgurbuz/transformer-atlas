@@ -35,6 +35,7 @@ jobs:
         run: |
           node tests/parity.mjs
           node tests/codemap.mjs
+          node tests/deep-content.mjs
           node tests/store-selection.mjs
           node tests/site.mjs
       - name: Build publication files

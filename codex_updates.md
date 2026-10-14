@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Contextual further study
+
+Replaced broad topic lists with equation-specific links that respect the active architecture, and made open Maths drawers follow view/preset changes. Validated 279 links, 33 executable source regions and 392 desktop/mobile browser assertions, including explanation/source round trips; added link integrity to deployment checks.
+
 ## 2026-10-14 · Pages deployment from main
 
 Added a main-only Actions workflow that checks the model/source correspondence, builds the existing app and publishes an artifact directly to Pages. Kept the manual deployment command as a workflow trigger and updated the development guide; publication files and the public URL stay the same.

@@ -1,20 +1,90 @@
-// Optional depth, reached from an existing equation card; no extra scene text.
+// Curated next steps for this equation, rather than a catalogue-wide topic list.
 import { parseKey } from '../describe.js';
-export function furtherStudy(key) {
+
+export function furtherStudy(key, cfg = {}) {
   const { pattern } = parseKey(key);
-  let keys = [];
-  if (/\.attn\./.test(pattern) || pattern === 'mask' || /concept:(online-attention|attention-backward|attention-invariants|head-basis|attention-circuits|attention-numerics|qk-normalization|mla)$/.test(pattern))
-    keys = ['concept:attention-backward', 'concept:attention-invariants', 'concept:head-basis', 'concept:attention-circuits', 'concept:attention-numerics', 'concept:qk-normalization', 'concept:mla'];
-  if (/\.ln[12]$|^lnf$|\.resid_|\.add[12]$/.test(pattern) || /concept:(layernorm-backward|rmsnorm-backward|norm-epsilon|pre-vs-post)/.test(pattern))
-    keys = ['concept:layernorm-backward', 'concept:rmsnorm-backward', 'concept:norm-epsilon', 'concept:pre-vs-post'];
-  if (/\.mlp\./.test(pattern) || /concept:(gelu|swiglu|key-value-memory|mlp-interpretation)/.test(pattern))
-    keys = ['concept:gelu', 'concept:swiglu', 'concept:mlp-interpretation', 'concept:training-gradient'];
-  if (/emb\.pos|\.attn\.[qk]_rot|concept:(rope-relative|rope-context|sinusoidal|alibi|permutation)/.test(pattern))
-    keys.push('concept:rope-relative', 'concept:rope-context', 'concept:permutation', 'concept:head-basis');
-  if (pattern === 'concept:kv-cache' || pattern === 'concept:cache-equivalence') keys = ['concept:cache-equivalence', 'concept:attention-numerics', 'concept:rope-context', 'concept:mla'];
-  if (pattern === 'concept:training-gradient') keys = ['concept:attention-backward', 'concept:layernorm-backward', 'concept:rmsnorm-backward', 'concept:gelu', 'concept:mlp-interpretation'];
-  if (pattern === 'concept:tensor-layout') keys = ['concept:attention-backward', 'concept:permutation', 'concept:head-basis'];
-  if (pattern === 'concept:architecture-choices' || pattern === 'concept:encoder-decoder')
-    keys = ['concept:attention-backward', 'concept:qk-normalization', 'concept:rope-context', 'concept:mla', 'concept:attention-circuits', 'concept:permutation'];
-  return [...new Set(keys)].filter(k => k !== key);
+  const normBackward = cfg.norm === 'rmsnorm' ? 'concept:rmsnorm-backward' : 'concept:layernorm-backward';
+  const activation = cfg.activation === 'swiglu' ? 'concept:swiglu' : cfg.activation === 'relu' ? null : 'concept:gelu';
+  const position = { sinusoidal: 'concept:sinusoidal', rope: 'concept:rope-relative', alibi: 'concept:alibi' }[cfg.pos_encoding];
+  const rotaryContext = cfg.pos_encoding === 'rope' ? 'concept:rope-context' : null;
+  const tied = cfg.tie_weights ? 'concept:weight-tying' : null;
+  const topics = {
+    'emb.tok': ['concept:one-hot-lookup', tied],
+    'emb.pos': [position, 'concept:permutation'],
+    'emb.out': ['concept:permutation'],
+    'mask': ['concept:attention-numerics', 'concept:permutation'],
+    'alibi': ['concept:alibi', 'concept:permutation'],
+    'L{i}.attn.q': ['concept:head-basis', 'concept:attention-backward'],
+    'L{i}.attn.k': ['concept:head-basis', 'concept:attention-backward'],
+    'L{i}.attn.v': ['concept:attention-circuits', 'concept:attention-backward'],
+    'L{i}.attn.q_heads': ['concept:tensor-layout'],
+    'L{i}.attn.k_heads': ['concept:tensor-layout', cfg.n_kv_head < cfg.n_head ? 'concept:gqa' : null],
+    'L{i}.attn.v_heads': ['concept:tensor-layout', cfg.n_kv_head < cfg.n_head ? 'concept:gqa' : null],
+    'L{i}.attn.k_rep': ['concept:gqa', 'concept:attention-backward'],
+    'L{i}.attn.v_rep': ['concept:gqa', 'concept:attention-backward'],
+    'L{i}.attn.q_rot': ['concept:rope-relative', 'concept:rope-context'],
+    'L{i}.attn.k_rot': ['concept:rope-relative', 'concept:rope-context'],
+    'L{i}.attn.biased': ['concept:alibi', 'concept:attention-numerics'],
+    'L{i}.attn.scores': ['concept:head-basis', 'concept:qk-normalization', 'concept:attention-backward'],
+    'L{i}.attn.scaled': ['concept:qk-normalization', 'concept:attention-numerics'],
+    'L{i}.attn.masked': ['concept:attention-numerics', 'concept:permutation'],
+    'L{i}.attn.probs': ['concept:attention-invariants', 'concept:online-attention', 'concept:attention-backward'],
+    'L{i}.attn.ctx': ['concept:attention-invariants', 'concept:attention-circuits', 'concept:attention-backward'],
+    'L{i}.attn.concat': ['concept:tensor-layout', 'concept:head-basis'],
+    'L{i}.attn.out': ['concept:attention-circuits', 'concept:head-basis'],
+    'L{i}.ln1': [normBackward, 'concept:norm-epsilon', 'concept:pre-vs-post'],
+    'L{i}.ln2': [normBackward, 'concept:norm-epsilon', 'concept:pre-vs-post'],
+    'lnf': [normBackward, 'concept:norm-epsilon'],
+    'L{i}.resid_mid': ['concept:residual-stream', 'concept:pre-vs-post'],
+    'L{i}.resid_out': ['concept:residual-stream', 'concept:pre-vs-post'],
+    'L{i}.add1': ['concept:residual-stream', 'concept:pre-vs-post'],
+    'L{i}.add2': ['concept:residual-stream', 'concept:pre-vs-post'],
+    'L{i}.mlp.up': ['concept:key-value-memory', 'concept:mlp-params'],
+    'L{i}.mlp.gate': ['concept:swiglu'],
+    'L{i}.mlp.act': [activation, 'concept:mlp-interpretation'],
+    'L{i}.mlp.out': ['concept:mlp-interpretation', 'concept:key-value-memory'],
+    'logits': [tied, 'concept:cross-entropy-gradient', 'concept:sampling'],
+    'probs': ['concept:sampling', 'concept:cross-entropy-gradient'],
+    'loss': ['concept:cross-entropy-gradient', 'concept:perplexity'],
+    'concept:one-hot-lookup': [tied],
+    'concept:weight-tying': ['concept:cross-entropy-gradient'],
+    'concept:sinusoidal': ['concept:permutation'],
+    'concept:rope-relative': ['concept:rope-context', 'concept:permutation'],
+    'concept:alibi': ['concept:permutation', 'concept:attention-numerics'],
+    'concept:mha-params': ['concept:gqa'],
+    'concept:gqa': ['concept:kv-cache', 'concept:tensor-layout', 'concept:mla'],
+    'concept:layernorm-backward': ['concept:norm-epsilon', 'concept:pre-vs-post'],
+    'concept:rmsnorm-backward': ['concept:norm-epsilon', 'concept:pre-vs-post'],
+    'concept:pre-vs-post': ['concept:residual-stream', 'concept:norm-epsilon'],
+    'concept:residual-stream': ['concept:pre-vs-post'],
+    'concept:gelu': ['concept:mlp-interpretation'],
+    'concept:swiglu': ['concept:mlp-interpretation', 'concept:mlp-params'],
+    'concept:mlp-params': ['concept:swiglu'],
+    'concept:key-value-memory': ['concept:mlp-interpretation'],
+    'concept:cross-entropy-gradient': ['concept:training-gradient'],
+    'concept:perplexity': ['concept:training-gradient'],
+    'concept:kv-cache': ['concept:cache-equivalence', 'concept:gqa', rotaryContext, 'concept:mla'],
+    'concept:flops': ['concept:attention-complexity', 'concept:mha-params', 'concept:mlp-params'],
+    'concept:attention-complexity': ['concept:online-attention', 'concept:gqa'],
+    'concept:architecture-choices': ['concept:pre-vs-post', 'concept:gqa', 'concept:swiglu'],
+    'concept:encoder-decoder': ['concept:attention-numerics', 'concept:permutation', 'concept:pre-vs-post'],
+    'concept:online-attention': ['concept:attention-invariants', 'concept:attention-numerics'],
+    // The separate training lesson offers both GPT-style and Llama-style models.
+    'concept:training-gradient': ['concept:attention-backward', 'concept:layernorm-backward', 'concept:rmsnorm-backward'],
+    'concept:adamw': ['concept:training-gradient'],
+    'concept:tensor-layout': ['concept:gqa', 'concept:attention-backward'],
+    'concept:attention-backward': ['concept:training-gradient', 'concept:attention-numerics'],
+    'concept:attention-invariants': ['concept:online-attention', 'concept:attention-numerics'],
+    'concept:norm-epsilon': [normBackward],
+    'concept:head-basis': ['concept:attention-circuits'],
+    'concept:permutation': [position],
+    'concept:cache-equivalence': ['concept:kv-cache', rotaryContext],
+    'concept:attention-circuits': ['concept:head-basis'],
+    'concept:mlp-interpretation': ['concept:key-value-memory'],
+    'concept:attention-numerics': ['concept:online-attention', 'concept:attention-backward'],
+    'concept:mla': ['concept:kv-cache', 'concept:gqa'],
+    'concept:rope-context': ['concept:rope-relative', 'concept:cache-equivalence'],
+    'concept:qk-normalization': ['concept:attention-numerics', 'concept:head-basis'],
+  };
+  return [...new Set(topics[pattern] ?? [])].filter(k => k && k !== pattern);
 }

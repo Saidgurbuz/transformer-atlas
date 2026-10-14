@@ -45,7 +45,7 @@ export function mathCard(state, key, cell = null, { compact = false, onMath = nu
     }
   }
   if (!compact && onMath) {
-    const related = furtherStudy(key).filter(k => mathFor(k));
+    const related = furtherStudy(key, state.config).filter(k => mathFor(k));
     if (related.length) parts.push(h('details', { class: 'math-deriv math-study' }, h('summary', null, 'Further study'),
       related.map(k => h('div', null, studyButton(mathFor(k).title, () => onMath(k), { mathConcept: k })))));
   }
