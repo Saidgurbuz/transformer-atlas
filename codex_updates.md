@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · v1.5.3 presentation update
+
+Prepared the linked screenshot gallery and consistent page setup for publication. The build, focused integration checks, 47 source/standalone browser assertions and 65 documentation links pass; all captures and README layouts were visually reviewed.
+
 ## 2026-10-14 · Linked walkthrough screenshots
 
 Added an actual 3D overview and a compact gallery covering attention, code/equations, backpropagation and FlashAttention, with each preview opening its live view. Visually reviewed all five captures and verified documentation links plus GitHub-rendered desktop/mobile layouts.

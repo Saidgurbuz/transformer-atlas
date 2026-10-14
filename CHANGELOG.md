@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.3 (2026-10-14)
+
+- Added a complete 3D overview preview and linked screenshots of attention, code/equations, backpropagation and FlashAttention to the public README.
+- Unified hosted and standalone page setup, keeping local/offline copies independent, and reused the Atlas mark as the site favicon.
+- Verified the build, scene navigation, existing cell/source interactions, documentation links and desktop/mobile README layouts.
+
 ## 1.5.2 (2026-10-14)
 
 - Embedding previews use aligned continuation dots, with row counts available on hover and to screen readers.

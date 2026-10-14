@@ -12,7 +12,7 @@
   <a href="https://saidgurbuz.github.io/transformer-atlas/">Try the Atlas</a> ·
   <a href="https://saidgurbuz.github.io/transformer-atlas/#stepper">Code walkthrough</a> ·
   <a href="https://saidgurbuz.github.io/transformer-atlas/#exercises">Practice</a> ·
-  <a href="CHANGELOG.md">v1.5.2</a>
+  <a href="CHANGELOG.md">v1.5.3</a>
 </p>
 
 Transformer Atlas is an interactive guide to the computations inside a Transformer. A small trained model runs in your browser: change its input, follow the forward pass, inspect a tensor, and connect its values to the equation and PyTorch operation that produce them.
