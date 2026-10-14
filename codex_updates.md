@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Reusable Pages build
+
+Extracted the publication files into a shared local/CI build command, preserving the current deployment's file layout. The package matches the deployed app byte for byte, apart from its source-commit metadata, and both shell scripts pass syntax checks.
+
 ## 2026-10-14 · v1.5.3 presentation update
 
 Prepared the linked screenshot gallery and consistent page setup for publication. The build, focused integration checks, 47 source/standalone browser assertions and 65 documentation links pass; all captures and README layouts were visually reviewed.

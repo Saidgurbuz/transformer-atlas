@@ -13,8 +13,7 @@ REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 BRANCH=site
 SHA=$(git rev-parse --short HEAD)
 
-node tools/gen_codemap.mjs
-node tools/build_single.mjs
+tools/build_pages.sh
 
 SITE="$ROOT/.pages"
 if [ ! -d "$SITE/.git" ] && [ ! -f "$SITE/.git" ]; then
@@ -30,14 +29,7 @@ fi
 
 # fresh copy of the app (no tests, tools, reference code or docs)
 find "$SITE" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-cp -r index.html favicon.svg styles src "$SITE/"
-cp dist/transformer-atlas.html "$SITE/transformer-atlas.html"
-touch "$SITE/.nojekyll"          # serve files that start with _ (Jekyll would drop them)
-node --input-type=module - "$SITE/deployment.json" "$(git rev-parse HEAD)" <<'JS'
-import { writeFileSync } from 'node:fs';
-import { VERSION } from './src/version.js';
-writeFileSync(process.argv[2], JSON.stringify({ version: VERSION, sourceCommit: process.argv[3] }) + '\n');
-JS
+cp -r dist/pages/. "$SITE/"
 
 cd "$SITE"
 git add -A
