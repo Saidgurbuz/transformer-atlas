@@ -1,6 +1,6 @@
 # Transformer Atlas
 
-**Live:** https://saidgurbuz.github.io/transformer-atlas/ · version 1.5.0 ([changelog](CHANGELOG.md))
+**Live:** https://saidgurbuz.github.io/transformer-atlas/ · version 1.5.2 ([changelog](CHANGELOG.md))
 
 A full-screen, zoomable atlas of a decoder-only Transformer running a real (tiny, trained)
 model in your browser. Start from a 3D view of the whole model, click a part to zoom into it

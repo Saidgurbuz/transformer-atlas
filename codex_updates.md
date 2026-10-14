@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · v1.5.2 input and focus update
+
+Published continuation dots, live prediction after input edits and optional token focus without zooming. State regressions, desktop/mobile/standalone prediction and gesture checks, existing source navigation and screenshot inspection pass.
+
 ## 2026-10-14 · Focus input tokens without zooming
 
 Added Shift-click and right-click “Focus token” on overview input cards, preserving ordinary click-to-zoom and the camera framing. Seventy desktop/mobile browser assertions verify real token-card hits, both navigation paths and the corresponding probability rows, including normal animation.

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.2 (2026-10-14)
+
+- Embedding previews use aligned continuation dots, with row counts available on hover and to screen readers.
+- Input edits resume prediction after the final retained token; model/settings refreshes preserve exploratory selections.
+- Shift-click or right-click → Focus token selects an overview input card without zooming. Ordinary clicks still open the token view.
+- Verified input/retokenization behavior, probability-row correspondence, source navigation, camera stability and desktop/mobile/standalone layouts.
+
 ## 1.5.1 (2026-10-14)
 
 - Filled citation gaps for existing embedding, optimizer, soft-capping and interpretation explanations with four primary papers and official tensor-view documentation.
