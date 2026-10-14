@@ -345,7 +345,9 @@ export function startAtlas(root) {
         onZoom: (k) => { closeRight(); go(nodeForKey(k, st.sel)); } });
     }
     else if (rightMode === 'maths') {
-      const keys = rightArg.key ? [rightArg.key] : (view?.keys || []);
+      const requestedKey = rightArg.key;
+      const available = requestedKey && (st.trace[requestedKey] || requestedKey.startsWith('concept:'));
+      const keys = available ? [requestedKey] : (view?.keys || []);
       const present = keys.filter((k) => (st.trace[k] || k.startsWith('concept:')) && mathFor(k));
       if (!present.length) body.append(h('p', { class: 'muted' }, 'No equations for this view yet.'));
       for (const k of present) {

@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Equation fallback after preset changes
+
+When a focused tensor disappears after an architecture change, Maths now falls back to the current view’s equations. The standalone study suite passes 198 assertions, including the learned-position to RoPE transition, and all 31 cell/source navigation regressions pass.
+
 ## 2026-10-14 · Contextual further study
 
 Replaced broad topic lists with equation-specific links that respect the active architecture, and made open Maths drawers follow view/preset changes. Validated 279 links, 33 executable source regions and 392 desktop/mobile browser assertions, including explanation/source round trips; added link integrity to deployment checks.

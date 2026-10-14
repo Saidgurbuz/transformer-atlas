@@ -48,6 +48,12 @@
   assert(document.querySelector('.math-title')?.textContent === 'Positional encoding', 'open maths follows the new view');
   assert(!document.querySelector('[data-math-concept="concept:online-attention"]'), 'previous softmax topics disappear');
   assert(!document.querySelector('[data-math-concept="concept:rope-context"]'), 'learned positions omit rotary extensions');
+  document.querySelector('.atlas-drawer.right.open [aria-label="Close"]').click();
+  window.__te.store.focusCell('emb.pos', { r: 0, x: 0 }); tool().click(); await settle();
+  await window.__te.store.loadPreset('llama'); await settle();
+  assert(!!document.querySelector('[data-math-concept="concept:rope-context"]'), 'a vanished focused tensor falls back to the current rotary equations');
+  assert(document.querySelector('.math-title')?.textContent === 'Queries after RoPE', 'preset changes refresh the operation as well as study links');
+  await window.__te.store.loadPreset('tinystories'); await settle();
   await window.__te.atlas.go('tokens'); await settle();
   assert(!document.querySelector('.math-study'), 'views without equations have no further study section');
   await window.__te.atlas.go('norm.0.1'); await settle();
