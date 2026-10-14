@@ -19,7 +19,11 @@ export const REFERENCES = [
     url: 'https://docs.pytorch.org/docs/2.14/generated/torch.nn.functional.scaled_dot_product_attention.html', views: ['attention', 'generation', 'scaling'], why: 'Versioned mask, dropout, rectangular causal alignment, GQA and numerical implementation contracts.' },
   { id: 'adamw2017', title: 'Decoupled Weight Decay Regularization', authors: 'Loshchilov, Hutter', year: 2017, org: 'ICLR 2019', type: 'paper',
     url: 'https://arxiv.org/abs/1711.05101', views: ['training'], why: 'AdamW decouples parameter decay from the adaptive gradient update; the training lesson exposes both steps.' },
+  { id: 'kingma2014adam', title: 'Adam: A Method for Stochastic Optimization', authors: 'Kingma, Ba', year: 2014, org: 'ICLR 2015', type: 'paper',
+    url: 'https://arxiv.org/abs/1412.6980', views: ['training'], why: 'Algorithm 1 gives the moment estimates and bias corrections used in the existing optimizer equations; decoupled decay comes from AdamW.' },
   // ------------------------------------------------------------- foundations
+  { id: 'bengio2003', title: 'A Neural Probabilistic Language Model', authors: 'Bengio et al.', year: 2003, org: 'JMLR', type: 'paper',
+    url: 'https://www.jmlr.org/papers/v3/bengio03a.html', views: ['tokens'], why: 'Section 2 describes the learned vocabulary lookup matrix already discussed in the embedding derivation.' },
   { id: 'vaswani2017', title: 'Attention Is All You Need', authors: 'Vaswani et al.', year: 2017, org: 'Google', type: 'paper',
     url: 'https://arxiv.org/abs/1706.03762', views: ['overview', 'attention', 'multihead', 'positions', 'encdec', 'cheatsheet'],
     why: 'The original Transformer: scaled dot-product attention, multi-head attention, sinusoidal positions, encoder-decoder.' },

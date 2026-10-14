@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Foundational citations
+
+Added the original Adam and neural word-embedding papers, and connected existing weight-tying references to their equations. Source sections were checked against the papers; bibliography/source integrity checks pass.
+
 ## 2026-10-13 · v1.5.0 research-content release
 
 Completed all six content areas as optional equation/source depth and documented their assumptions and scope. Validation passes 549 parity checks, 12,695 maths checks, 34 Python tests, 36 author-code comparisons, 305 study links, 33 source regions and desktop/mobile/standalone browser interactions.
