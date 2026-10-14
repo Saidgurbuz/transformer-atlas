@@ -54,6 +54,11 @@ async function check(view, { theme = 'light', width = 1440, height = 900, out = 
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
   page.on('requestfailed', (r) => { if (!/fonts\.(googleapis|gstatic)/.test(r.url())) errors.push(`request failed: ${r.url()}`); });
   await page.route(/fonts\.(googleapis|gstatic)\.com/, (route) => route.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+  // Live-site checks exercise Atlas without sending synthetic visits to analytics.
+  await page.route(/https:\/\/www\.googletagmanager\.com\/gtag\/js(?:\?|$)/,
+    route => route.fulfill({ status: 200, contentType: 'text/javascript', body: '' }));
+  await page.route(/https:\/\/(?:[\w-]+\.)?google-analytics\.com\//,
+    route => route.fulfill({ status: 204, body: '' }));
   const params = [opt('preset', null) && `preset=${opt('preset')}`, opt('query', null)].filter(Boolean);
   const q = params.length ? `?${params.join('&')}` : '';
   await page.goto(`${base}${q}#${view}`, { waitUntil: 'load' });

@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Isolate analytics in live browser checks
+
+Stubbed only external analytics in the browser harness so verification neither sends synthetic visits nor fails on blocked telemetry. All 95 live high-DPI render-budget and shadow/animation assertions pass with no browser errors; application analytics are unchanged.
+
 ## 2026-10-14 · v1.5.5 dark-mode performance
 
 Published direct dark rendering, shadow reuse and GPU resource cleanup in separate tested updates. Verified retina/mobile and standalone layouts, stable resource budgets, zero idle renders, pixel-equivalent shadows, animation and existing prediction/focus behavior.
