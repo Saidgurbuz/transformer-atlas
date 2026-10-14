@@ -1,13 +1,9 @@
 // The look of the root view (variant b): one studio, two moods.
 // Light: saturated jewel-tone bodies under a soft overhead softbox, white "screens" for data,
 // a pale radial backdrop and a blurred contact shadow. Dark: the same bodies, deepened, with the
-// data (attention patterns, neuron tops, the stream, the prediction) emitting light through a
-// gentle bloom. Colours come from the app's CSS tokens and follow theme changes.
+// data (attention patterns, neuron tops, the stream, the prediction) emitting light.
+// Both themes render directly. Colours come from the app's CSS tokens and follow theme changes.
 import { THREE, themeColor } from '../../../scene/engine3d.js';
-import { EffectComposer } from '../../../vendor/three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from '../../../vendor/three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from '../../../vendor/three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from '../../../vendor/three/addons/postprocessing/OutputPass.js';
 
 const METAL = 0.55;      // anodized: coloured metal bodies
 const KINDS = ['embed', 'pos', 'attn', 'q', 'k', 'v', 'o', 'mlp', 'norm', 'resid', 'head', 'mask'];
@@ -46,6 +42,7 @@ export function createLook(engine) {
 
   // ------------------------------------------------------------ studio environment (reflections)
   const pmrem = new THREE.PMREMGenerator(R);
+  let envTarget = null;
   function studio(dark) {
     const s = new THREE.Scene();
     const dome = new THREE.SphereGeometry(40, 48, 24);
@@ -71,30 +68,13 @@ export function createLook(engine) {
     panel(14, 9, dark ? 3.6 : 4.0, [-17, 9, 15]);     // key, front left
     panel(9, 9, dark ? 1.2 : 1.6, [18, 4, 13]);       // fill, front right
     panel(26, 2.6, dark ? 4.5 : 4.0, [2, 7, -20]);    // rim strip, behind
-    const tex = pmrem.fromScene(s, 0.035).texture;
+    const target = pmrem.fromScene(s, 0.035);
     s.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
-    return tex;
+    return target;
   }
 
-  // ------------------------------------------------------------ post-processing (dark only)
-  let composer = null, bloom = null;
-  function setupComposer(on) {
-    if (composer) { composer.renderTarget1.dispose(); composer.renderTarget2.dispose(); bloom.dispose(); composer = null; bloom = null; }
-    if (!on) { engine.setRenderFn(null); return; }
-    const pr = R.getPixelRatio(), size = R.getSize(new THREE.Vector2());
-    const rt = new THREE.WebGLRenderTarget(Math.max(1, size.x * pr), Math.max(1, size.y * pr), { type: THREE.HalfFloatType, samples: 4 });
-    composer = new EffectComposer(R, rt);
-    composer.setPixelRatio(pr);
-    composer.setSize(size.x, size.y);
-    composer.addPass(new RenderPass(scene, engine.camera));
-    bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.55, 0.32, 0.72);
-    composer.addPass(bloom);
-    composer.addPass(new OutputPass());
-    engine.setRenderFn(() => composer.render());
-  }
   const offResize = engine.onResize((w, h) => {
     bgMat.uniforms.aspect.value = w / Math.max(1, h);
-    if (composer) { composer.setPixelRatio(R.getPixelRatio()); composer.setSize(w, h); }
   });
   bgMat.uniforms.aspect.value = engine.container.clientWidth / Math.max(1, engine.container.clientHeight);
 
@@ -119,10 +99,11 @@ export function createLook(engine) {
     key.intensity = dark ? 1.0 : 1.55;
     rim.intensity = dark ? 1.1 : 0.3;
     rim.color.copy(dark ? look.c.accent.clone().lerp(new THREE.Color(1, 1, 1), 0.5) : new THREE.Color(1, 1, 1));
-    look.env?.dispose();
-    look.env = studio(dark);
+    envTarget?.dispose();
+    envTarget = studio(dark);
+    look.env = envTarget.texture;
     scene.environment = look.env;
-    setupComposer(dark);
+    engine.setRenderFn(null);
     engine.invalidate();
   };
 
@@ -175,8 +156,8 @@ export function createLook(engine) {
 
   look.dispose = () => {
     offResize();
-    setupComposer(false);
-    look.env?.dispose();
+    engine.setRenderFn(null);
+    envTarget?.dispose();
     pmrem.dispose();
     scene.remove(backdrop, key, rim);
     tri.dispose();

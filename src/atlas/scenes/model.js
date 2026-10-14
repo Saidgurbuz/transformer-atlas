@@ -11,10 +11,6 @@
 import { SceneEngine, THREE, label } from '../../scene/engine3d.js';
 import { RoundedBoxGeometry } from '../../vendor/three/RoundedBoxGeometry.js';
 import { RoomEnvironment } from '../../vendor/three/RoomEnvironment.js';
-import { EffectComposer } from '../../vendor/three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from '../../vendor/three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from '../../vendor/three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from '../../vendor/three/addons/postprocessing/OutputPass.js';
 import { Line2 } from '../../vendor/three/addons/lines/Line2.js';
 import { LineMaterial } from '../../vendor/three/addons/lines/LineMaterial.js';
 import { LineGeometry } from '../../vendor/three/addons/lines/LineGeometry.js';
@@ -90,7 +86,9 @@ export default {
     engine.hemi.intensity = 0.0;
     engine.sun.intensity = 0.0;
     const pmrem = new THREE.PMREMGenerator(R);
-    const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    const room = new RoomEnvironment();
+    const envTarget = pmrem.fromScene(room, 0.04), envTex = envTarget.texture;
+    room.dispose();
     engine.scene.environment = envTex;
 
     const key = new THREE.DirectionalLight(0xffffff, 2.0);
@@ -110,13 +108,13 @@ export default {
     const root = new THREE.Group();
     engine.scene.add(root);
 
-    // ---------------------------------------------------------------- look: theme, tone, bloom
+    // ---------------------------------------------------------------- look: theme and lighting
     const dark = () => engine.isDark;
     const tok = (name, fb = '#888888') => { const c = new THREE.Color(); try { c.setStyle(cssVar(name) || fb); } catch { c.setStyle(fb); } return c; };
     const hue = (kind) => tok(`--c-${kind}`);                          // UI tokens: data and accents
     const bodyHue = (kind) => new THREE.Color(BODY[kind] ?? cssVar(`--c-${kind}`) ?? '#888888');
     const hex = (c) => `#${c.getHexString()}`;
-    let composer = null, bloom = null, bgTex = null;
+    let bgTex = null;
     function look() {
       R.toneMapping = dark() ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
       R.toneMappingExposure = dark() ? 1.0 : 1;
@@ -139,22 +137,11 @@ export default {
       bgTex = new THREE.CanvasTexture(c);
       bgTex.colorSpace = THREE.SRGBColorSpace;
       engine.scene.background = bgTex;
-      // dark: a gentle bloom on the luminous data only (the stream, patterns, active units, the winner); light: plain MSAA
-      if (dark() && !composer) {
-        const w = Math.max(1, host.clientWidth), hh = Math.max(1, host.clientHeight);
-        const rt = new THREE.WebGLRenderTarget(w, hh, { type: THREE.HalfFloatType, samples: 4 });
-        composer = new EffectComposer(R, rt);
-        composer.setPixelRatio(R.getPixelRatio());
-        composer.addPass(new RenderPass(engine.scene, cam));
-        bloom = new UnrealBloomPass(new THREE.Vector2(w, hh), 0.55, 0.4, 0.97);   // high threshold: only emissive data glows
-        composer.addPass(bloom);
-        composer.addPass(new OutputPass());
-        composer.setSize(w, hh);
-      }
-      engine.setRenderFn(dark() ? () => composer.render() : null);
+      // Both themes use the native antialiased framebuffer. Emissive materials
+      // keep the data luminous without HDR/MSAA targets and full-frame blur passes.
+      engine.setRenderFn(null);
       engine.invalidate();
     }
-    const offResize = engine.onResize((w, hh) => { composer?.setSize(w, hh); });
 
     // ---------------------------------------------------------------- materials and helpers
     let parts = [], labels = [], disposables = [], flow = [], faceCam = [], hot = null, play = null, bounds = null, hoverLab = null, nextCard = null, winLab = null;
@@ -699,8 +686,8 @@ export default {
       destroy() {
         destroyed = true;
         R.domElement.removeEventListener('click', onClick);
-        offFrame(); offResize(); offLineRes(); offs.forEach((f) => f()); clear();
-        bgTex?.dispose(); envTex.dispose(); pmrem.dispose(); composer?.dispose?.();
+        offFrame(); offLineRes(); offs.forEach((f) => f()); clear();
+        bgTex?.dispose(); envTarget.dispose(); pmrem.dispose();
         engine.dispose(); host.remove();
       },
     };

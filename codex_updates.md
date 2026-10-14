@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Direct dark-mode rendering
+
+Removed the dark-only HDR/multisample bloom pipeline from both overviews, reducing the default scene from 15 renderer passes to one while retaining lighting, emissive colors and antialiasing. Fixed environment-target disposal; browser checks verify stable theme resources, high-DPI rendering, resizing and no idle GPU redraws, with before/after visual review.
+
 ## 2026-10-14 · v1.5.4 contextual study and project links
 
 Prepared the scoped study navigation and quiet menu credit for release, with automatic deployment from main. Validation covers 279 study links, 33 executable regions, desktop/mobile and standalone study flows, existing cell/source navigation and visual review of the menu/footer.

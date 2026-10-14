@@ -71,10 +71,13 @@ cd ..
 tools/smoke.sh --all
 tools/smoke.sh --view model --preset tinystories --eval-file tests/browser_prediction.js
 tools/smoke.sh --view model --preset tinystories --eval-file tests/browser_token_focus.js
+tools/smoke.sh --view model --preset tinystories --reduced-motion --dpr 2 --eval-file tests/browser_render_budget.js
 tools/smoke.sh --view stepper --preset llama --reduced-motion --eval-file tests/browser_cells.js
 ```
 
 The harness checks scene loading, browser errors, route handling and horizontal overflow. The interaction scripts verify prediction, selection and source navigation. Use `--theme dark`, `--width 400`, `--out /path/to/screenshot.png`, or `--file dist/transformer-atlas.html` for additional views and the standalone build. `browser_token_focus.js` uses the HTTP app's scene module to check real 3D token-card hits.
+
+The render-budget check verifies one native scene render in both themes, stable GPU resources after theme switches, high-DPI resizing and no renders while the overview is settled. Use `--query root=b` to check the alternate overview; `--dpr 2` simulates a high-DPI display.
 
 On the shared development cluster, use compute nodes for numerical work, browser checks and training. `tools/smoke.sh` dispatches browser work through the scheduler on cluster login nodes; the [contributor guide](AGENT_GUIDE.md) records the local environment rules.
 

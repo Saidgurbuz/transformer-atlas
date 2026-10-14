@@ -44,7 +44,7 @@ const base = opt('url', null) ?? (opt('file', null) ? `file://${join(ROOT, opt('
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--enable-unsafe-swiftshader', '--use-angle=swiftshader', '--ignore-gpu-blocklist'] });
 
 async function check(view, { theme = 'light', width = 1440, height = 900, out = null, evalJs = null, full = false, wait = 900 } = {}) {
-  const ctx = await browser.newContext({ viewport: { width, height }, colorScheme: theme, deviceScaleFactor: 1, reducedMotion: flag('reduced-motion') ? 'reduce' : 'no-preference' });
+  const ctx = await browser.newContext({ viewport: { width, height }, colorScheme: theme, deviceScaleFactor: Number(opt('dpr', 1)), reducedMotion: flag('reduced-motion') ? 'reduce' : 'no-preference' });
   const page = await ctx.newPage();
   const errors = [], warnings = [];
   page.on('console', (m) => {
