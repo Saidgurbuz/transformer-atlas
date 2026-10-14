@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Reuse static shadows
+
+Camera movement and hover now reuse the overview’s shadow map, while geometry rebuilds and forward-pass animation refresh it. Forty-six browser assertions confirm pixel-identical cached/fresh shadows and correct animation updates; the tested static frame drops from 202 to 157 actual GPU draw commands in either theme.
+
 ## 2026-10-14 · Direct dark-mode rendering
 
 Removed the dark-only HDR/multisample bloom pipeline from both overviews, reducing the default scene from 15 renderer passes to one while retaining lighting, emissive colors and antialiasing. Fixed environment-target disposal; browser checks verify stable theme resources, high-DPI rendering, resizing and no idle GPU redraws, with before/after visual review.

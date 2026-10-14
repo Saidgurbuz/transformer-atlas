@@ -79,6 +79,9 @@ export default {
     cam.updateProjectionMatrix();
     R.shadowMap.enabled = true;
     R.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Camera/hover changes reuse the same shadows. Rebuilds and animated
+    // geometry explicitly invalidate them below.
+    R.shadowMap.autoUpdate = false;
     engine.controls.minDistance = 10;
     engine.controls.maxDistance = 160;
     engine.controls.maxPolarAngle = Math.PI * 0.6;
@@ -460,6 +463,7 @@ export default {
       key.shadow.camera.left = CX - PW; key.shadow.camera.right = CX + PW; key.shadow.camera.top = topY + 4; key.shadow.camera.bottom = -4;
       key.shadow.camera.near = 1; key.shadow.camera.far = 90;
       key.shadow.camera.updateProjectionMatrix();
+      R.shadowMap.needsUpdate = true;
       engine.invalidate();
 
       // ---- builders (hoisted)
@@ -573,6 +577,7 @@ export default {
     const yAt = (u) => flow.bead.y0 + (flow.bead.y1 - flow.bead.y0) * smooth(Math.min(1, u));
     const uAt = (y) => { const f = (y - flow.bead.y0) / (flow.bead.y1 - flow.bead.y0); let lo = 0, hi = 1; for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; if (smooth(m) < f) lo = m; else hi = m; } return lo; };
     function stepPlay(now) {
+      R.shadowMap.needsUpdate = true;
       const u = (play.frozen ?? (now - play.start)) / DUR, b = flow.bead, yNow = yAt(u);
       b.mesh.position.y = yNow;
       b.mesh.material.opacity = u < 1 ? Math.min(1, u * 8) : Math.max(0, 1 - (u - 1) * 6);
