@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · v1.5.4 contextual study and project links
+
+Prepared the scoped study navigation and quiet menu credit for release, with automatic deployment from main. Validation covers 279 study links, 33 executable regions, desktop/mobile and standalone study flows, existing cell/source navigation and visual review of the menu/footer.
+
 ## 2026-10-14 · Project links in the menu
 
 Added a discreet menu footer with an inline GitHub mark, repository link and author credit linking to the verified personal website. Desktop, dark mobile and standalone checks confirm keyboard access, correct destinations and a visible footer below the scrolling navigation; screenshots were visually reviewed.

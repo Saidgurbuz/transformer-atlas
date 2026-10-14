@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.4 (2026-10-14)
+
+- Curated Further study links for each equation and the active normalization, activation and positional encoding; omit empty sections.
+- Open Maths drawers follow view changes and refresh equation keys when switching architectures or presets.
+- Added a quiet menu footer with a GitHub source link and an author credit linking to the personal website.
+- Verified study/source navigation, configuration changes and desktop/mobile/standalone layouts; added study-link integrity to deployment checks.
+
 ## 1.5.3 (2026-10-14)
 
 - Added a complete 3D overview preview and linked screenshots of attention, code/equations, backpropagation and FlashAttention to the public README.
