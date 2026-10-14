@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Project links in the menu
+
+Added a discreet menu footer with an inline GitHub mark, repository link and author credit linking to the verified personal website. Desktop, dark mobile and standalone checks confirm keyboard access, correct destinations and a visible footer below the scrolling navigation; screenshots were visually reviewed.
+
 ## 2026-10-14 · Equation fallback after preset changes
 
 When a focused tensor disappears after an architecture change, Maths now falls back to the current view’s equations. The standalone study suite passes 198 assertions, including the learned-position to RoPE transition, and all 31 cell/source navigation regressions pass.
