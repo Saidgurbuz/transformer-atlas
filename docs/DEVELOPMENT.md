@@ -92,15 +92,20 @@ Training data is downloaded separately. Character-model losses in the manifest a
 
 ## Publish with GitHub Pages
 
-[`tools/deploy_pages.sh`](../tools/deploy_pages.sh) rebuilds the standalone file and pushes the application assets to the `site` branch. It requires GitHub CLI authentication and permission to push to the repository.
+[Deploy Pages](../.github/workflows/pages.yml) runs automatically after pushes to `main`, or manually from the repository's **Actions** tab. It installs the locked build dependencies, checks computation and source correspondence, builds the publication files and deploys them through GitHub Pages. The `github-pages` environment allows deployments from `main`.
+
+[`tools/build_pages.sh`](../tools/build_pages.sh) prepares the same files locally in `dist/pages/`, including the standalone HTML and source-commit metadata. The workflow uploads this directory as an artifact; generated website files do not need their own branch.
+
+To redeploy the current remote `main` with GitHub CLI authentication:
 
 ```bash
 tools/deploy_pages.sh
+gh run list --workflow pages.yml
 ```
 
-If GitHub Pages is already configured for that branch, the push publishes the update. `tools/deploy_pages.sh --enable` also configures Pages when it is not enabled. Source-only documentation changes do not require an app deployment.
+Push local changes before requesting a deployment. In repository **Settings → Pages**, the publishing source must be **GitHub Actions**.
 
-For an application release, update [`src/version.js`](../src/version.js) and the [changelog](../CHANGELOG.md), validate the change, and tag the release before deploying.
+For an application release, update [`src/version.js`](../src/version.js) and the [changelog](../CHANGELOG.md), validate the change, and tag the release. Pushing `main` starts its deployment.
 
 ## Repository map
 

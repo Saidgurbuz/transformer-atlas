@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Pages deployment from main
+
+Added a main-only Actions workflow that checks the model/source correspondence, builds the existing app and publishes an artifact directly to Pages. Kept the manual deployment command as a workflow trigger and updated the development guide; publication files and the public URL stay the same.
+
 ## 2026-10-14 · Reusable Pages build
 
 Extracted the publication files into a shared local/CI build command, preserving the current deployment's file layout. The package matches the deployed app byte for byte, apart from its source-commit metadata, and both shell scripts pass syntax checks.
