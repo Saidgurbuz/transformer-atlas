@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Public development guide
+
+Added portable build, verification, extension and deployment instructions in a dedicated guide, with source links and explicit lesson conventions. Documentation links and embedded-source freshness checks pass.
+
 ## 2026-10-14 · v1.5.2 input and focus update
 
 Published continuation dots, live prediction after input edits and optional token focus without zooming. State regressions, desktop/mobile/standalone prediction and gesture checks, existing source navigation and screenshot inspection pass.
