@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Research citation gaps
+
+Linked Google’s Gemma 2 report to the existing soft-capping equation and Anthropic’s circuit-tracing methods to existing interpretation cautions. Verified the cited passages and source integrity without adding lesson content.
+
 ## 2026-10-14 · Foundational citations
 
 Added the original Adam and neural word-embedding papers, and connected existing weight-tying references to their equations. Source sections were checked against the papers; bibliography/source integrity checks pass.

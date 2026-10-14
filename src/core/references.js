@@ -13,6 +13,8 @@ export const REFERENCES = [
     url: 'https://github.com/jquesnelle/yarn/blob/master/scaled_rope/LlamaYaRNScaledRotaryEmbedding.py', views: ['positions', 'generation'], why: 'Makes the index-ramp and sine/cosine magnitude conventions explicit beside the paper equations.' },
   { id: 'henry2020qknorm', title: 'Query-Key Normalization for Transformers', authors: 'Henry et al.', year: 2020, org: 'EMNLP Findings', type: 'paper',
     url: 'https://aclanthology.org/2020.findings-emnlp.379/', views: ['attention', 'multihead'], why: 'L2 normalization over each Q/K head and a learned score gain, evaluated on low-resource translation.' },
+  { id: 'gemma2024', title: 'Gemma 2: Improving Open Language Models at a Practical Size', authors: 'Gemma Team', year: 2024, org: 'Google', type: 'paper',
+    url: 'https://arxiv.org/abs/2408.00118', views: ['attention'], why: 'Section 2 gives the tanh soft-capping rule already explained beside QK normalization.' },
   { id: 'gemma2025', title: 'Gemma 3 Technical Report', authors: 'Gemma Team', year: 2025, org: 'Google', type: 'paper',
     url: 'https://arxiv.org/abs/2503.19786', views: ['attention', 'positions', 'residual'], why: 'QK normalization, combined RMSNorm placement and local/global attention illustrate recipe-specific architectural choices.' },
   { id: 'pytorch-sdpa', title: 'PyTorch 2.14 scaled_dot_product_attention documentation', authors: 'PyTorch contributors', year: null, org: 'PyTorch 2.14', type: 'documentation',
@@ -94,6 +96,8 @@ export const REFERENCES = [
     why: 'How recent open models differ: GQA vs MLA, norm placement, MoE, sliding-window attention.' },
 
   // ---------------------------------------------------------- interpretability
+  { id: 'ameisen2025', title: 'Circuit Tracing: Revealing Computational Graphs in Language Models', authors: 'Ameisen et al.', year: 2025, org: 'Anthropic', type: 'paper',
+    url: 'https://transformer-circuits.pub/2025/attribution-graphs/methods.html', views: ['attention', 'mlp', 'lab'], why: 'Intervention checks and methodological limits support the existing distinction between a linear attribution and a causal explanation.' },
   { id: 'elhage2021', title: 'A Mathematical Framework for Transformer Circuits', authors: 'Elhage et al.', year: 2021, org: 'Anthropic', type: 'paper',
     url: 'https://transformer-circuits.pub/2021/framework/index.html', views: ['residual', 'multihead', 'attention', 'overview'],
     why: 'The residual stream as a shared communication channel; heads as independent QK and OV circuits that read from and write to it.' },
