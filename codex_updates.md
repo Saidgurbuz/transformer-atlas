@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · v1.5.5 dark-mode performance
+
+Published direct dark rendering, shadow reuse and GPU resource cleanup in separate tested updates. Verified retina/mobile and standalone layouts, stable resource budgets, zero idle renders, pixel-equivalent shadows, animation and existing prediction/focus behavior.
+
 ## 2026-10-14 · Reuse static shadows
 
 Camera movement and hover now reuse the overview’s shadow map, while geometry rebuilds and forward-pass animation refresh it. Forty-six browser assertions confirm pixel-identical cached/fresh shadows and correct animation updates; the tested static frame drops from 202 to 157 actual GPU draw commands in either theme.

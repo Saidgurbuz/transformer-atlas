@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.5.5 (2026-10-14)
+
+- Both overviews use direct antialiased rendering in dark mode, eliminating the HDR/multisample bloom pipeline while retaining lighting, emissive colors and animation.
+- Static overview shadows are reused during camera movement and hover; geometry and forward-pass animation explicitly refresh them.
+- Fixed environment render-target disposal to prevent GPU resource growth during theme switches.
+- Verified native/high-DPI rendering, eight-layer configurations, resizing, idle behavior, cached/fresh pixel equivalence, forward-pass motion, focus/zoom and standalone mobile prediction.
+
 ## 1.5.4 (2026-10-14)
 
 - Curated Further study links for each equation and the active normalization, activation and positional encoding; omit empty sections.
