@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Focus input tokens without zooming
+
+Added Shift-click and right-click “Focus token” on overview input cards, preserving ordinary click-to-zoom and the camera framing. Seventy desktop/mobile browser assertions verify real token-card hits, both navigation paths and the corresponding probability rows, including normal animation.
+
 ## 2026-10-14 · Live continuation after input edits
 
 Input edits now select the final retained token before emitting the new trace, while model/settings refreshes preserve exploratory selections. State regressions and 33 browser prediction checks pass, along with all 31 existing cell/source navigation checks.

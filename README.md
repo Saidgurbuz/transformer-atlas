@@ -8,6 +8,10 @@ model in your browser. Start from a 3D view of the whole model, click a part to 
 real numbers. Hover anything for its equation with the live values plugged in; right-click for
 the exact line of PyTorch that computes it. Arrow keys walk the forward pass as a guided story.
 
+Input edits resume prediction after the final token. In the overview, Shift-click an input
+token or right-click → **Focus token** to explore that position without zooming; ordinary
+clicks keep opening the token view.
+
 - **One focus per screen:** every node of the hierarchy (`src/atlas/nodes.js`) is a scene
   (`src/atlas/scenes/*.js`) that answers one question, in steps.
 - **Numerically checked:** fixture traces and gradients match the PyTorch reference within
@@ -119,6 +123,8 @@ tools/smoke.sh --view head.1.2 --out shot.png  # one node + screenshot
 tools/smoke.sh --view tokens --preset tinystories --out shot.png   # any node, any model
 tools/smoke.sh --all --themes light --shard 0/3 --shots dir        # a third of a sweep, with screenshots
 tools/smoke.sh --view stepper --preset llama --reduced-motion --eval-file tests/browser_cells.js
+tools/smoke.sh --view model --preset tinystories --eval-file tests/browser_prediction.js
+tools/smoke.sh --view model --preset tinystories --eval-file tests/browser_token_focus.js
 ```
 
 ## Extend it

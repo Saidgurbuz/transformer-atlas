@@ -18,7 +18,7 @@ import { OutputPass } from '../../vendor/three/addons/postprocessing/OutputPass.
 import { Line2 } from '../../vendor/three/addons/lines/Line2.js';
 import { LineMaterial } from '../../vendor/three/addons/lines/LineMaterial.js';
 import { LineGeometry } from '../../vendor/three/addons/lines/LineGeometry.js';
-import { h, reducedMotion, cssVar } from '../../ui/index.js';
+import { h, reducedMotion, cssVar, openContextMenu } from '../../ui/index.js';
 import { useStyle } from '../kit.js';
 
 // ------------------------------------------------------------------ geometry (world units)
@@ -77,7 +77,7 @@ export default {
   mount(el, ctx) {
     const host = h('div', { class: 'ma' });
     el.append(host);
-    const engine = new SceneEngine(host, { onHover: (info) => setHover(info), onPick: () => {}, onTheme: () => { look(); build(); } });
+    const engine = new SceneEngine(host, { onHover: (info) => setHover(info), onPick: () => {}, onContext: onTokenContext, onTheme: () => { look(); build(); } });
     const R = engine.renderer, cam = engine.camera;
     cam.fov = FOV; cam.near = 0.5; cam.far = 600;          // a tight depth range: no z-fighting on thin faces
     cam.updateProjectionMatrix();
@@ -292,7 +292,7 @@ export default {
         const face = new THREE.Mesh(new THREE.PlaneGeometry(w * 0.92, cardH * 0.86), new THREE.MeshBasicMaterial({ map: glyph(lab(i), w * 0.92, cardH * 0.86, hex(sel ? tok('--accent') : ink)), transparent: true, toneMapped: false, polygonOffset: true, polygonOffsetFactor: -2 }));
         face.position.z = 0.031;
         card.add(face);
-        part(card, { node: 'tokens', title: `“${lab(i)}”`, sub: `position ${i} · id ${st.ids[i]}`, token: i, trace: 'emb.tok' });
+        part(card, { node: 'tokens', title: `“${lab(i)}”`, sub: `position ${i} · id ${st.ids[i]} · Shift-click to focus`, token: i, trace: 'emb.tok' });
         line([V3(cx, cardY + cardH / 2 + (sel ? 0.1 : 0), cardZ), V3(CX + (cx - CX) * 0.82, embY, PD / 2 - 0.2)], sel ? tok('--accent') : tok('--fg-3'), sel ? 1.6 : 1, sel ? 0.9 : 0.35);
         x += w + 0.1; prev = i;
       });
@@ -652,14 +652,32 @@ export default {
       const mat = m.material;
       if (mat && 'emissiveIntensity' in mat && !m.userData.keepEmissive) mat.emissiveIntensity = on ? (dark() ? 0.28 : 0.2) : 0;
     }
-    R.domElement.addEventListener('click', (e) => {
+    function onClick(e) {
       const info = engine.pick(e);
       const m = info?.object && parts.includes(info.object) ? info.object : null;
       if (!m) return;
       if (m.userData.selectLayer !== undefined && m.userData.selectLayer !== ctx.state.sel.layer) { ctx.store.select({ layer: m.userData.selectLayer }); return; }
-      if (m.userData.token !== undefined) ctx.store.select({ token: m.userData.token });
+      if (m.userData.token !== undefined) {
+        const token = m.userData.token, origin = engine.screenRect(m);
+        e.preventDefault(); e.stopPropagation();
+        ctx.store.select({ token });
+        if (!e.shiftKey) ctx.go('tokens', origin);
+        return;
+      }
       ctx.go(m.userData.node, engine.screenRect(m.userData.group || m));
-    });
+    }
+    R.domElement.addEventListener('click', onClick);
+
+    function onTokenContext(info, e) {
+      const m = info?.object && parts.includes(info.object) ? info.object : null;
+      if (m?.userData.token === undefined) return;
+      const token = m.userData.token, origin = engine.screenRect(m);
+      e.stopPropagation();
+      openContextMenu(e.clientX, e.clientY, [
+        { label: 'Focus token', hint: 'Stay in this view', run: () => ctx.store.select({ token }) },
+        { label: 'Zoom into tokens', run: () => { ctx.store.select({ token }); ctx.go('tokens', origin); } },
+      ], { title: `“${ctx.label(token)}” · position ${token}` });
+    }
 
     look();
     build();
@@ -680,6 +698,7 @@ export default {
       resume: () => { engine.resume(); home(600); },
       destroy() {
         destroyed = true;
+        R.domElement.removeEventListener('click', onClick);
         offFrame(); offResize(); offLineRes(); offs.forEach((f) => f()); clear();
         bgTex?.dispose(); envTex.dispose(); pmrem.dispose(); composer?.dispose?.();
         engine.dispose(); host.remove();
