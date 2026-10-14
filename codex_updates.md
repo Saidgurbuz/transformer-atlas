@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Reachable lesson sources
+
+Connected the six existing lesson routes to focused reading lists, and cited official tensor-view semantics and the online-softmax recurrence beside their equations. Desktop and mobile/standalone checks pass 122 citation, navigation and layout assertions; main lesson text is unchanged.
+
 ## 2026-10-14 · Research citation gaps
 
 Linked Google’s Gemma 2 report to the existing soft-capping equation and Anthropic’s circuit-tracing methods to existing interpretation cautions. Verified the cited passages and source integrity without adding lesson content.

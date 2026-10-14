@@ -679,6 +679,9 @@ const TOPICS = {
   residual: ['residual'], mlp: ['mlp'], activation: ['mlp'], neurons: ['mlp'], 'final-norm': ['residual'], 'lm-head': ['head'], sampling: ['head'],
   generation: ['generation'], cheatsheet: ['cheatsheet'], scaling: ['scaling'], lab: ['lab'], encdec: ['encdec'], vision: ['vision'],
   tower: ['overview', 'stepper'], stepper: ['stepper'],
+  // Lesson-specific reading lists; broader scene notes need not be repeated here.
+  'tensor-ops': ['tensor-ops'], training: ['training'], flash: ['flash'],
+  'encoder-decoder': ['encoder-decoder'], architectures: ['architectures'], exercises: ['exercises'],
 };
 
 export function topicsFor(nodeId) { return TOPICS[nodeId.split('.')[0]] || []; }

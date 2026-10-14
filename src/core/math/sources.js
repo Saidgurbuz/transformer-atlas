@@ -24,8 +24,8 @@ export function equationSources(key, cfg) {
   if (pattern === 'concept:training-gradient') return [{ id: 'vaswani2017', where: '§3.4, embeddings and softmax; §3.1, shifted decoder inputs', note: 'The derivatives are derived here and independently checked against PyTorch, including ignored targets and tied embedding gradients.' }, { id: 'press2016tying', where: '§3, Weight Tying', note: 'The shared embedding receives gradients from both uses.' }];
   if (pattern === 'concept:one-hot-lookup') return [{ id: 'bengio2003', where: '§2, The Proposed Model', note: 'A learned vocabulary matrix supplies each word’s feature vector. The one-hot equivalence is derived here.' }];
   if (pattern === 'concept:weight-tying') return [{ id: 'press2016tying', where: '§3, Weight Tying', note: 'Input/output weight sharing; the parameter-count and gradient identities are derived here.' }, { id: 'vaswani2017', where: '§3.4, Embeddings and Softmax', note: 'The original Transformer shares embedding and output weights.' }];
-  if (pattern === 'concept:tensor-layout') return [{ id: 'vaswani2017', where: '§3.2.2, Multi-head attention', note: 'The head decomposition is written with the batch axis explicit. View, stride and copying rules are implementation semantics explained by the executable tensor_ops.py reference.' }];
-  if (pattern === 'concept:online-attention') return [{ id: 'dao2022flash', where: 'Algorithm 1 and §3.1', note: 'The lesson uses unnormalised U, so normalize only when displaying the output. Algorithm 1 stores normalized O; the two recurrences are equivalent.' }];
+  if (pattern === 'concept:tensor-layout') return [{ id: 'vaswani2017', where: '§3.2.2, Multi-head attention', note: 'The head decomposition is written with the batch axis explicit. View, stride and copying rules are implementation semantics explained by the executable tensor_ops.py reference.' }, { id: 'pytorch-views', where: 'Tensor Views: storage sharing and copying notes', note: 'Transpose shares storage; reshape may copy; contiguous copies only when needed.' }];
+  if (pattern === 'concept:online-attention') return [{ id: 'milakov2018', where: 'Algorithm 3, Online Softmax', note: 'The running maximum and normalizer recurrence.' }, { id: 'dao2022flash', where: 'Algorithm 1 and §3.1', note: 'The lesson uses unnormalised U, so normalize only when displaying the output. Algorithm 1 stores normalized O; the two recurrences are equivalent.' }];
   const attention = { id: 'vaswani2017', where: '§3.2.1, Eq. (1)', note: 'Scaled dot products, softmax, and the weighted value sum. Masking is described in §3.2.3.' };
   const norm = cfg.norm === 'rmsnorm'
     ? { id: 'zhang2019rms', where: '§4, RMSNorm', note: 'Atlas adds norm_eps inside the square root; RMSNorm has a gain and no learned shift.' }
@@ -47,7 +47,9 @@ export function equationSources(key, cfg) {
     : [{ id: 'vaswani2017', where: '§3.3, Eq. (2)', note: 'The original FFN uses ReLU. Atlas also offers GELU’s tanh approximation.' },
       ...(cfg.activation === 'gelu' ? [{ id: 'hendrycks2016', where: '§2, GELU approximation', note: 'The live implementation uses the tanh approximation rather than the exact Gaussian CDF.' }] : [])];
   if (/^emb\./.test(pattern) || /^(logits|probs)$/.test(pattern)) return [
-    { id: 'vaswani2017', where: pattern === 'emb.pos' ? '§3.5, Positional encoding' : '§3.4, Embeddings and softmax', note: 'Atlas does not multiply token embeddings by √d_model; tying weights is configurable.' }];
+    { id: 'vaswani2017', where: pattern === 'emb.pos' ? '§3.5, Positional encoding' : '§3.4, Embeddings and softmax', note: 'Atlas does not multiply token embeddings by √d_model; tying weights is configurable.' },
+    ...(pattern === 'emb.tok' ? [{ id: 'bengio2003', where: '§2, The Proposed Model', note: 'Each vocabulary entry selects a row of a learned feature matrix.' }] : []),
+    ...(pattern === 'logits' && cfg.tie_weights ? [{ id: 'press2016tying', where: '§3, Weight Tying', note: 'The same matrix supplies input embeddings and output scores.' }] : [])];
   if (pattern === 'concept:kv-cache') return [{ id: 'ainslie2023gqa', where: '§2.2 and Figure 2', note: 'Reducing KV heads reduces cache storage. The byte-count equation is arithmetic for Atlas’s cache layout, not a copied paper equation.' }];
   return [];
 }
