@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Embedding continuation dots
+
+Replaced preview omission sentences with aligned continuation dots, keeping row counts in hover/accessibility labels. Browser checks and screenshot inspection confirm the matrix remains readable and within bounds.
+
 ## 2026-10-14 · v1.5.1 citation update
 
 Published five directly relevant sources and repaired citation access in existing detail drawers, preserving main content and visuals. Verified paper passages, source integrity, 12,695 maths checks and 122 desktop/mobile/standalone browser assertions.

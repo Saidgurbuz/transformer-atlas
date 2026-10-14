@@ -76,7 +76,6 @@ useStyle('embedding', `
 .em-ctx-row.on .em-ctx-cells { outline: 2px solid var(--kind); outline-offset: 2px; border-radius: 3px; }
 .em-ctx-gap { display: flex; align-items: center; height: ${GAP_ROW}px; }
 .em-ctx-gap .em-ctx-lab { color: var(--fg-3); }
-.em-ctx-gt { font: 500 14px/1 var(--font-mono); color: var(--fg-2); white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) {
   .em-strip, .em-lab, .em-op, .em-note, .em-zlab, .em-focus .k-cells, .em-strip .k-cell { transition: none !important; }
 }
@@ -271,17 +270,17 @@ export default {
     function tableFor(i) {
       const { T, V, d, q, ids, hasP, W, pos, out } = g;
       if (i <= 1) return {
-        kind: 'embed', n: V, anchor: ids[q], hi: i === 1 ? ids[q] : null, wte: true, word: 'id', gapWord: 'entries',
+        kind: 'embed', n: V, anchor: ids[q], hi: i === 1 ? ids[q] : null, wte: true, word: 'id',
         rows: V > CTX_ALL ? idRows(V, ids, q) : null,            // a large vocabulary shows the rows of this text
         value: (r, c) => W[r * d + c], labelOf: (r) => lab(r), tex: '\\WE', shape: `${V} × ${d}`,
       };
       if (i === 2 && hasP) return {
-        kind: 'pos', n: T, anchor: q, hi: q, word: 'position', gapWord: 'tokens', ref: true, trace: 'emb.pos',
+        kind: 'pos', n: T, anchor: q, hi: q, word: 'position', ref: true, trace: 'emb.pos',
         value: (t, c) => pos[t * d + c], labelOf: (t) => ctx.label(t), tex: '\\Pe', shape: `${T} × ${d}`,
       };
       if (i === 2) return null;
       return {
-        kind: 'resid', n: T, anchor: q, hi: q, word: 'position', gapWord: 'tokens', ref: true, trace: 'emb.out',
+        kind: 'resid', n: T, anchor: q, hi: q, word: 'position', ref: true, trace: 'emb.out',
         value: (t, c) => out[t * d + c], labelOf: (t) => ctx.label(t),
         tex: hasP ? '\\xres_0' : '\\xres_0 = X_{\\mathrm{tok}}', shape: `${T} × ${d}`,
       };
@@ -307,8 +306,10 @@ export default {
       if (tab.trace) body.dataset.trace = tab.trace;
       rows.forEach((r, ri) => {
         if (r.ell) {
-          const word = r.n === 1 ? tab.gapWord.replace(/ies$/, 'y').replace(/s$/, '') : tab.gapWord;     // “1 entry not shown”
-          body.append(h('div', { class: 'em-ctx-gap' }, h('span', { class: 'em-ctx-lab' }, '⋮'), h('span', { class: 'em-ctx-gt' }, `${fmtN(r.n)} ${word} not shown`)));
+          const continuation = `${fmtN(r.n)} more ${tab.wte ? 'vocabulary' : 'sequence'} ${r.n === 1 ? 'row' : 'rows'}`;
+          body.append(h('div', { class: 'em-ctx-gap', role: 'img', 'aria-label': continuation, title: continuation },
+            h('span', { class: 'em-ctx-lab', 'aria-hidden': 'true' }, '⋮'),
+            h('div', { class: 'em-ctx-cells', 'aria-hidden': 'true' }, cols.map((c) => h('span', { class: 'em-ctx-c ell' }, c < 0 ? '⋱' : '⋮')))));
           return;
         }
         const on = ri === hiRow;
