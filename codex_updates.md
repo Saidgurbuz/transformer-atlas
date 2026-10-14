@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Public README and project preview
+
+Rewrote the README around learning, teaching and research, with a matching Atlas mark, an actual product screenshot, linked features and optional advanced detail. All 57 documentation links/assets and GitHub-rendered desktop/mobile previews pass validation.
+
 ## 2026-10-14 · Public development guide
 
 Added portable build, verification, extension and deployment instructions in a dedicated guide, with source links and explicit lesson conventions. Documentation links and embedded-source freshness checks pass.

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="72" height="72" viewBox="0 0 72 72" role="img" aria-labelledby="title desc">
+  <title id="title">Transformer Atlas</title>
+  <desc id="desc">Three stacked blocks connected by a residual path, matching the Atlas mark.</desc>
+  <rect x="1" y="1" width="70" height="70" rx="18" fill="#f7f8fc" stroke="#d5d9e5"/>
+  <g transform="translate(14 14) scale(1.6923)">
+    <rect x="4" y="3" width="18" height="5" rx="1.5" fill="#e0662f"/>
+    <rect x="4" y="10.5" width="18" height="5" rx="1.5" fill="#8250df"/>
+    <rect x="4" y="18" width="18" height="5" rx="1.5" fill="#c98a06"/>
+    <path d="M13 1v24" fill="none" stroke="#141922" stroke-width="1.6" stroke-linecap="round"/>
+  </g>
+</svg>
