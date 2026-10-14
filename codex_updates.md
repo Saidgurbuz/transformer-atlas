@@ -1,5 +1,9 @@
 # Codex updates
 
+## 2026-10-14 · Hosted page setup
+
+Unified hosted and standalone page initialization and reused the Atlas mark as the favicon, preserving local/offline isolation. Build checks, eight navigation assertions in each app variant and all 31 existing cell/source browser checks pass.
+
 ## 2026-10-14 · Public README and project preview
 
 Rewrote the README around learning, teaching and research, with a matching Atlas mark, an actual product screenshot, linked features and optional advanced detail. All 57 documentation links/assets and GitHub-rendered desktop/mobile previews pass validation.

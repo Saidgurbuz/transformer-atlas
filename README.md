@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/atlas-mark.svg" width="72" height="72" alt="Transformer Atlas">
+  <img src="favicon.svg" width="72" height="72" alt="Transformer Atlas">
 </p>
 
 <h1 align="center">Transformer Atlas</h1>

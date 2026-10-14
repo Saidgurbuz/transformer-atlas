@@ -32,8 +32,11 @@ const katexCss = readFileSync(join(katexDir, 'katex.min.css'), 'utf8').replace(/
   (_, f) => `url(data:font/woff2;base64,${readFileSync(join(katexDir, f)).toString('base64')})`);
 const css = [katexCss, readFileSync(join(root, 'styles/main.css'), 'utf8'), readFileSync(join(root, 'styles/atlas.css'), 'utf8')].join('\n');
 const fonts = 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Instrument+Sans:wght@400..700&family=JetBrains+Mono:wght@400..700&display=swap';
+const siteScript = `<script>${readFileSync(join(root, 'src/core/site.js'), 'utf8').replace(/<\/script/gi, '<\\/script')}</script>`;
+const favicon = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${encodeURIComponent(readFileSync(join(root, 'favicon.svg'), 'utf8'))}">`;
 
 const inner = `<title>Transformer Atlas</title>
+${favicon}
 <link rel="stylesheet" href="${fonts}">
 <style>${css}</style>
 <div id="app"></div>
@@ -43,6 +46,7 @@ const page = `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
+${siteScript}
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="description" content="Interactive, line-by-line tour of a decoder-only Transformer.">
 </head>
@@ -56,11 +60,13 @@ mkdirSync(join(root, 'dist', 'artifact'), { recursive: true });
 writeFileSync(join(root, 'dist/artifact/app.js'), result.outputFiles[0].text);
 writeFileSync(join(root, 'dist/artifact/app.css'), css);
 writeFileSync(join(root, 'dist/artifact/index.html'), `<title>Transformer Atlas</title>
+${favicon}
+${siteScript}
 <link rel="stylesheet" href="${fonts}">
 <link rel="stylesheet" href="app.css">
 <div id="app"></div>
 <script type="module" src="app.js"></script>
 `);
 writeFileSync(join(root, 'dist/transformer-atlas.html'), page);
-writeFileSync(join(root, 'dist/artifact.html'), inner + '\n');
+writeFileSync(join(root, 'dist/artifact.html'), siteScript + '\n' + inner + '\n');
 console.log(`dist/transformer-atlas.html  ${(page.length / 1e6).toFixed(2)} MB`);

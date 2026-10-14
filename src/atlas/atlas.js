@@ -226,6 +226,7 @@ export function startAtlas(root) {
     renderStory();
     if (rightDrawer.classList.contains('open')) renderRight();
     hint.classList.add('fade');
+    window.dispatchEvent(new CustomEvent('atlas:view', { detail: { id: top.id, title: top.info.title } }));
   }
 
   function up() {

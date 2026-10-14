@@ -30,7 +30,7 @@ fi
 
 # fresh copy of the app (no tests, tools, reference code or docs)
 find "$SITE" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-cp -r index.html styles src "$SITE/"
+cp -r index.html favicon.svg styles src "$SITE/"
 cp dist/transformer-atlas.html "$SITE/transformer-atlas.html"
 touch "$SITE/.nojekyll"          # serve files that start with _ (Jekyll would drop them)
 node --input-type=module - "$SITE/deployment.json" "$(git rev-parse HEAD)" <<'JS'
